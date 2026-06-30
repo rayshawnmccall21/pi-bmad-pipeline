@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+docs/api/
+*.tsbuildinfo
+.tmp/
+
+# Pi runtime state (not package source)
+.pi/state/
+.pi/artifacts/
+.pi/logs/

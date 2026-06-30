@@ -1,0 +1,70 @@
+{
+  "name": "pi-bmad-pipeline",
+  "version": "0.1.0",
+  "description": "Standalone BMAD pipeline supervisor CLI. Owns durable cross-process SDLC pipeline execution: RunDef loading/compilation, stage spawning, JSONL parsing, payload gates, routing/regression, worktrees, budgets/timeouts, harness-owned evidence, PR/merge logic, and audit. Imports pi-bmad/contracts; shells out to pi as an opaque binary.",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./rundef": "./src/rundef/index.ts",
+    "./events": "./src/events/index.ts",
+    "./executors/pi": "./src/executors/pi/index.ts"
+  },
+  "bin": {
+    "bmad-pipeline": "dist/cli.js"
+  },
+  "files": [
+    "src/",
+    "scripts/",
+    "quality/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ --max-warnings 0",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "crap": "vitest run --coverage && node scripts/crap-report.mjs",
+    "crap:ratchet": "node scripts/crap-ratchet.mjs",
+    "crap:update-baseline": "node scripts/crap-ratchet.mjs --update-baseline",
+    "knip": "knip",
+    "check": "npm run typecheck && npm run format:check && npm run lint && npm run test:coverage && npm run crap && npm run knip"
+  },
+  "keywords": [
+    "bmad",
+    "pipeline",
+    "sdlc",
+    "supervisor",
+    "ci",
+    "cli"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "pi-bmad": "file:../pi-bmad",
+    "typebox": "^1.1.24",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@mariozechner/pi-coding-agent": "^0.73.1",
+    "@types/node": "^25.7.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-jsdoc": "^62.9.0",
+    "eslint-plugin-sonarjs": "^4.0.3",
+    "eslint-plugin-tsdoc": "^0.5.2",
+    "eslint-plugin-unicorn": "^64.0.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "eslint-plugin-vitest": "^0.5.4",
+    "knip": "^5.0.0",
+    "prettier": "^3.5.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.59.3",
+    "vitest": "^3.0.0"
+  }
+}
