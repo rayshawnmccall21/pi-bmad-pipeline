@@ -1,6 +1,7 @@
-/** Public RunDef type, registry, and schema exports. */
+/** Public RunDef type, registry, schema, and compile exports. */
 
 export type {
+  CompiledStageDef,
   PayloadGate,
   PayloadGateRegistry,
   PayloadGateResult,
@@ -39,3 +40,16 @@ export type {
   RunDefValidationResult,
   StageBudgetSchemaValue,
 } from "./schema.js";
+
+export {
+  DEFAULT_STAGE_TIMEOUT_SECONDS,
+  RunDefCompileError,
+  compileRunDef,
+  compileValidatedRunDef,
+} from "./compile.js";
+
+export type {
+  CompileRunDefOptions,
+  RunDefCompileErrorCode,
+  RunDefCompileErrorDetails,
+} from "./compile.js";

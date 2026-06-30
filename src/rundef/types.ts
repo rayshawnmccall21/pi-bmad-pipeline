@@ -98,6 +98,9 @@ export interface StageDef {
   readonly budget?: StageBudget;
 }
 
+/** Alias for the normalized stage shape produced by RunDef compilation. */
+export type CompiledStageDef = StageDef;
+
 /** Reports the outcome of evaluating a child-process payload against a gate. */
 export interface PayloadGateResult {
   /** True when the payload satisfies the gate, false when it fails. */
