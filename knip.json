@@ -1,11 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "ignore": [".pi/**"],
-  "ignoreDependencies": [
-    "pi-bmad",
-    "typebox",
-    "yaml",
-    "@eslint/js",
-    "@mariozechner/pi-coding-agent"
-  ]
+  "ignoreDependencies": ["pi-bmad", "yaml", "@eslint/js", "@mariozechner/pi-coding-agent"]
 }

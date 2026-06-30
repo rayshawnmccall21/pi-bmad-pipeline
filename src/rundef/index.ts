@@ -1,4 +1,4 @@
-/** Public RunDef type and registry exports. */
+/** Public RunDef type, registry, and schema exports. */
 
 export type {
   PayloadGate,
@@ -19,3 +19,23 @@ export {
   registerPayloadGate,
   resolvePayloadGate,
 } from "./registry.js";
+
+export {
+  RUNDEF_IDENTIFIER_PATTERN,
+  RunDefSchema,
+  RunDefStageSchema,
+  RunDefValidationError,
+  StageBudgetSchema,
+  assertRunDef,
+  isRunDef,
+  parseRunDef,
+  validateRunDef,
+} from "./schema.js";
+
+export type {
+  RunDefSchemaValue,
+  RunDefStageSchemaValue,
+  RunDefValidationIssue,
+  RunDefValidationResult,
+  StageBudgetSchemaValue,
+} from "./schema.js";
