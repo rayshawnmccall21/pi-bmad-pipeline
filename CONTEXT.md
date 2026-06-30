@@ -129,12 +129,14 @@ pi-bmad-pipeline/
 ## 3. RunDef vs WorkflowDef — Why They Must Stay Separate
 
 **WorkflowDef** (pi-bmad, in-process, single agent, one session):
+
 - Routes on BmadState fields (shared in-memory state, same process)
 - Steps have checkpoints (code-evaluated definition-of-done gates)
 - `ConditionalStepRoute` reads a dot-path from BmadState and routes to a different step
 - Executed by WorkflowEngine inside the spawned child process
 
 **RunDef** (pi-bmad-pipeline, cross-process, multiple agents, separate sessions):
+
 - Routes on payload verdicts from SEPARATE PROCESSES (parses child stdout JSONL)
 - Stages have `payloadGate` functions that evaluate `HeadlessWorkflowOutput.payload`
 - `onFail` + gate route = the branching mechanism
@@ -209,7 +211,15 @@ interface PipelineState {
   worktreePath: string;
   branch: string;
   runnerFeatureVersion: number;
-  status: "pending" | "running" | "done" | "failed" | "needs-approval" | "paused" | "pr-opened" | "needs-attention";
+  status:
+    | "pending"
+    | "running"
+    | "done"
+    | "failed"
+    | "needs-approval"
+    | "paused"
+    | "pr-opened"
+    | "needs-attention";
   currentStage: string | null;
   stages: Record<string, StageState>;
   regressions: number;
@@ -244,12 +254,15 @@ interface RunResult {
 ## 5. Migration Plan
 
 ### Phase 1: Create pi-bmad-pipeline package (DONE)
+
 - Scaffolded from pi-package-template
 - Strict quality gates: CRAP ≤ 5, coverage ≥ 90%, strict ESLint
 - Empty directory structure ready
 
 ### Phase 2: Move RunDef subsystem (rundef/)
+
 Move from pi-orchestrator/pipeline-runner/rundef/:
+
 - `schema.ts` (234 lines) — TypeBox RunDef schema + cross-field invariants
 - `types.ts` (36 lines) — StageDef, PayloadGateResult, PayloadGate, StageBudget
 - `compile.ts` (172 lines) — RunDef → StageDef compilation
@@ -260,45 +273,55 @@ Move from pi-orchestrator/pipeline-runner/rundef/:
 - `ext-resolve.ts` (66 lines) — Stage extension path resolution
 
 ### Phase 3: Move state subsystem
+
 - `state-reconcile.ts` (221 lines) — Crash recovery, contradiction repair
 - PipelineState types from runner.ts
 - Dispatch lock logic from runner.ts
 - State persistence (loadState, saveState) from runner.ts
 
 ### Phase 4: Move budget subsystem
+
 - `stage-budget.ts` (112 lines) — Per-stage spend ceiling
 - Budget gate from runner.ts
 
 ### Phase 5: Move model config
+
 - `model-config.ts` (271 lines) — 5-source model resolution
 
 ### Phase 6: Move payload gates + gate evaluation
+
 - e2eVerifyPayloadGate, codeReviewPayloadGate from runner.ts
 - checkGate() from runner.ts
 
 ### Phase 7: Move executor (spawn wrapper)
+
 - buildStageArgs from runner.ts
 - runBmadStage from runner.ts
 - JSONL stream parsing logic from runner.ts
 
 ### Phase 8: Move security-critical code
+
 - `harness-evidence.ts` (883 lines) — HS-1 harness-owned evidence
 - Credential redaction patterns from runner.ts
 
 ### Phase 9: Move git/PR logic
+
 - `story-pull-request.ts` (1,002 lines) — Git worktree, PR, secret scanning
 - Merge gate logic from runner.ts
 
 ### Phase 10: Move the FSM + runPipelineAction
+
 - The FSM main loop from runner.ts
 - runPipelineAction callable
 - Audit report generation
 
 ### Phase 11: Add CLI entry point
+
 - `bmad-pipeline run sdlc --story-id ... --spec-file ... --jsonl`
 - Event protocol (PipelineCliEvent JSONL)
 
 ### Phase 12: Replace pi-orchestrator internals
+
 - Delete the 9,104-line runner from pi-orchestrator
 - Replace with CLI invocation wrapper
 
@@ -320,23 +343,23 @@ Move from pi-orchestrator/pipeline-runner/rundef/:
 
 ## 7. Codebase Stats (modules moving from pi-orchestrator)
 
-| Module | Lines | Owns |
-|--------|-------|------|
-| runner.ts | 9,104 | FSM loop, spawn, state, gates, budget, merge, locks, logging, redaction |
-| story-pull-request.ts | 1,002 | Git worktree, PR opening, secret scanning (HS-14) |
-| harness-evidence.ts | 883 | Harness-owned test/typecheck/lint evidence + pre-merge gate (HS-1) |
-| model-config.ts | 271 | Model resolution from 5 sources, pre-spawn validation |
-| rundef/schema.ts | 234 | TypeBox RunDef schema + cross-field invariants |
-| state-reconcile.ts | 221 | Crash recovery, contradiction repair |
-| rundef/compile.ts | 172 | RunDef → StageDef compilation |
-| rundef/loader.ts | 141 | Discovers .pi/bmad/pipelines/*.yaml |
-| rundef/selector.ts | 133 | Builtin vs discovered resolution |
-| rundef/builtin.ts | 123 | SDLC pipeline definition + resolution |
-| stage-budget.ts | 112 | Per-stage spend ceiling evaluation |
-| rundef/ext-resolve.ts | 66 | Stage extension path resolution |
-| rundef/registry.ts | 38 | Payload gate registry (module-level Map) |
-| rundef/types.ts | 36 | StageDef, PayloadGateResult, PayloadGate types |
-| **Total** | **12,585** | |
+| Module                | Lines      | Owns                                                                    |
+| --------------------- | ---------- | ----------------------------------------------------------------------- |
+| runner.ts             | 9,104      | FSM loop, spawn, state, gates, budget, merge, locks, logging, redaction |
+| story-pull-request.ts | 1,002      | Git worktree, PR opening, secret scanning (HS-14)                       |
+| harness-evidence.ts   | 883        | Harness-owned test/typecheck/lint evidence + pre-merge gate (HS-1)      |
+| model-config.ts       | 271        | Model resolution from 5 sources, pre-spawn validation                   |
+| rundef/schema.ts      | 234        | TypeBox RunDef schema + cross-field invariants                          |
+| state-reconcile.ts    | 221        | Crash recovery, contradiction repair                                    |
+| rundef/compile.ts     | 172        | RunDef → StageDef compilation                                           |
+| rundef/loader.ts      | 141        | Discovers .pi/bmad/pipelines/*.yaml                                     |
+| rundef/selector.ts    | 133        | Builtin vs discovered resolution                                        |
+| rundef/builtin.ts     | 123        | SDLC pipeline definition + resolution                                   |
+| stage-budget.ts       | 112        | Per-stage spend ceiling evaluation                                      |
+| rundef/ext-resolve.ts | 66         | Stage extension path resolution                                         |
+| rundef/registry.ts    | 38         | Payload gate registry (module-level Map)                                |
+| rundef/types.ts       | 36         | StageDef, PayloadGateResult, PayloadGate types                          |
+| **Total**             | **12,585** |                                                                         |
 
 ## 8. Quality Gates
 
@@ -353,6 +376,7 @@ Full gate: `npm run check` runs typecheck → format → lint → coverage → C
 ## 9. Role Definitions
 
 ### ChatGPT (Architect)
+
 - Reads code from the three GitHub repos
 - Creates detailed task specifications (files, interfaces, tests)
 - Reviews completed work against the migration plan
@@ -360,6 +384,7 @@ Full gate: `npm run check` runs typecheck → format → lint → coverage → C
 - Serves as the design authority for boundary decisions
 
 ### Implementer (Pi Pi + Subagents)
+
 - Takes task specs from ChatGPT and dispatches subagents to write code
 - Runs quality gates (`npm run check`) on every change
 - Commits, pushes, and reports back with what was done
