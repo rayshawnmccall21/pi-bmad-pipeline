@@ -78,3 +78,24 @@ export {
 } from "./loader.js";
 
 export type { DiscoveredRunDef, RunDefLoadErrorCode, RunDefLoadErrorDetails } from "./loader.js";
+
+export {
+  RunDefSelectionError,
+  resolveRunDefSelection,
+  selectAndCompileRunDef,
+  selectRunDef,
+} from "./selector.js";
+
+export type {
+  BuiltinRunDefSelection,
+  CompiledBuiltinRunDefSelection,
+  CompiledDiscoveredRunDefSelection,
+  CompiledRunDefSelection,
+  DiscoveredRunDefSelection,
+  RunDefSelection,
+  RunDefSelectionErrorCode,
+  RunDefSelectionErrorDetails,
+  RunDefSelectionSource,
+  SelectAndCompileRunDefOptions,
+  SelectRunDefOptions,
+} from "./selector.js";
