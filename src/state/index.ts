@@ -44,3 +44,21 @@ export type {
   PipelineStateStoreErrorDetails,
   SavePipelineStateRequest,
 } from "./fs-state-store.js";
+
+export {
+  DEFAULT_DISPATCH_LOCK_STALE_MS,
+  DISPATCH_LOCK_INFO_FILE_NAME,
+  DISPATCH_LOCK_RELATIVE_DIR,
+  acquireDispatchLock,
+  getDispatchLockDir,
+  getDispatchLocksDir,
+  isDispatchLockStale,
+  readDispatchLockInfo,
+  releaseDispatchLock,
+} from "./dispatch-lock.js";
+
+export type {
+  AcquireDispatchLockRequest,
+  DispatchLock,
+  DispatchLockInfo,
+} from "./dispatch-lock.js";
