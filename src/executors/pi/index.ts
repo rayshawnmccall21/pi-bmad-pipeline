@@ -9,6 +9,12 @@ export {
 export { HeadlessJsonlParser, parseHeadlessJsonl } from "./headless-jsonl-parser.js";
 
 export {
+  DEFAULT_PI_CLI_WORKFLOW_EXECUTOR_ID,
+  PiCliWorkflowExecutor,
+  createPiCliWorkflowExecutor,
+} from "./pi-cli-workflow-executor.js";
+
+export {
   BmadStageSpawnError,
   MAX_STAGE_STDERR_CHARS,
   runBmadStage,
@@ -22,5 +28,10 @@ export type {
   HeadlessJsonlParserSnapshot,
   HeadlessJsonlRecord,
 } from "./headless-jsonl-parser.js";
+
+export type {
+  PiCliRunBmadStage,
+  PiCliWorkflowExecutorOptions,
+} from "./pi-cli-workflow-executor.js";
 
 export type { BmadStageSpawn, RunBmadStageRequest } from "./run-bmad-stage.js";
