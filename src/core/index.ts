@@ -1,11 +1,14 @@
 /** Public core subsystem exports. */
 
-export { evaluateStageBudget, isBudgetUsage } from "./budgets.js";
+export { evaluateRunBudget, evaluateStageBudget, isBudgetUsage } from "./budgets.js";
 
 export type {
   BudgetUsage,
   BudgetedStage,
+  EvaluateRunBudgetRequest,
   EvaluateStageBudgetRequest,
+  RunBudget,
+  RunBudgetEvaluation,
   StageBudgetEvaluation,
   StageBudgetExceededLimit,
   StageBudgetLimitKind,
