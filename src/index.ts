@@ -10,6 +10,7 @@
  */
 
 export { PACKAGE_NAME, PACKAGE_VERSION } from "./meta.js";
+export * from "./audit/index.js";
 export * from "./contracts/index.js";
 export * from "./core/index.js";
 export * from "./executors/index.js";
