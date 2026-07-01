@@ -99,3 +99,19 @@ export type {
   SelectAndCompileRunDefOptions,
   SelectRunDefOptions,
 } from "./selector.js";
+
+export {
+  RUNDEF_STAGE_EXTENSIONS_RELATIVE_DIR,
+  getStageExtensionsDir,
+  resolveStageExtensionBaseDir,
+  resolveStageExtensionPath,
+  resolveStageExtensionPaths,
+} from "./ext-resolve.js";
+
+export type {
+  ResolveStageExtensionBaseDirRequest,
+  ResolveStageExtensionPathRequest,
+  ResolveStageExtensionPathsRequest,
+  ResolvedStageExtensionPath,
+  StageExtensionPathStage,
+} from "./ext-resolve.js";
