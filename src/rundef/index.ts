@@ -53,3 +53,15 @@ export type {
   RunDefCompileErrorCode,
   RunDefCompileErrorDetails,
 } from "./compile.js";
+
+export {
+  BUILTIN_RUNDEF_IDS,
+  SDLC_RUNDEF,
+  SDLC_RUNDEF_ID,
+  isBuiltinRunDefId,
+  listBuiltinRunDefIds,
+  resolveBuiltinRunDef,
+  resolveRunDef,
+} from "./builtin.js";
+
+export type { BuiltinRunDefId } from "./builtin.js";
