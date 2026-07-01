@@ -1,6 +1,7 @@
 /** Public core subsystem exports. */
 
 export { evaluateRunBudget, evaluateStageBudget, isBudgetUsage } from "./budgets.js";
+export { findNextStage, findStageById, routeStageDecision } from "./routing.js";
 export { checkStageDecision } from "./stage-decision.js";
 
 export type {
@@ -14,6 +15,13 @@ export type {
   StageBudgetExceededLimit,
   StageBudgetLimitKind,
 } from "./budgets.js";
+
+export type {
+  RouteStageDecisionRequest,
+  StageRouteAction,
+  StageRouteDecision,
+  StageRouteFailureCode,
+} from "./routing.js";
 
 export type {
   CheckStageDecisionRequest,
