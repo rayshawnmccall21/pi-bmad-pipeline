@@ -65,3 +65,16 @@ export {
 } from "./builtin.js";
 
 export type { BuiltinRunDefId } from "./builtin.js";
+
+export {
+  RUNDEF_PIPELINE_EXTENSION,
+  RUNDEF_PIPELINES_RELATIVE_DIR,
+  RunDefLoadError,
+  discoverRunDefs,
+  getRunDefPipelinesDir,
+  isRunDefYamlFileName,
+  loadRunDefFile,
+  resolveDiscoveredRunDef,
+} from "./loader.js";
+
+export type { DiscoveredRunDef, RunDefLoadErrorCode, RunDefLoadErrorDetails } from "./loader.js";
