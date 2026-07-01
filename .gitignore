@@ -9,3 +9,7 @@ docs/api/
 .pi/state/
 .pi/artifacts/
 .pi/logs/
+
+# Local scratch — session handoffs, plans, task prompts
+chatgpt-*
+final-implementation-agent-plan.md
