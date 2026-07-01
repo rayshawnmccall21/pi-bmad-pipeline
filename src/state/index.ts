@@ -62,3 +62,12 @@ export type {
   DispatchLock,
   DispatchLockInfo,
 } from "./dispatch-lock.js";
+
+export { getFirstIncompleteStageId, reconcilePipelineState } from "./state-reconcile.js";
+
+export type {
+  ReconcilePipelineStateRequest,
+  StateReconciliationIssue,
+  StateReconciliationIssueCode,
+  StateReconciliationResult,
+} from "./state-reconcile.js";
