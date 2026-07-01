@@ -1,4 +1,6 @@
 /** Public Git subsystem exports. */
+export { hasBlockingGitSecretFindings, scanGitDiffForSecrets } from "./secret-scan.js";
+
 export {
   DEFAULT_GIT_COMMAND_TIMEOUT_MS,
   MAX_GIT_STDERR_CHARS,
@@ -11,6 +13,13 @@ export {
   removeStoryWorktree,
   runGitCommand,
 } from "./worktrees.js";
+
+export type {
+  GitSecretPatternName,
+  GitSecretScanFinding,
+  GitSecretScanResult,
+  GitSecretScanSeverity,
+} from "./secret-scan.js";
 
 export type {
   EnsureStoryWorktreeRequest,
