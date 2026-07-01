@@ -15,4 +15,5 @@ export * from "./executors/index.js";
 export * from "./gates/index.js";
 export * from "./model/index.js";
 export * from "./rundef/index.js";
+export * from "./security/index.js";
 export * from "./state/index.js";
