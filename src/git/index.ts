@@ -1,4 +1,5 @@
 /** Public Git subsystem exports. */
+export { evaluateMergeGate } from "./merge-gate.js";
 export { hasBlockingGitSecretFindings, scanGitDiffForSecrets } from "./secret-scan.js";
 
 export {
@@ -23,6 +24,16 @@ export {
   removeStoryWorktree,
   runGitCommand,
 } from "./worktrees.js";
+
+export type {
+  AgentEvidenceClaim,
+  EvaluateMergeGateRequest,
+  MergeGateBlocker,
+  MergeGateBlockerCode,
+  MergeGateDecisionKind,
+  MergeGateEvaluation,
+  MergeGatePullRequest,
+} from "./merge-gate.js";
 
 export type {
   OpenStoryPullRequestRequest,
