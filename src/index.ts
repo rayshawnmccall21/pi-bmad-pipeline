@@ -11,3 +11,4 @@
 
 export { PACKAGE_NAME, PACKAGE_VERSION } from "./meta.js";
 export * from "./rundef/index.js";
+export * from "./state/index.js";
