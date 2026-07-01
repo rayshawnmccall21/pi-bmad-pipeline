@@ -8,6 +8,13 @@ export {
 
 export { HeadlessJsonlParser, parseHeadlessJsonl } from "./headless-jsonl-parser.js";
 
+export {
+  BmadStageSpawnError,
+  MAX_STAGE_STDERR_CHARS,
+  runBmadStage,
+  toBuildStageArgsRequest,
+} from "./run-bmad-stage.js";
+
 export type { BuildStageArgsRequest, BuiltStageArgs, StageArgsStage } from "./build-stage-args.js";
 
 export type {
@@ -15,3 +22,5 @@ export type {
   HeadlessJsonlParserSnapshot,
   HeadlessJsonlRecord,
 } from "./headless-jsonl-parser.js";
+
+export type { BmadStageSpawn, RunBmadStageRequest } from "./run-bmad-stage.js";
