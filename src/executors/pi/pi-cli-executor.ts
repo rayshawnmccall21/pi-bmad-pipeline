@@ -23,8 +23,8 @@ export interface PiCliWorkflowExecutorOptions {
   /** Optional Pi executable name/path. */
   readonly piBin?: string;
 
-  /** Optional BMAD headless command name. */
-  readonly command?: string;
+  /** Optional pi-bmad extension file path loaded via -e. */
+  readonly piBmadExtensionPath?: string;
 
   /** Optional spawn implementation for tests. */
   readonly spawn?: BmadStageSpawn;
@@ -50,7 +50,7 @@ export class PiCliWorkflowExecutor implements WorkflowExecutor {
    *
    * @param options - Configuration for Pi-backed stage execution.
    *
-   * @throws RangeError When model, piBin, or command are blank.
+   * @throws RangeError When model, piBin, or piBmadExtensionPath are blank.
    *
    * @example
    * ```ts
@@ -85,8 +85,8 @@ const validateOptions = (options: PiCliWorkflowExecutorOptions): void => {
   if (options.piBin !== undefined) {
     validateNonBlank("piBin", options.piBin);
   }
-  if (options.command !== undefined) {
-    validateNonBlank("command", options.command);
+  if (options.piBmadExtensionPath !== undefined) {
+    validateNonBlank("piBmadExtensionPath", options.piBmadExtensionPath);
   }
 };
 
@@ -109,9 +109,11 @@ const toRunBmadStageRequest = (
 
 const optionalCliFields = (
   options: PiCliWorkflowExecutorOptions,
-): Partial<Pick<RunBmadStageRequest, "piBin" | "command" | "spawn">> => ({
+): Partial<Pick<RunBmadStageRequest, "piBin" | "piBmadExtensionPath" | "spawn">> => ({
   ...(options.piBin === undefined ? {} : { piBin: options.piBin }),
-  ...(options.command === undefined ? {} : { command: options.command }),
+  ...(options.piBmadExtensionPath === undefined
+    ? {}
+    : { piBmadExtensionPath: options.piBmadExtensionPath }),
   ...(options.spawn === undefined ? {} : { spawn: options.spawn }),
 });
 

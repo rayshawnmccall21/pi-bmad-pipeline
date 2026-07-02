@@ -3,19 +3,23 @@ import {
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio,
 } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { dirname, resolve as resolvePath } from "node:path";
 
 import type { ModelThinking } from "../../model/index.js";
-import type {
-  StageExecutionRequest,
-  StageExecutionResult,
-  StageExecutionUsage,
-} from "../workflow-executor.js";
+import type { StageExecutionRequest, StageExecutionResult } from "../workflow-executor.js";
 import {
   buildStageArgs,
   type BuildStageArgsRequest,
   type BuiltStageArgs,
 } from "./build-stage-args.js";
 import { HeadlessJsonlParser } from "./headless-jsonl-parser.js";
+import {
+  extractGatedHeadlessOutput,
+  extractStageUsage,
+  type GatedHeadlessOutputExtraction,
+} from "./headless-stream-output.js";
+import { resolvePiBmadExtensionPath } from "./pi-bmad-extension.js";
 
 /** Maximum captured stderr characters retained for diagnostics. */
 // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- small fixed diagnostic cap.
@@ -47,8 +51,14 @@ export interface RunBmadStageRequest extends Omit<StageExecutionRequest, "signal
   /** Optional Pi executable name/path. */
   readonly piBin?: string;
 
-  /** Optional BMAD headless command name. */
-  readonly command?: string;
+  /** Optional pi-bmad extension file path. Resolved from env/dependency when absent. */
+  readonly piBmadExtensionPath?: string;
+
+  /** Optional emission key for headless output gating. Generated per run when absent. */
+  readonly emissionKey?: string;
+
+  /** Optional run id stamped into headless output via PI_BMAD_RUN_ID. */
+  readonly runId?: string;
 
   /** Optional spawn implementation for tests. */
   readonly spawn?: BmadStageSpawn;
@@ -100,7 +110,8 @@ export class BmadStageSpawnError extends Error {
  */
 export function runBmadStage(request: RunBmadStageRequest): Promise<StageExecutionResult> {
   const timeoutMs = resolveTimeoutMs(request);
-  const invocation = buildStageArgs(toBuildStageArgsRequest(request));
+  const argsRequest = toBuildStageArgsRequest(request);
+  const invocation = buildStageArgs(argsRequest);
   const now = request.now ?? Date.now;
   const startMs = now();
   const parser = new HeadlessJsonlParser();
@@ -130,6 +141,8 @@ export function runBmadStage(request: RunBmadStageRequest): Promise<StageExecuti
       onAbort,
       request,
       command: invocation.bin,
+      emissionKey: argsRequest.emissionKey,
+      schemaRootDir: piBmadSchemaRootDir(argsRequest.piBmadExtensionPath),
       resolve,
       reject,
     });
@@ -161,14 +174,24 @@ export function toBuildStageArgsRequest(request: RunBmadStageRequest): BuildStag
     attempt: request.attempt,
     model: request.model,
     thinking: request.thinking,
-    ...(request.priorFindings === undefined ? {} : { priorFindings: request.priorFindings }),
-    ...(request.stageExtensionPath === undefined
-      ? {}
-      : { stageExtensionPath: request.stageExtensionPath }),
-    ...(request.piBin === undefined ? {} : { piBin: request.piBin }),
-    ...(request.command === undefined ? {} : { command: request.command }),
+    piBmadExtensionPath: request.piBmadExtensionPath ?? resolvePiBmadExtensionPath(),
+    emissionKey: request.emissionKey ?? randomUUID(),
+    ...optionalStageArgsFields(request),
   };
 }
+
+type OptionalStageArgsFields = Partial<
+  Pick<BuildStageArgsRequest, "runId" | "priorFindings" | "stageExtensionPath" | "piBin">
+>;
+
+const optionalStageArgsFields = (request: RunBmadStageRequest): OptionalStageArgsFields => ({
+  ...(request.runId === undefined ? {} : { runId: request.runId }),
+  ...(request.priorFindings === undefined ? {} : { priorFindings: request.priorFindings }),
+  ...(request.stageExtensionPath === undefined
+    ? {}
+    : { stageExtensionPath: request.stageExtensionPath }),
+  ...(request.piBin === undefined ? {} : { piBin: request.piBin }),
+});
 
 interface RunState {
   aborted: boolean;
@@ -186,6 +209,8 @@ interface CloseContext {
   readonly onAbort: () => void;
   readonly request: RunBmadStageRequest;
   readonly command: string;
+  readonly emissionKey: string;
+  readonly schemaRootDir: string;
   readonly resolve: (result: StageExecutionResult) => void;
   readonly reject: (error: unknown) => void;
 }
@@ -209,7 +234,7 @@ const spawnChild = (request: SpawnChildRequest): ChildProcessWithoutNullStreams 
   try {
     return request.spawn(request.invocation.bin, request.invocation.args, {
       cwd: request.cwd,
-      env: process.env,
+      env: { ...process.env, ...request.invocation.env },
     });
   } catch (error) {
     request.reject(new BmadStageSpawnError(request.invocation.bin, error));
@@ -242,8 +267,8 @@ const resolveClose = (context: CloseContext, exitCode: number | null): void => {
   context.state.settled = true;
   clearTimeout(context.timeout);
   context.request.signal.removeEventListener("abort", context.onAbort);
-  const snapshot = context.parser.finish();
-  context.resolve(buildResult(context, snapshot.output, exitCode));
+  context.parser.finish();
+  context.resolve(buildResult(context, exitCode));
 };
 
 const rejectOnce = (context: CloseContext, error: unknown): void => {
@@ -256,23 +281,25 @@ const rejectOnce = (context: CloseContext, error: unknown): void => {
   context.reject(error);
 };
 
-const buildResult = (
-  context: CloseContext,
-  output: unknown,
-  exitCode: number | null,
-): StageExecutionResult => {
+const buildResult = (context: CloseContext, exitCode: number | null): StageExecutionResult => {
+  const snapshot = context.parser.snapshot();
+  const extraction = extractGatedHeadlessOutput(snapshot.records, {
+    emissionKey: context.emissionKey,
+    rootDir: context.schemaRootDir,
+  });
   const parseError = getParseError({
-    snapshot: context.parser.snapshot(),
-    output,
+    snapshot,
+    extraction,
     exitCode,
     stderr: context.stderr.value(),
   });
+  const usage = extractStageUsage(snapshot.records);
   return {
-    output: isRecord(output) ? output : null,
+    output: extraction.output,
     exitCode,
     durationMs: Math.max(0, context.now() - context.startMs),
     ...(parseError === undefined ? {} : { parseError }),
-    ...usageField(output),
+    ...(usage === undefined ? {} : { usage }),
     ...(context.state.timedOut ? { timedOut: true } : {}),
     ...(context.state.aborted ? { aborted: true } : {}),
   };
@@ -280,7 +307,7 @@ const buildResult = (
 
 interface ParseErrorRequest {
   readonly snapshot: ReturnType<HeadlessJsonlParser["snapshot"]>;
-  readonly output: unknown;
+  readonly extraction: GatedHeadlessOutputExtraction;
   readonly exitCode: number | null;
   readonly stderr: string;
 }
@@ -290,24 +317,23 @@ const getParseError = (request: ParseErrorRequest): string | undefined => {
   if (firstIssue !== undefined) {
     return `Invalid JSONL on line ${String(firstIssue.line)}: ${firstIssue.message}`;
   }
-  return request.exitCode !== 0 && request.output === null && request.stderr.length > 0
+  if (request.extraction.output !== null) {
+    return undefined;
+  }
+  return request.exitCode !== 0 && request.stderr.length > 0
     ? `Child stderr: ${request.stderr}`
-    : undefined;
+    : request.extraction.failure;
 };
 
-const usageField = (output: unknown): Partial<Pick<StageExecutionResult, "usage">> => {
-  const usage = isRecord(output) && isUsage(output["usage"]) ? output["usage"] : undefined;
-  return usage === undefined ? {} : { usage };
-};
-
-const isUsage = (value: unknown): value is StageExecutionUsage =>
-  isRecord(value) && isNonNegativeFinite(value["tokens"]) && isNonNegativeFinite(value["dollars"]);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isNonNegativeFinite = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0;
+/**
+ * Resolves the pi-bmad package root (payload schema root) from its extension path.
+ *
+ * @param extensionPath - The pi-bmad extension file path passed to `pi -e`.
+ *
+ * @returns The pi-bmad package root containing `content/schemas`.
+ */
+const piBmadSchemaRootDir = (extensionPath: string): string =>
+  resolvePath(dirname(extensionPath), "..");
 
 const killTimedOut = (child: ChildProcessWithoutNullStreams, state: RunState): void => {
   state.timedOut = true;

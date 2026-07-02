@@ -46,6 +46,17 @@ export type {
 } from "./fs-state-store.js";
 
 export {
+  CURRENT_RUN_POINTER_FILE_NAME,
+  CURRENT_RUN_POINTER_RELATIVE_PATH,
+  CurrentRunStoreError,
+  getCurrentRunPointerPath,
+  loadCurrentRunPointer,
+  saveCurrentRunPointer,
+} from "./current-run-store.js";
+
+export type { CurrentRunPointer, CurrentRunStoreErrorCode } from "./current-run-store.js";
+
+export {
   DEFAULT_DISPATCH_LOCK_STALE_MS,
   DISPATCH_LOCK_INFO_FILE_NAME,
   DISPATCH_LOCK_RELATIVE_DIR,

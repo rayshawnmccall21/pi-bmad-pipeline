@@ -72,13 +72,18 @@ describe("PiCliWorkflowExecutor", () => {
     ).toThrow(new RangeError("piBin must not be blank."));
   });
 
-  it("constructor rejects blank optional command", () => {
+  it("constructor rejects blank optional piBmadExtensionPath", () => {
     const [runStage] = runner();
 
     expect(
       () =>
-        new PiCliWorkflowExecutor({ model: "gpt-5", thinking: "medium", command: " ", runStage }),
-    ).toThrow(new RangeError("command must not be blank."));
+        new PiCliWorkflowExecutor({
+          model: "gpt-5",
+          thinking: "medium",
+          piBmadExtensionPath: " ",
+          runStage,
+        }),
+    ).toThrow(new RangeError("piBmadExtensionPath must not be blank."));
   });
 
   it("execute calls injected runStage with required request fields", async () => {
@@ -111,21 +116,24 @@ describe("PiCliWorkflowExecutor", () => {
     expect(calls[0]).toMatchObject({ model: "gpt-5", thinking: "high" });
   });
 
-  it("execute passes optional piBin and command when configured", async () => {
+  it("execute passes optional piBin and piBmadExtensionPath when configured", async () => {
     const [runStage, calls] = runner();
 
     await new PiCliWorkflowExecutor({
       model: "gpt-5",
       thinking: "medium",
       piBin: "pix",
-      command: "cmd",
+      piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
       runStage,
     }).execute(request());
 
-    expect(calls[0]).toMatchObject({ piBin: "pix", command: "cmd" });
+    expect(calls[0]).toMatchObject({
+      piBin: "pix",
+      piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
+    });
   });
 
-  it("execute omits optional piBin and command when absent", async () => {
+  it("execute omits optional piBin and piBmadExtensionPath when absent", async () => {
     const [runStage, calls] = runner();
 
     await new PiCliWorkflowExecutor({ model: "gpt-5", thinking: "medium", runStage }).execute(
@@ -133,7 +141,7 @@ describe("PiCliWorkflowExecutor", () => {
     );
 
     expect(calls[0]).not.toHaveProperty("piBin");
-    expect(calls[0]).not.toHaveProperty("command");
+    expect(calls[0]).not.toHaveProperty("piBmadExtensionPath");
   });
 
   it("execute passes injected spawn", async () => {

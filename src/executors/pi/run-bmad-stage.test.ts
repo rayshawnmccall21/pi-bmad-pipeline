@@ -1,11 +1,15 @@
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
+import { buildEmissionProvenance } from "pi-bmad";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   BmadStageSpawnError,
   MAX_STAGE_STDERR_CHARS,
+  resolvePiBmadExtensionPath,
   runBmadStage,
   toBuildStageArgsRequest,
 } from "./index.js";
@@ -13,6 +17,39 @@ import {
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
 import type { CompiledStageDef } from "../../rundef/index.js";
 import type { BmadStageSpawn, RunBmadStageRequest } from "./index.js";
+
+const piBmadRootDir = resolve(dirname(resolvePiBmadExtensionPath()), "..");
+
+const loadFixtureEnvelope = (): Record<string, unknown> => {
+  const line = readFileSync(
+    join(piBmadRootDir, "contracts", "fixtures", "dev-story", "success.jsonl"),
+    "utf8",
+  ).trim();
+  const parsed = JSON.parse(line) as {
+    result: { details: { headlessOutput: Record<string, unknown> } };
+  };
+  return parsed.result.details.headlessOutput;
+};
+
+const stampedEnvelope = (emissionKey: string): Record<string, unknown> => {
+  const envelope = loadFixtureEnvelope();
+  return { ...envelope, emissionProvenance: buildEmissionProvenance(emissionKey, envelope) };
+};
+
+const toolEndLine = (headlessOutput: unknown): string =>
+  `${JSON.stringify({
+    type: "tool_execution_end",
+    toolCallId: "call-1",
+    toolName: "bmad_emit_result",
+    isError: false,
+    result: { details: { headlessOutput } },
+  })}\n`;
+
+const messageEndLine = (totalTokens: number, total: number): string =>
+  `${JSON.stringify({
+    type: "message_end",
+    message: { role: "assistant", usage: { totalTokens, cost: { total } } },
+  })}\n`;
 
 const stage = (overrides: Partial<CompiledStageDef> = {}): CompiledStageDef => ({
   id: "dev-story",
@@ -68,7 +105,9 @@ describe("run BMAD stage", () => {
       priorFindings: ["a"],
       stageExtensionPath: "/ext",
       piBin: "pix",
-      command: "cmd",
+      piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
+      emissionKey: "key-1",
+      runId: "run-9",
     });
 
     expect(toBuildStageArgsRequest(input)).toEqual({
@@ -83,7 +122,9 @@ describe("run BMAD stage", () => {
       priorFindings: ["a"],
       stageExtensionPath: "/ext",
       piBin: "pix",
-      command: "cmd",
+      piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
+      emissionKey: "key-1",
+      runId: "run-9",
     });
   });
 
@@ -91,48 +132,105 @@ describe("run BMAD stage", () => {
     expect(toBuildStageArgsRequest(request())).not.toHaveProperty("priorFindings");
     expect(toBuildStageArgsRequest(request())).not.toHaveProperty("stageExtensionPath");
     expect(toBuildStageArgsRequest(request())).not.toHaveProperty("piBin");
-    expect(toBuildStageArgsRequest(request())).not.toHaveProperty("command");
+    expect(toBuildStageArgsRequest(request())).not.toHaveProperty("runId");
   });
 
-  it("spawns with built bin, args, and cwd", async () => {
+  it("resolves the pi-bmad extension path when not provided", () => {
+    const mapped = toBuildStageArgsRequest(request());
+
+    expect(mapped.piBmadExtensionPath).toContain("pi-bmad");
+  });
+
+  it("generates a fresh emission key per run when not provided", () => {
+    const first = toBuildStageArgsRequest(request());
+    const second = toBuildStageArgsRequest(request());
+
+    expect(first.emissionKey.trim().length).toBeGreaterThan(0);
+    expect(first.emissionKey).not.toBe(second.emissionKey);
+  });
+
+  it("spawns with built bin, args, cwd, and the emission env contract", async () => {
     const [spawn, child] = createSpawn();
 
-    const promise = runBmadStage(request({ spawn, piBin: "pix", command: "cmd" }));
+    const promise = runBmadStage(
+      request({
+        spawn,
+        piBin: "pix",
+        piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
+        emissionKey: "key-1",
+      }),
+    );
     close(child, 0);
     await promise;
 
     expect(spawn).toHaveBeenCalledWith(
       "pix",
-      expect.arrayContaining(["cmd", "--workflow", "dev-story"]),
-      expect.objectContaining({ cwd: "/repo/.worktrees/story-123" }) as SpawnOptionsWithoutStdio,
+      expect.arrayContaining(["--bmad-workflow", "dev-story", "--bmad-story", "STORY-123"]),
+      expect.objectContaining({
+        cwd: "/repo/.worktrees/story-123",
+        env: expect.objectContaining({
+          PI_BMAD_RUN_ID: "STORY-123.dev-story.1",
+          PI_BMAD_EMISSION_KEY: "key-1",
+        }) as NodeJS.ProcessEnv,
+      }) as SpawnOptionsWithoutStdio,
     );
   });
 
-  it("parses stdout JSONL and returns the last output", async () => {
+  it("returns the gated headless envelope from tool_execution_end, not the last record", async () => {
     const [spawn, child] = createSpawn();
+    const envelope = stampedEnvelope("key-1");
 
-    const promise = runBmadStage(request({ spawn }));
-    writeStdout(child, '{"first":true}\n{"second":true}\n');
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(child, `${toolEndLine(envelope)}{"type":"agent_end"}\n`);
     close(child, 0);
 
-    await expect(promise).resolves.toMatchObject({ output: { second: true }, exitCode: 0 });
+    await expect(promise).resolves.toMatchObject({ output: envelope, exitCode: 0 });
   });
 
-  it("extracts valid usage from final output", async () => {
+  it("fails closed when the terminal envelope is forged (bare last line)", async () => {
     const [spawn, child] = createSpawn();
 
-    const promise = runBmadStage(request({ spawn }));
-    writeStdout(child, '{"usage":{"tokens":10,"dollars":0.25}}\n');
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(child, `${JSON.stringify(loadFixtureEnvelope())}\n`);
+    close(child, 0);
+    const result = await promise;
+
+    expect(result.output).toBeNull();
+    expect(result.parseError).toMatch(/No headless terminal output/u);
+  });
+
+  it("fails closed when the envelope is stamped with a different emission key", async () => {
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(child, toolEndLine(stampedEnvelope("other-key")));
+    close(child, 0);
+    const result = await promise;
+
+    expect(result.output).toBeNull();
+    expect(result.parseError).toMatch(/provenance/u);
+  });
+
+  it("aggregates assistant usage from message_end events", async () => {
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(child, `${messageEndLine(10, 0.25)}${messageEndLine(5, 0.5)}`);
+    writeStdout(child, toolEndLine(stampedEnvelope("key-1")));
     close(child, 0);
 
-    await expect(promise).resolves.toMatchObject({ usage: { tokens: 10, dollars: 0.25 } });
+    await expect(promise).resolves.toMatchObject({ usage: { tokens: 15, dollars: 0.75 } });
   });
 
   it("omits invalid usage", async () => {
     const [spawn, child] = createSpawn();
 
-    const promise = runBmadStage(request({ spawn }));
-    writeStdout(child, '{"usage":{"tokens":-1,"dollars":0}}\n');
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(
+      child,
+      '{"type":"message_end","message":{"role":"assistant","usage":{"totalTokens":-1,"cost":{"total":0}}}}\n',
+    );
+    writeStdout(child, toolEndLine(stampedEnvelope("key-1")));
     close(child, 0);
 
     expect(await promise).not.toHaveProperty("usage");
@@ -262,8 +360,8 @@ describe("run BMAD stage", () => {
   it("omits optional result fields when absent", async () => {
     const [spawn, child] = createSpawn();
 
-    const promise = runBmadStage(request({ spawn }));
-    writeStdout(child, '{"ok":true}\n');
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(child, toolEndLine(stampedEnvelope("key-1")));
     close(child, 0);
     const result = await promise;
 

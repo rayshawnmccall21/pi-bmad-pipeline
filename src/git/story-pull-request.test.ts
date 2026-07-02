@@ -46,12 +46,27 @@ const fakeSpawn = (): { readonly calls: SpawnCall[]; readonly spawn: StoryPullRe
   };
 };
 
+const pointerRecorder = (): {
+  readonly writes: { projectRoot: string; pointer: unknown }[];
+  readonly persist: (root: string, pointer: unknown) => Promise<string>;
+} => {
+  const writes: { projectRoot: string; pointer: unknown }[] = [];
+  return {
+    writes,
+    persist: (root, pointer): Promise<string> => {
+      writes.push({ projectRoot: root, pointer });
+      return Promise.resolve(`${root}/.pi/pipeline/state/current-run.json`);
+    },
+  };
+};
+
 const request = (spawn: StoryPullRequestSpawn) => ({
   projectRoot,
   worktreePath,
   storyId,
   branch,
   spawn,
+  persistCurrentRunPointer: pointerRecorder().persist,
 });
 
 const call = (calls: readonly SpawnCall[], index: number): SpawnCall => {
@@ -237,6 +252,80 @@ describe("story pull request", () => {
     await finishHappyPath(fake.calls, "https://github.com/owner/repo/pulls");
 
     await expect(promise).resolves.not.toHaveProperty("number");
+  });
+
+  it("refreshes the current-run pointer after the PR is opened", async () => {
+    const fake = fakeSpawn();
+    const recorder = pointerRecorder();
+    const agentClaim = { testsPassed: true, typecheckPassed: true, lintPassed: true };
+    const promise = openStoryPullRequest({
+      ...request(fake.spawn),
+      agentClaim,
+      persistCurrentRunPointer: recorder.persist,
+    });
+
+    await finishHappyPath(fake.calls);
+    await promise;
+
+    expect(recorder.writes).toEqual([{ projectRoot, pointer: { storyId, agentClaim } }]);
+  });
+
+  it("omits the agent claim from the pointer when not provided", async () => {
+    const fake = fakeSpawn();
+    const recorder = pointerRecorder();
+    const promise = openStoryPullRequest({
+      ...request(fake.spawn),
+      persistCurrentRunPointer: recorder.persist,
+    });
+
+    await finishHappyPath(fake.calls);
+    await promise;
+
+    expect(recorder.writes).toHaveLength(1);
+    expect(recorder.writes[0]?.pointer).toEqual({ storyId });
+  });
+
+  it("does not write the pointer when the PR is blocked", async () => {
+    const fake = fakeSpawn();
+    const recorder = pointerRecorder();
+    const promise = openStoryPullRequest({
+      ...request(fake.spawn),
+      persistCurrentRunPointer: recorder.persist,
+    });
+
+    writeStdout(call(fake.calls, 0).child, `+key = ${secret()}`);
+    await tick();
+    close(call(fake.calls, 0).child, 0);
+
+    await expect(promise).rejects.toMatchObject({ code: "secret-scan-blocked" });
+    expect(recorder.writes).toHaveLength(0);
+  });
+
+  it("persists a real pointer file through the default store", async () => {
+    const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const realRoot = await mkdtemp(join(tmpdir(), "story-pr-pointer-"));
+    try {
+      const fake = fakeSpawn();
+      const promise = openStoryPullRequest({
+        projectRoot: realRoot,
+        worktreePath,
+        storyId,
+        branch,
+        spawn: fake.spawn,
+      });
+
+      await finishHappyPath(fake.calls);
+      await promise;
+
+      const pointer: unknown = JSON.parse(
+        await readFile(join(realRoot, ".pi", "pipeline", "state", "current-run.json"), "utf8"),
+      );
+      expect(pointer).toEqual({ storyId });
+    } finally {
+      await rm(realRoot, { recursive: true, force: true });
+    }
   });
 
   it("wraps command nonzero exit", async () => {

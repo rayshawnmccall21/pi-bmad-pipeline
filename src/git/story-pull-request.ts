@@ -7,9 +7,15 @@ import {
 } from "node:child_process";
 
 import { redactText } from "../security/index.js";
-import { isPipelineStateStoryId } from "../state/index.js";
+import {
+  isPipelineStateStoryId,
+  saveCurrentRunPointer,
+  type CurrentRunPointer,
+} from "../state/index.js";
 
 import { scanGitDiffForSecrets, type GitSecretScanResult } from "./secret-scan.js";
+
+import type { AgentEvidenceClaim } from "./merge-gate.js";
 
 /** Default PR title prefix. */
 export const DEFAULT_STORY_PR_TITLE_PREFIX = "BMAD";
@@ -46,6 +52,15 @@ export interface OpenStoryPullRequestRequest {
   readonly body?: string;
   readonly spawn?: StoryPullRequestSpawn;
   readonly now?: () => number;
+
+  /** Optional agent-reported claim recorded on the current-run pointer. */
+  readonly agentClaim?: AgentEvidenceClaim;
+
+  /** Optional current-run pointer writer; defaults to saveCurrentRunPointer. */
+  readonly persistCurrentRunPointer?: (
+    projectRoot: string,
+    pointer: CurrentRunPointer,
+  ) => Promise<string>;
 }
 
 /** PR error code. */
@@ -132,6 +147,7 @@ export async function openStoryPullRequest(
     )
   ).stdout.trim();
   assertPrUrl(prUrl);
+  await refreshCurrentRunPointer(request);
   return freezePr({
     storyId: request.storyId,
     branch: request.branch,
@@ -141,6 +157,15 @@ export async function openStoryPullRequest(
     url: prUrl,
   });
 }
+
+/** Refreshes the merge-review current-run pointer once the PR exists. */
+const refreshCurrentRunPointer = async (request: OpenStoryPullRequestRequest): Promise<void> => {
+  const persist = request.persistCurrentRunPointer ?? saveCurrentRunPointer;
+  await persist(request.projectRoot, {
+    storyId: request.storyId,
+    ...(request.agentClaim === undefined ? {} : { agentClaim: request.agentClaim }),
+  });
+};
 
 interface CommandRequest {
   readonly command: string;
