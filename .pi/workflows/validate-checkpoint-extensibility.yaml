@@ -1,0 +1,111 @@
+# validate-checkpoint-extensibility.yaml
+# Permanent end-to-end validation workflow for the checkpoint extensibility
+# stack. When executed headless via the pi CLI it exercises every layer:
+#   1. Lane A evidence gate fail-closed probe + pass (pipeline--e2e-evidence-gate)
+#   2. Lane A command gate (pipeline--e2e-command-gate)
+#   3. Lane B rung-3 module gate (pipeline--e2e-module-gate, .mjs on plain Node)
+#   4. Typed result emit through .pi/schemas (bmad_emit_result)
+#
+# Reads:    .pi/workflows/checkpoints/validate-checkpoint-extensibility-checkpoints.yaml (gate policies)
+# Produces: .pi/artifacts/e2e/* probe artifacts + a typed terminal result.
+#
+# Usage (from this repo root):
+#   PI_BMAD_RUN_ID=<id> PI_BMAD_EMISSION_KEY=<secret> \
+#   pi --mode json -p --no-session --no-extensions \
+#     -e /Users/Apple/pi-bmad/extensions/pi-bmad.ts \
+#     --bmad-workflow validate-checkpoint-extensibility \
+#     --bmad-story <storyId> "Validate the checkpoint extensibility stack"
+
+id: validate-checkpoint-extensibility
+name: Validate Checkpoint Extensibility
+description: >
+  Proves the checkpoint extensibility stack end to end inside this repo:
+  the Lane A evidence gate blocks fail-closed before evidence exists and
+  passes on policy-conformant evidence, the Lane A command gate verifies a
+  real command against the project root, the Lane B rung-3 module gate
+  recomputes cross-field consistency over the run's state JSON, and the
+  run terminates with a typed result emit validated against the
+  .pi/schemas result schema.
+agent: dev
+phase: implementation
+mode: solo
+returns:
+  contractVersion: pi-bmad.workflow-return.v1
+  typeId: pi-bmad-pipeline.workflow.validate-checkpoint-extensibility.result.v1
+  schemaPath: .pi/schemas/validate-checkpoint-extensibility-result.schema.json
+  emitter:
+    kind: workflow-summary
+
+steps:
+  # ── Step 1: Probe the evidence gate fail-closed, then satisfy it ────────
+  - id: probe-blocked
+    name: Probe Evidence Gate Fail-Closed
+    description: >
+      Attempt to advance BEFORE writing any evidence and record the
+      fail-closed Blocked response, then write the evidence JSON per the
+      policy field table and advance through the Lane A evidence gate.
+    guide: guides/validate-checkpoint-extensibility/probe-blocked.md
+    tools: [read, write, grep, find]
+    checkpoints:
+      # Evidence gate (pi-bmad.checkpoints.v1): policy lives in
+      # .pi/workflows/checkpoints/validate-checkpoint-extensibility-checkpoints.yaml
+      # and validates .pi/artifacts/e2e/evidence-probe.json.
+      - pipeline--e2e-evidence-gate
+    artifacts:
+      - ".pi/artifacts/e2e/blocked-probe.log"
+      - ".pi/artifacts/e2e/evidence-probe.json"
+    mode: solo
+    next: command-probe
+
+  # ── Step 2: Prove the command gate runs a real command ─────────────────
+  - id: command-probe
+    name: Probe Command Gate
+    description: >
+      Create the marker file the Lane A command gate tests for; the gate
+      runs `test -f .pi/artifacts/e2e/command-probe.marker` from the
+      project root with bounded timeout and retries.
+    guide: guides/validate-checkpoint-extensibility/command-probe.md
+    tools: [read, write, grep, find]
+    checkpoints:
+      # Command gate (pi-bmad.checkpoints.v1, kind: command, passOn
+      # exit-zero, timeoutMs 10000, maxRetries 1) from the same policy file.
+      - pipeline--e2e-command-gate
+    artifacts:
+      - ".pi/artifacts/e2e/command-probe.marker"
+    mode: solo
+    next: module-probe
+
+  # ── Step 3: Prove the rung-3 module gate recomputes consistency ────────
+  - id: module-probe
+    name: Probe Module Gate
+    description: >
+      Write the module state JSON recording every probe outcome so far;
+      the Lane B rung-3 module gate recomputes totalProbes, passedProbes,
+      and allProbesPassed from the probe records and fails closed on any
+      divergence or over-claim.
+    guide: guides/validate-checkpoint-extensibility/module-probe.md
+    tools: [read, write, grep, find]
+    checkpoints:
+      # Rung-3 module gate registered by
+      # .pi/workflows/checkpoints/validate-checkpoint-extensibility-gates.mjs.
+      - pipeline--e2e-module-gate
+    artifacts:
+      - ".pi/artifacts/e2e/module-state.json"
+    mode: solo
+    next: summarize
+
+  # ── Step 4: Summarize and emit the typed result ─────────────────────────
+  - id: summarize
+    name: Summarize Validation Run
+    description: >
+      Verify every probe artifact exists, complete the workflow, and emit
+      the typed result payload. No deterministic static-path check exists
+      for the emit itself, so this step stays always-pass with a guide
+      checklist; the typed bmad_emit_result registration enforces the
+      result schema.
+    guide: guides/validate-checkpoint-extensibility/summarize.md
+    tools: [read, grep, find]
+    checkpoints:
+      - always-pass
+    mode: solo
+    next: null

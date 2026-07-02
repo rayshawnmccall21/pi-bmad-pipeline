@@ -24,9 +24,26 @@ const mergeGateOverClaim = JSON.stringify({
   agentClaim: { testsPassed: true, typecheckPassed: true, lintPassed: true },
 });
 
+// The strongest success-claiming module state the e2e module gate could see
+// with NO verifiable per-probe proof: base fields and summary counts all claim
+// green while the probes array carries zero records to recompute them from.
+// The gate must still fail closed.
+const e2eModuleGateOverClaim = JSON.stringify({
+  checkpoint: "pipeline--e2e-module-gate",
+  status: "passed",
+  storyId: "E2E-CHECKPOINT-1",
+  probes: [],
+  totalProbes: 3,
+  passedProbes: 3,
+  allProbesPassed: true,
+});
+
 const suite = defineCheckpointConformance({
   projectRoot: process.cwd(),
-  overClaimEvidence: { "pipeline--merge-gate-green": mergeGateOverClaim },
+  overClaimEvidence: {
+    "pipeline--merge-gate-green": mergeGateOverClaim,
+    "pipeline--e2e-module-gate": e2eModuleGateOverClaim,
+  },
 });
 
 describe("pi-bmad checkpoint conformance", () => {

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pi-bmad-pipeline.workflow.validate-checkpoint-extensibility.result.v1",
+  "title": "Validate Checkpoint Extensibility workflow result payload",
+  "type": "object",
+  "properties": {
+    "storyId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Story id the validation run was bound to."
+    },
+    "evidenceGate": {
+      "type": "string",
+      "enum": ["passed", "blocked"],
+      "description": "Final observed outcome of pipeline--e2e-evidence-gate (Lane A evidence)."
+    },
+    "commandGate": {
+      "type": "string",
+      "enum": ["passed", "blocked"],
+      "description": "Final observed outcome of pipeline--e2e-command-gate (Lane A command)."
+    },
+    "moduleGate": {
+      "type": "string",
+      "enum": ["passed", "blocked"],
+      "description": "Final observed outcome of pipeline--e2e-module-gate (Lane B rung-3 module)."
+    },
+    "blockedProbeObserved": {
+      "type": "boolean",
+      "description": "True when the probe-blocked step observed a fail-closed \"Blocked\" advance BEFORE evidence was written."
+    }
+  },
+  "required": ["storyId", "evidenceGate", "commandGate", "moduleGate", "blockedProbeObserved"],
+  "additionalProperties": false
+}

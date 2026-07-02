@@ -1,0 +1,55 @@
+# Declarative checkpoint policies for the validate-checkpoint-extensibility
+# workflow (Lane A of the e2e checkpoint-extensibility stack).
+#
+# Format: pi-bmad.checkpoints.v1 — parsed by pi-bmad's checkpoint-policy
+# loader from this repo's canonical project checkpoint root
+# (.pi/workflows/checkpoints/). This file is the SINGLE SOURCE OF TRUTH for
+# the evidence contract; the field table in
+# .pi/workflows/guides/validate-checkpoint-extensibility/probe-blocked.md is
+# rendered from the evidence entry below and must be kept in lockstep with it.
+#
+# Static-path rule (v1): every artifact path is static under
+# .pi/artifacts/e2e/ — overwritten on each validation run.
+#
+# Lane coverage by design:
+#   pipeline--e2e-evidence-gate — kind: evidence, exercising requiredStrings,
+#     enumFields, requiredArrays, objectArrayKeys, pathFields, crossField,
+#     and additionalProperties: false.
+#   pipeline--e2e-command-gate  — kind: command with bounded timeoutMs and
+#     maxRetries, passOn exit-zero.
+# The Lane B module gate (pipeline--e2e-module-gate) lives next door in
+# validate-checkpoint-extensibility-gates.mjs; the summarize step stays
+# always-pass with a guide checklist (no static-path deterministic check).
+version: pi-bmad.checkpoints.v1
+workflow: validate-checkpoint-extensibility
+checkpoints:
+  - id: pipeline--e2e-evidence-gate
+    kind: evidence
+    step: probe-blocked
+    artifact: .pi/artifacts/e2e/evidence-probe.json
+    spec:
+      requiredStrings: [storyId, probeLogPath]
+      requiredArrays: [probes]
+      enumFields:
+        - { field: verdict, allowed: [green, blocked] }
+      objectArrayKeys:
+        - { field: probes, keys: [lane, artifactPath, status] }
+      pathFields: ["probes[].artifactPath", probeLogPath]
+      crossField:
+        # "green" may only be claimed when every probe individually passed —
+        # an over-claimed verdict fails closed.
+        - when: { field: verdict, equals: green }
+          require: { field: probes, everyItemField: status, equals: passed }
+      # Evidence keys outside {checkpoint, status, storyId, probeLogPath,
+      # probes, verdict} are rejected, so a typo cannot weaken the gate.
+      additionalProperties: false
+
+  - id: pipeline--e2e-command-gate
+    kind: command
+    step: command-probe
+    # Runs from the project root; proves the command lane executes real
+    # commands and fails closed while the marker file is absent.
+    command: "test -f .pi/artifacts/e2e/command-probe.marker"
+    passOn: exit-zero
+    timeoutMs: 10000
+    maxRetries: 1
