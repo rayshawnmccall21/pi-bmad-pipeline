@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pi-bmad-pipeline.workflow.create-loop.result.v1",
+  "title": "Create Loop workflow result payload",
+  "type": "object",
+  "properties": {
+    "storyId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Story id the create-loop run was bound to."
+    },
+    "contractPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Repo-relative path to the authored loop contract JSON."
+    },
+    "smokeExitCode": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "description": "Final observed bounded-smoke exit code. 0 = exit condition met, 2 = budget exhausted — both are valid bounded terminations (the schema dialect cannot express an integer enum, so the 0/2 convention is enforced by the smoke gates' passOn exit-codes [0, 2])."
+    },
+    "receiptCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of receipt lines emitted across the final bounded smoke run."
+    },
+    "budgetsEnforced": {
+      "type": "boolean",
+      "description": "True when the harness honored the contract iteration cap and wall-clock budget during the verified smoke run."
+    }
+  },
+  "required": ["storyId", "contractPath", "smokeExitCode", "receiptCount", "budgetsEnforced"],
+  "additionalProperties": false
+}

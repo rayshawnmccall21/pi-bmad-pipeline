@@ -1,0 +1,134 @@
+# create-loop.yaml
+# Guides an executing agent to build an agentic loop INCREMENTALLY, with
+# deterministic checkpoints that TEST THE LOOP AS IT IS BEING BUILT. Methodology
+# source: the global creating-loops skill
+# (/Users/Apple/.pi/agent/skills/creating-loops — SKILL.md, patterns.md,
+# failure-modes.md, templates.md, ralph.md).
+#
+# Reads:    .pi/workflows/checkpoints/create-loop-checkpoints.yaml (gate policies)
+#           /Users/Apple/.pi/agent/skills/creating-loops/* (methodology)
+# Produces: .pi/loops/create-loop/{loop-contract.json,run-loop.sh,stub-agent.sh,validate-receipts.mjs}
+#           .pi/artifacts/create-loop/{contract-evidence.json,receipts.jsonl}
+#           + a typed terminal result.
+#
+# Usage (from this repo root, headless dispatch):
+#   PI_BMAD_RUN_ID=<id> PI_BMAD_EMISSION_KEY=<secret> \
+#   pi --mode json -p --no-session --no-extensions \
+#     -e /Users/Apple/pi-bmad/extensions/pi-bmad.ts \
+#     --bmad-workflow create-loop \
+#     --bmad-story <storyId> "Build a bounded agentic loop"
+# Prerequisites:
+#   - The `dev` agent is available on the discovered agent surface.
+#   - The creating-loops skill files are present at the global path above.
+
+id: create-loop
+name: Create Loop
+description: >
+  Builds an agentic loop incrementally with deterministic checkpoints that
+  test the loop as it is being built: write the 11-row loop contract, wire the
+  bounded harness with backpressure and receipts, prove termination under budget
+  with a stub-agent smoke run, re-verify idempotently, and emit a typed result.
+agent: dev
+phase: implementation
+mode: solo
+returns:
+  contractVersion: pi-bmad.workflow-return.v1
+  typeId: pi-bmad-pipeline.workflow.create-loop.result.v1
+  schemaPath: .pi/schemas/create-loop-result.schema.json
+  emitter:
+    kind: workflow-summary
+
+steps:
+  # ── Step 1: Design the loop contract ──────────────────────────────────
+  - id: design-loop-contract
+    name: Design Loop Contract
+    description: >
+      Write the 11-row loop contract JSON (goal, exitCondition, budgets,
+      feedback, receipts — no row TBD) and the self-audit contract-evidence
+      JSON so the evidence + budget gates can verify it deterministically.
+    guide: guides/create-loop/design-loop-contract.md
+    tools: [read, write, edit, bash, grep, find]
+    checkpoints:
+      # Lane A evidence gate (kind: evidence) over contract-evidence.json +
+      # Lane A command gate asserting integer budgets and non-empty strings.
+      - create-loop--contract-evidence
+      - create-loop--contract-budgets
+    artifacts:
+      - ".pi/loops/create-loop/loop-contract.json"
+      - ".pi/artifacts/create-loop/contract-evidence.json"
+    mode: solo
+    next: build-harness
+
+  # ── Step 2: Build the bounded harness with backpressure ──────────────
+  - id: build-harness
+    name: Build Loop Harness
+    description: >
+      Implement the bounded loop harness (run-loop.sh honoring MAX_ITERATIONS
+      and LOOP_AGENT_CMD env overrides and the contract wall-clock budget), a
+      deterministic stub agent, and the plain-Node validate-receipts.mjs schema
+      validator. Backpressure-first: the feedback signal is an exit code, never
+      the agent's opinion.
+    guide: guides/create-loop/build-harness.md
+    tools: [read, write, edit, bash, grep, find]
+    checkpoints:
+      # Lane A command gate: syntax-checks both shell scripts + the validator.
+      - create-loop--harness-syntax
+    artifacts:
+      - ".pi/loops/create-loop/run-loop.sh"
+      - ".pi/loops/create-loop/stub-agent.sh"
+      - ".pi/loops/create-loop/validate-receipts.mjs"
+    mode: solo
+    next: smoke-run
+
+  # ── Step 3: Bounded smoke run proving termination + receipts ─────────
+  - id: smoke-run
+    name: Bounded Smoke Run
+    description: >
+      Execute a bounded smoke run with the stub agent (MAX_ITERATIONS=2) proving
+      termination under budget and receipts emission. Exit 0 = exit condition
+      met, exit 2 = budget exhausted — both valid.
+    guide: guides/create-loop/smoke-run.md
+    tools: [read, write, edit, bash, grep, find]
+    checkpoints:
+      # Lane A command gate: bounded smoke passes on exit [0,2].
+      - create-loop--smoke-bounded
+      # Lane A command gate: receipts.jsonl is non-empty.
+      - create-loop--receipts-exist
+    artifacts:
+      - ".pi/artifacts/create-loop/receipts.jsonl"
+    mode: solo
+    next: final-verify
+
+  # ── Step 4: Final guardrail pass + idempotent re-verify ──────────────
+  - id: final-verify
+    name: Final Verify
+    description: >
+      Guardrail pass (repeat-failure stop, wall-clock budget, escalation notes
+      present in the contract) plus an idempotent re-run of the bounded smoke
+      and a receipts-schema validation with validate-receipts.mjs.
+    guide: guides/create-loop/final-verify.md
+    tools: [read, write, edit, bash, grep, find]
+    checkpoints:
+      # Lane A command gate: idempotent bounded smoke passes on exit [0,2].
+      - create-loop--smoke-repeat
+      # Lane A command gate: receipts validate against the schema + bound.
+      - create-loop--receipts-schema
+    artifacts:
+      - ".pi/artifacts/create-loop/receipts.jsonl"
+    mode: solo
+    next: summarize
+
+  # ── Step 5: Summarize and emit the typed result ──────────────────────
+  - id: summarize
+    name: Summarize and Emit Result
+    description: >
+      Verify every artifact exists, then emit the typed result payload. No
+      deterministic static-path check exists for the emit itself, so this step
+      is always-pass with a guide checklist; the typed bmad_emit_result
+      registration enforces the result schema.
+    guide: guides/create-loop/summarize.md
+    tools: [read, grep, find]
+    checkpoints:
+      - always-pass
+    mode: solo
+    next: null

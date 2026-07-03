@@ -65,11 +65,12 @@ pi --mode json -p --no-session --no-extensions \
 Project checkpoint gates consumed by pi-bmad's checkpoint kernel live in
 `.pi/workflows/checkpoints/`:
 
-| File                                                 | What it registers                                                                                   |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `merge-gate.mjs`                                     | Rung-3 module gate `pipeline--merge-gate-green` over the pipeline's durable on-disk merge contracts |
-| `validate-checkpoint-extensibility-checkpoints.yaml` | Lane A policies `pipeline--e2e-evidence-gate` (evidence) and `pipeline--e2e-command-gate` (command) |
-| `validate-checkpoint-extensibility-gates.mjs`        | Lane B rung-3 module gate `pipeline--e2e-module-gate`                                               |
+| File                                                 | What it registers                                                                                                                      |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `merge-gate.mjs`                                     | Rung-3 module gate `pipeline--merge-gate-green` over the pipeline's durable on-disk merge contracts                                    |
+| `validate-checkpoint-extensibility-checkpoints.yaml` | Lane A policies `pipeline--e2e-evidence-gate` (evidence) and `pipeline--e2e-command-gate` (command)                                    |
+| `validate-checkpoint-extensibility-gates.mjs`        | Lane B rung-3 module gate `pipeline--e2e-module-gate`                                                                                  |
+| `create-loop-checkpoints.yaml`                       | Lane A policies for the `create-loop` workflow: one `kind: evidence` gate and six `kind: command` gates (all rung 2; no rung-3 module) |
 
 `merge-gate.mjs` runs on **plain Node** (no TypeScript imports) and
 re-implements the preconditions of `src/git/merge-gate.ts` against the durable
@@ -113,6 +114,38 @@ pi --mode json -p --no-session --no-extensions \
 Success means the final `tool_execution_end` envelope is accepted by
 `gateHeadlessTerminalOutput` under the emission key you supplied. Probe
 artifacts land in `.pi/artifacts/e2e/`.
+
+## The create-loop workflow
+
+`.pi/workflows/create-loop.yaml` guides an executing agent to build an agentic
+loop **incrementally**, with deterministic checkpoints that test the loop as it
+is being built. Methodology source: the global creating-loops skill
+(`/Users/Apple/.pi/agent/skills/creating-loops`). The five steps write the
+11-row loop contract, implement the bounded harness (`run-loop.sh`, a stub
+agent, and `validate-receipts.mjs`), prove termination under budget with a
+stub-agent smoke run, re-verify idempotently, and emit a typed result.
+
+All checkpoints are Lane A rung 2 (policy file
+`.pi/workflows/checkpoints/create-loop-checkpoints.yaml`) — one `kind: evidence`
+gate over `contract-evidence.json` and six `kind: command` gates. No rung-3
+module: integer-bound budget asserts stay in a `node -e` command gate rather
+than climbing the rung ladder. The terminal step is `always-pass` with a guide
+checklist; enforcement is the typed `bmad_emit_result` against
+`.pi/schemas/create-loop-result.schema.json`.
+
+Run it headless from this repo root:
+
+```bash
+PI_BMAD_RUN_ID=<id> PI_BMAD_EMISSION_KEY=<secret> \
+pi --mode json -p --no-session --no-extensions \
+  -e /Users/Apple/pi-bmad/extensions/pi-bmad.ts \
+  --bmad-workflow create-loop \
+  --bmad-story <storyId> "Build a bounded agentic loop"
+```
+
+The harness honors two env overrides — `MAX_ITERATIONS` (iteration cap) and
+`LOOP_AGENT_CMD` (the agent invoked each iteration) — and uses two valid bounded
+termination exit codes: `0` = exit condition met, `2` = budget exhausted.
 
 ## Debug logging
 

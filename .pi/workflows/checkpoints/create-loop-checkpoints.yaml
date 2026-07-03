@@ -1,0 +1,110 @@
+# Declarative checkpoint policies for the create-loop workflow (Lane A).
+#
+# Format: pi-bmad.checkpoints.v1 — parsed by pi-bmad's checkpoint-policy loader
+# from this repo's canonical project checkpoint root
+# (.pi/workflows/checkpoints/). This file is the SINGLE SOURCE OF TRUTH for the
+# contract-evidence field contract; the field table in
+# .pi/workflows/guides/create-loop/design-loop-contract.md is rendered from the
+# evidence entry below and must be kept in lockstep with it.
+#
+# Rung decisions (see .pi/artifacts/runtime/create-workflow-checkpoint-plan.md):
+#   - Every runnable check here is rung 2 Lane A (kind: command per Q3, one
+#     kind: evidence per Q4).
+#   - create-loop--contract-budgets uses a kind: command node -e one-liner for
+#     integer-bounds + non-empty-string asserts because numeric bounds are
+#     inexpressible in the v1 evidence check-kind set — this keeps the gate
+#     Lane A instead of climbing to rung 3.
+#   - NO rung-3 .mjs module in this run: module names authored mid-run do not
+#     resolve in the same session, and no cross-field recomputation here
+#     exceeds Lane A expressiveness.
+#
+# Static-path rule (v1): every artifact path is static under
+# .pi/loops/create-loop/ or .pi/artifacts/create-loop/ — overwritten on each run.
+version: pi-bmad.checkpoints.v1
+workflow: create-loop
+checkpoints:
+  - id: create-loop--contract-evidence
+    kind: evidence
+    step: design-loop-contract
+    artifact: .pi/artifacts/create-loop/contract-evidence.json
+    spec:
+      requiredStrings: [storyId, goal, exitCondition, contractPath]
+      requiredArrays: [checks]
+      objectArrayKeys:
+        - { field: checks, keys: [name, status] }
+      enumFields:
+        - { field: verdict, allowed: [green, blocked] }
+      pathFields: [contractPath]
+      crossField:
+        # "green" may only be claimed when every recorded check individually
+        # passed — an over-claimed verdict fails closed.
+        - when: { field: verdict, equals: green }
+          require: { field: checks, everyItemField: status, equals: passed }
+      # Evidence keys outside {storyId, goal, exitCondition, contractPath,
+      # checks, verdict} are rejected, so a typo cannot weaken the gate.
+      additionalProperties: false
+
+  - id: create-loop--contract-budgets
+    kind: command
+    step: design-loop-contract
+    # Reads the loop contract and asserts every budget is a positive integer
+    # and that feedback + receipts are non-empty strings. Numeric bounds are
+    # inexpressible in the v1 evidence check-kind set, so this stays Lane A
+    # as a node -e one-liner rather than climbing to rung 3.
+    command: 'node -e "const fs=require(''fs'');const c=JSON.parse(fs.readFileSync(''.pi/loops/create-loop/loop-contract.json'',''utf8''));const ok=Number.isInteger(c.budgets.maxLoops)&&c.budgets.maxLoops>0&&Number.isInteger(c.budgets.wallClockMs)&&c.budgets.wallClockMs>0&&typeof c.feedback===''string''&&c.feedback.length>0&&typeof c.receipts===''string''&&c.receipts.length>0;process.exit(ok?0:1)"'
+    passOn: exit-zero
+    timeoutMs: 10000
+    maxRetries: 1
+
+  - id: create-loop--harness-syntax
+    kind: command
+    step: build-harness
+    # Syntax-checks both shell scripts and the Node validator without executing
+    # the loop itself.
+    command: "bash -n .pi/loops/create-loop/run-loop.sh && bash -n .pi/loops/create-loop/stub-agent.sh && node --check .pi/loops/create-loop/validate-receipts.mjs"
+    passOn: exit-zero
+    timeoutMs: 15000
+    maxRetries: 1
+
+  - id: create-loop--smoke-bounded
+    kind: command
+    step: smoke-run
+    # Bounded smoke run with the stub agent. Exit 0 = exit condition met,
+    # exit 2 = budget exhausted — both are valid bounded terminations.
+    command: "env MAX_ITERATIONS=2 LOOP_AGENT_CMD=.pi/loops/create-loop/stub-agent.sh bash .pi/loops/create-loop/run-loop.sh"
+    passOn:
+      kind: exit-codes
+      codes: [0, 2]
+    timeoutMs: 120000
+    maxRetries: 0
+
+  - id: create-loop--receipts-exist
+    kind: command
+    step: smoke-run
+    # The smoke run must have emitted at least one non-empty receipts line.
+    command: "test -s .pi/artifacts/create-loop/receipts.jsonl"
+    passOn: exit-zero
+    timeoutMs: 10000
+    maxRetries: 0
+
+  - id: create-loop--smoke-repeat
+    kind: command
+    step: final-verify
+    # Idempotent re-run of the same bounded smoke — proves repeatable
+    # termination under budget.
+    command: "env MAX_ITERATIONS=2 LOOP_AGENT_CMD=.pi/loops/create-loop/stub-agent.sh bash .pi/loops/create-loop/run-loop.sh"
+    passOn:
+      kind: exit-codes
+      codes: [0, 2]
+    timeoutMs: 120000
+    maxRetries: 0
+
+  - id: create-loop--receipts-schema
+    kind: command
+    step: final-verify
+    # Validates every receipts.jsonl line parses as JSON with the required
+    # keys and that the iteration count <= MAX_ITERATIONS.
+    command: "env MAX_ITERATIONS=2 node .pi/loops/create-loop/validate-receipts.mjs .pi/artifacts/create-loop/receipts.jsonl"
+    passOn: exit-zero
+    timeoutMs: 30000
+    maxRetries: 0

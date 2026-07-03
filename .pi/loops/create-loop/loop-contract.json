@@ -1,0 +1,10 @@
+{
+  "goal": "Retry the flaky command (the agent invoked each iteration) until it exits green — i.e. make $LOOP_AGENT_CMD exit 0 within the iteration + wall-clock budget. Manual bootstrap trigger (run via run-loop.sh); the loop drives a single deterministic command per iteration rather than discovering external work; it acts inside the .pi/loops/create-loop/ workspace whose .stub-state counter is the surviving state; durable context is this contract file; run-loop.sh delegates each iteration to $LOOP_AGENT_CMD (stub-agent.sh in smoke).",
+  "exitCondition": "The agent invoked this iteration exits 0 — i.e. $LOOP_AGENT_CMD (stub-agent.sh during smoke, fails twice then passes) returns exit code 0, after which the loop stops and emits a final receipt. If the iteration cap or wall-clock budget is hit first, the loop stops with exit code 2 and a human reviews .pi/artifacts/create-loop/receipts.jsonl (the escalation destination).",
+  "budgets": {
+    "maxLoops": 3,
+    "wallClockMs": 60000
+  },
+  "feedback": "The exit code of $LOOP_AGENT_CMD run each iteration (0 = green/pass, non-zero = flaky/fail). Maker/checker split: the acting agent never decides completion — an exit code from a separate command (stub-agent.sh by default, overridable via LOOP_AGENT_CMD) is the sole pass/fail signal the harness branches on. run-loop.sh captures that exit code and records it as receipt exitCode.",
+  "receipts": "One JSON line per iteration appended to .pi/artifacts/create-loop/receipts.jsonl with keys iteration, timestamp, action, outcome, exitCode; truncated at loop start for idempotent re-runs. This is both the surviving observability trail and the data the final-verify receipts-schema gate validates against MAX_ITERATIONS."
+}
