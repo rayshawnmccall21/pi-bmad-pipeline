@@ -20,6 +20,11 @@ import {
   type GatedHeadlessOutputExtraction,
 } from "./headless-stream-output.js";
 import { resolvePiBmadExtensionPath } from "./pi-bmad-extension.js";
+import {
+  logEnvelopeGate,
+  logStageSpawn,
+  type EnvelopeGateLogContext,
+} from "./stage-debug-events.js";
 
 /** Maximum captured stderr characters retained for diagnostics. */
 // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- small fixed diagnostic cap.
@@ -118,6 +123,7 @@ export function runBmadStage(request: RunBmadStageRequest): Promise<StageExecuti
   const stderr = createStderrCapture();
   const state = createRunState();
   const spawn = request.spawn ?? nodeSpawn;
+  logStageSpawn(request, invocation, timeoutMs);
 
   return new Promise((resolve, reject) => {
     const child = spawnChild({ spawn, invocation, cwd: request.worktreeCwd, reject });
@@ -287,6 +293,14 @@ const buildResult = (context: CloseContext, exitCode: number | null): StageExecu
     emissionKey: context.emissionKey,
     rootDir: context.schemaRootDir,
   });
+  const gateContext: EnvelopeGateLogContext = {
+    request: context.request,
+    extraction,
+    exitCode,
+    timedOut: context.state.timedOut,
+    aborted: context.state.aborted,
+  };
+  logEnvelopeGate(gateContext);
   const parseError = getParseError({
     snapshot,
     extraction,

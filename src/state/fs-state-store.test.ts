@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DEBUG_LOG_PREFIX, PIPELINE_DEBUG_ENV_VAR } from "../events/index.js";
 import type { CompiledStageDef } from "../rundef/index.js";
 import {
   PIPELINE_STATE_FILE_EXTENSION,
@@ -271,5 +272,60 @@ describe("filesystem pipeline state store", () => {
     const before = JSON.stringify(state);
     await savePipelineState(root, state);
     expect(JSON.stringify(state)).toBe(before);
+  });
+});
+
+const captureDebug = () => {
+  vi.stubEnv(PIPELINE_DEBUG_ENV_VAR, "1");
+  return vi.spyOn(process.stderr, "write").mockReturnValue(true);
+};
+
+const debugEvents = (write: ReturnType<typeof captureDebug>): Record<string, unknown>[] =>
+  write.mock.calls
+    .map((call) => String(call[0]))
+    .filter((line) => line.startsWith(`${DEBUG_LOG_PREFIX} `))
+    .map((line) => JSON.parse(line.slice(DEBUG_LOG_PREFIX.length + 1)) as Record<string, unknown>);
+
+describe("state store debug logging", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("emits state.save and state.load transition events with path and status", async () => {
+    const root = await createProjectRoot();
+    const state = createState();
+    const write = captureDebug();
+
+    const statePath = await savePipelineState(root, state);
+    const loaded = await loadPipelineState(root, state.storyId);
+    expect(loaded).toBeDefined();
+
+    const events = debugEvents(write);
+    expect(events.find((entry) => entry["event"] === "state.save")).toMatchObject({
+      storyId: state.storyId,
+      path: statePath,
+      status: state.status,
+      currentStage: state.currentStage,
+      regressions: state.regressions,
+    });
+    expect(events.find((entry) => entry["event"] === "state.load")).toMatchObject({
+      storyId: state.storyId,
+      path: statePath,
+      found: true,
+      status: state.status,
+    });
+  });
+
+  it("emits a state.load miss when no state file exists", async () => {
+    const root = await createProjectRoot();
+    const write = captureDebug();
+
+    await expect(loadPipelineState(root, "STORY-404")).resolves.toBeUndefined();
+
+    expect(debugEvents(write).find((entry) => entry["event"] === "state.load")).toMatchObject({
+      storyId: "STORY-404",
+      found: false,
+    });
   });
 });

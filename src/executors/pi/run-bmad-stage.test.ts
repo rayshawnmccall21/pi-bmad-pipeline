@@ -4,8 +4,9 @@ import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { buildEmissionProvenance } from "pi-bmad";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DEBUG_LOG_PREFIX, PIPELINE_DEBUG_ENV_VAR } from "../../events/index.js";
 import {
   BmadStageSpawnError,
   MAX_STAGE_STDERR_CHARS,
@@ -382,5 +383,85 @@ describe("run BMAD stage", () => {
     await promise;
 
     expect(JSON.stringify({ input, findings })).toBe(before);
+  });
+});
+
+const captureDebug = () => {
+  vi.stubEnv(PIPELINE_DEBUG_ENV_VAR, "1");
+  return vi.spyOn(process.stderr, "write").mockReturnValue(true);
+};
+
+const debugEvents = (write: ReturnType<typeof captureDebug>): Record<string, unknown>[] =>
+  write.mock.calls
+    .map((call) => String(call[0]))
+    .filter((line) => line.startsWith(`${DEBUG_LOG_PREFIX} `))
+    .map((line) => JSON.parse(line.slice(DEBUG_LOG_PREFIX.length + 1)) as Record<string, unknown>);
+
+describe("run BMAD stage debug logging", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("emits stage.spawn argv context without leaking the emission key", async () => {
+    const write = captureDebug();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(
+      request({ spawn, emissionKey: "emission-key-secret-1", runId: "run-9" }),
+    );
+    close(child, 0);
+    await promise;
+
+    const event = debugEvents(write).find((entry) => entry["event"] === "stage.spawn");
+    expect(event).toMatchObject({
+      storyId: "STORY-123",
+      stageId: "dev-story",
+      workflow: "dev-story",
+      attempt: 1,
+      bin: "pi",
+      cwd: "/repo/.worktrees/story-123",
+      runId: "run-9",
+      timeoutMs: 1_800_000,
+    });
+    expect(event?.["args"]).toEqual(expect.arrayContaining(["--bmad-story", "STORY-123"]));
+    const rendered = write.mock.calls.map((call) => String(call[0])).join("");
+    expect(rendered).not.toContain("emission-key-secret-1");
+  });
+
+  it("emits an accepted stage.envelope-gate verdict without a failure reason", async () => {
+    const write = captureDebug();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(child, toolEndLine(stampedEnvelope("key-1")));
+    close(child, 0);
+    await promise;
+
+    const event = debugEvents(write).find((entry) => entry["event"] === "stage.envelope-gate");
+    expect(event).toMatchObject({
+      storyId: "STORY-123",
+      stageId: "dev-story",
+      attempt: 1,
+      accepted: true,
+      exitCode: 0,
+      timedOut: false,
+      aborted: false,
+    });
+    expect(event).not.toHaveProperty("reason");
+  });
+
+  it("emits a rejected stage.envelope-gate verdict with the fail-closed reason", async () => {
+    const write = captureDebug();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(child, toolEndLine(stampedEnvelope("other-key")));
+    close(child, 0);
+    await promise;
+
+    const event = debugEvents(write).find((entry) => entry["event"] === "stage.envelope-gate");
+    expect(event).toMatchObject({ accepted: false, exitCode: 0 });
+    expect(String(event?.["reason"])).toMatch(/provenance/u);
   });
 });

@@ -1,97 +1,161 @@
-# pi-package-template
+# pi-bmad-pipeline
 
-A clean, reusable scaffold for building a **Pi extension package**. It carries the
-strict [pi-bmad](https://github.com/) quality gates so every package built from it
-is rigorous from day one: strict TypeScript, strict ESLint, a hard test-coverage
-floor, CRAP complexity scoring + ratchet, architecture-boundary checks, and
-documentation validation.
+Standalone **BMAD pipeline supervisor** CLI. It owns durable cross-process SDLC
+pipeline execution: RunDef loading/compilation, stage spawning, JSONL parsing,
+payload gates, routing/regression, worktrees, budgets/timeouts, harness-owned
+evidence, PR/merge logic, and audit.
 
-Any future pi-package — including **pi-co-founder** and future departments —
-starts from this template.
-
-## What you get
-
-| File                                                            | Purpose                                                                                                                       |
-| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `package.json`                                                  | `pi.extensions` manifest + the full quality-gate script chain                                                                 |
-| `tsconfig.json` / `tsconfig.test.json`                          | strict TS (12 extra strict flags); test config relaxes two for ergonomics                                                     |
-| `eslint.config.js`                                              | strict type-checked + stylistic + sonarjs/unicorn/jsdoc/tsdoc + complexity/CRAP-supporting rules                              |
-| `vitest.config.ts`                                              | v8 coverage with the 85/84/85/85 floor; `json` reporter feeds CRAP                                                            |
-| `scripts/crap-report.mjs`                                       | CRAP scoring, fixed threshold 30, report-only                                                                                 |
-| `scripts/crap-ratchet.mjs`                                      | CRAP ratchet — monotonic improvement vs a committed baseline                                                                  |
-| `quality/crap-baseline.json`                                    | seeded CRAP baseline (regenerate via `crap:update-baseline`)                                                                  |
-| `.dependency-cruiser.cjs`                                       | `no-circular` + `no-orphans` + module-boundary extension point                                                                |
-| `typedoc.json`                                                  | doc validation (`lint:docs`), errors on undocumented public API                                                               |
-| `lefthook.yml` / `.lintstagedrc.json` / `commitlint.config.cjs` | git hooks: lint-staged, commitlint, `check`-on-push                                                                           |
-| `extension.ts`                                                  | real Pi extension entry: `registerTool` + `registerCommand` + `before_agent_start` + minimal-surface `setActiveTools` pattern |
-| `.pi/extensions/template.ts`                                    | dev shim re-export (zero-flag `pi`, `/reload` hot-reload)                                                                     |
-| `src/index.ts` + `src/index.test.ts`                            | trivial example module + test so the gates have something to run                                                              |
+It is **not** a Pi extension. It imports `pi-bmad/contracts` and shells out to
+`pi` as an opaque binary. The supervisor spawns fresh child processes and does
+not trust them: it only trusts gated headless output, harness-owned evidence,
+durable state, and its own gates. See `CONTEXT.md` for the full architecture
+and trust-boundary rationale.
 
 ## Quick start
 
 ```bash
-bun install          # or: npm install
-bun run check        # run the full gate chain
+npm install
+npm run check        # the full quality gate
 ```
 
-## Quality-gate commands
+## Quality gates
 
-| Command                        | What it does                                                                                   |
-| ------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `npm run typecheck`            | `tsc --noEmit` — verify TS contracts                                                           |
-| `npm run lint`                 | strict ESLint over `src/` + `extension.ts`, zero warnings tolerated                            |
-| `npm run lint:fix`             | ESLint with `--fix`                                                                            |
-| `npm run test`                 | run vitest once                                                                                |
-| `npm run test:coverage`        | vitest with v8 coverage; fails below the 85/84/85/85 floor                                     |
-| `npm run crap`                 | coverage + CRAP report (fails if any function CRAP > 30)                                       |
-| `npm run crap:ratchet`         | enforce CRAP cannot regress vs `quality/crap-baseline.json`                                    |
-| `npm run crap:update-baseline` | rewrite the baseline (do this in a baseline-only commit)                                       |
-| `npm run lint:arch`            | dependency-cruiser: no circular deps, no orphans, module boundaries                            |
-| `npm run lint:docs`            | TypeDoc validation: undocumented public API is an error                                        |
-| **`npm run check`**            | **the aggregate gate: `typecheck && lint && test:coverage && crap && lint:arch && lint:docs`** |
+`npm run check` runs, in order:
 
-### CRAP discipline
+| Step                    | What it does                                                                |
+| ----------------------- | --------------------------------------------------------------------------- |
+| `npm run typecheck`     | `tsc --noEmit` — strict TS (noUncheckedIndexedAccess, exactOptional, …)     |
+| `npm run format:check`  | Prettier over the whole repo                                                |
+| `npm run lint`          | strict type-checked ESLint over `src/`, `--max-warnings 0`                  |
+| `npm run test:coverage` | vitest with v8 coverage; fails below the 90/90/90/90 floor                  |
+| `npm run crap`          | coverage + CRAP report — fails if any function has CRAP > 5                 |
+| `npm run conformance`   | checkpoint conformance suite over `.pi/workflows/` (separate vitest config) |
+| `npm run knip`          | dead-code / unused-export detection                                         |
 
-CRAP(m) = complexity(m)² × (1 − coverage(m)/100)³ + complexity(m). Complexity is
-estimated from v8 branch data. Two layers:
+## The pi headless contract
 
-- **`crap`** — report-only, fixed threshold 30. Fails the build if any function exceeds it.
-- **`crap:ratchet`** — enforces monotonic improvement against `quality/crap-baseline.json`:
-  fails on (a) any existing function rising above baseline + ε, (b) the count of
-  functions above target increasing, (c) a new function landing at CRAP ≥ 10.
-  Tighten `PACKAGE_TARGET` (30 → 20 → 10) in `scripts/crap-ratchet.mjs` at milestones.
+Each pipeline stage runs in a **fresh, hermetic** `pi` child process. The
+supervisor builds the invocation in `src/executors/pi/build-stage-args.ts`:
 
-## Building a package from the template
+```bash
+PI_BMAD_RUN_ID=<storyId.stageId.attempt> PI_BMAD_EMISSION_KEY=<secret> \
+pi --mode json -p --no-session --no-extensions \
+  -e <path-to-pi-bmad-extension> [-e <stage-extension>] \
+  --bmad-workflow <workflow> --bmad-story <storyId> \
+  --model <model> --thinking <effort> \
+  "<stage prompt: spec file, stage id, attempt, prior findings>"
+```
 
-1. Copy this directory to your new package root and rename it in `package.json`.
-2. Replace `src/index.ts` with your real module(s). Keep tests adjacent (`*.test.ts`).
-3. Build out `extension.ts`:
-   - register your real tools with `pi.registerTool({ name, label, description, parameters, execute })`,
-   - register slash commands with `pi.registerCommand(...)`,
-   - inject your persona via the `before_agent_start` hook,
-   - **for a minimal tool surface**, list your allow-list in `ALLOWED_TOOLS` and let
-     `restrictToolSurface` call `pi.setActiveTools([...])` to disable file-write/bash
-     and expose only your own tools (this is how pi-co-founder restricts itself to
-     Notion read/write + spawn).
-4. Add per-module boundary rules in `.dependency-cruiser.cjs` (extension point marked
-   inline) and a `scope-enum` in `commitlint.config.cjs` as your modules appear.
-5. Point `typedoc.json` `entryPoints` at your public barrels.
-6. Seed the CRAP baseline: `npm run crap:update-baseline`.
-7. `npm run check` must stay green.
+- `--mode json -p --no-session --no-extensions` — JSON event stream, print
+  mode, no session persistence, no extension discovery; only the explicitly
+  passed pi-bmad extension is loaded.
+- `PI_BMAD_RUN_ID` / `PI_BMAD_EMISSION_KEY` — the emission env contract. The
+  child stamps its terminal envelope with an `emissionProvenance` derived from
+  the emission key.
+- The terminal envelope travels inside `tool_execution_end` events at
+  `result.details.headlessOutput` (emitted by pi-bmad's `bmad_emit_result`).
+  The supervisor (`src/executors/pi/headless-stream-output.ts`) gates every
+  candidate with `gateHeadlessTerminalOutput` from `pi-bmad/contracts` under
+  the out-of-band emission key and **fails closed**: a forged stdout line is
+  never trusted as a stage completion. Timeouts and the worktree cwd stay
+  supervisor-owned.
 
-## Package boundary
+## Checkpoints (`.pi/workflows/checkpoints/`)
 
-This is a **pi-package** — an npm package with `pi.extensions` in `package.json`.
+Project checkpoint gates consumed by pi-bmad's checkpoint kernel live in
+`.pi/workflows/checkpoints/`:
 
-- **Package assets** resolve from `import.meta.url` (the installed package location).
-- **Runtime state** resolves from `process.cwd()` (the consuming project root).
-- **User preferences** resolve from `$HOME`.
-- Never commit `.pi/state/`, `.pi/artifacts/`, or `.pi/logs/` — they are ephemeral.
-- `.pi/extensions/template.ts` is the local dev shim; when the package is installed,
-  Pi reads `package.json#pi.extensions` instead (no double-registration).
+| File                                                 | What it registers                                                                                   |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `merge-gate.mjs`                                     | Rung-3 module gate `pipeline--merge-gate-green` over the pipeline's durable on-disk merge contracts |
+| `validate-checkpoint-extensibility-checkpoints.yaml` | Lane A policies `pipeline--e2e-evidence-gate` (evidence) and `pipeline--e2e-command-gate` (command) |
+| `validate-checkpoint-extensibility-gates.mjs`        | Lane B rung-3 module gate `pipeline--e2e-module-gate`                                               |
 
-## ESM / runtime
+`merge-gate.mjs` runs on **plain Node** (no TypeScript imports) and
+re-implements the preconditions of `src/git/merge-gate.ts` against the durable
+artifacts the pipeline maintains:
 
-Node + Bun compatible ESM (`"type": "module"`). Relative imports use the `.js`
-specifier (e.g. `./src/index.js`) for NodeNext/bundler resolution, even though the
-source is `.ts`.
+- `.pi/pipeline/state/current-run.json` — current-run pointer
+  `{ storyId, agentClaim? }` (written by `src/state/current-run-store.ts`)
+- `.pi/pipeline/state/<storyId>.json` — durable `PipelineState`
+- `.pi/pipeline/evidence/<storyId>/harness-evidence.json` — harness-owned
+  evidence report
+
+Set `PI_BMAD_PIPELINE_DEBUG=1` for the module gate's own stderr diagnostics.
+
+The **conformance suite** (`tests/checkpoint-conformance.test.ts`, run via
+`npm run conformance` and wired into `npm run check`) validates every
+checkpoint policy and module in `.pi/workflows/` against pi-bmad's
+checkpoint-conformance contract, including an over-claim defeat fixture for
+each rung-3 module gate.
+
+## The validate-checkpoint-extensibility workflow
+
+`.pi/workflows/validate-checkpoint-extensibility.yaml` is a permanent
+project workflow that proves the checkpoint extensibility stack end to end
+through the real `pi` CLI: the Lane A evidence gate blocks fail-closed before
+evidence exists and passes on policy-conformant evidence, the Lane A command
+gate runs a real bounded command from the project root, the Lane B rung-3
+`.mjs` module gate recomputes cross-field consistency on plain Node, and the
+run terminates with a typed `bmad_emit_result` payload validated against
+`.pi/schemas/validate-checkpoint-extensibility-result.schema.json`.
+
+Run it headless from this repo root:
+
+```bash
+PI_BMAD_RUN_ID=<id> PI_BMAD_EMISSION_KEY=<secret> \
+pi --mode json -p --no-session --no-extensions \
+  -e /Users/Apple/pi-bmad/extensions/pi-bmad.ts \
+  --bmad-workflow validate-checkpoint-extensibility \
+  --bmad-story <storyId> "Validate the checkpoint extensibility stack"
+```
+
+Success means the final `tool_execution_end` envelope is accepted by
+`gateHeadlessTerminalOutput` under the emission key you supplied. Probe
+artifacts land in `.pi/artifacts/e2e/`.
+
+## Debug logging
+
+Set `BMAD_PIPELINE_DEBUG=1` to enable the supervisor's structured debug seam
+(`src/events/debug-log.ts`). Events are single-line JSON records on stderr,
+prefixed `bmad-pipeline:debug`, and cover decision seams only — never
+per-iteration stream chatter:
+
+| Event                 | Emitted by                       | Context carried                                                            |
+| --------------------- | -------------------------------- | -------------------------------------------------------------------------- |
+| `stage.spawn`         | `executors/pi/run-bmad-stage.ts` | storyId, stageId, workflow, attempt, bin, argv, cwd, runId, timeout        |
+| `stage.envelope-gate` | `executors/pi/run-bmad-stage.ts` | accepted/rejected verdict, exitCode, timedOut, aborted, fail-closed reason |
+| `merge-gate.decision` | `git/merge-gate.ts`              | decision, blocker codes, summary reason                                    |
+| `state.save`          | `state/fs-state-store.ts`        | storyId, state file path, status, currentStage, regressions                |
+| `state.load`          | `state/fs-state-store.ts`        | storyId, state file path, found hit/miss, status                           |
+| `lock.acquire`        | `state/dispatch-lock.ts`         | outcome (acquired/held/reclaimed), lock path, runId, holder info           |
+| `lock.release`        | `state/dispatch-lock.ts`         | lock path                                                                  |
+
+Every line passes through credential redaction (`src/security/redaction.ts`)
+before it is written. The `stage.spawn` event logs argv but **never** the
+emission env: emission keys are never logged.
+
+```bash
+BMAD_PIPELINE_DEBUG=1 <supervisor invocation> 2>&1 | grep '^bmad-pipeline:debug'
+```
+
+## Durable state layout
+
+All supervisor state is project-local and survives crashes:
+
+```
+.pi/pipeline/
+  state/<storyId>.json                    # durable PipelineState (atomic writes)
+  state/current-run.json                  # current-run pointer for merge review
+  locks/<storyId>/info.json               # per-story mkdir-atomic dispatch lock
+  evidence/<storyId>/harness-evidence.json # harness-owned test/typecheck/lint evidence
+```
+
+## Development
+
+- Red/Green TDD; tests live next to source (`src/foo.ts` → `src/foo.test.ts`).
+- Quality-guard-locked files (do not modify): `eslint.config.js`,
+  `.prettierrc`, `.prettierignore`, `scripts/crap-*.mjs`, `vitest.config.ts`,
+  `knip.json`, `tsconfig.json`, `tsconfig.test.json`, `CLAUDE.md`.
+- See `AGENTS.md` for agent rules and `CONTEXT.md` for the architecture,
+  interfaces, and migration plan.

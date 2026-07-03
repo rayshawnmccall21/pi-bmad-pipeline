@@ -1,5 +1,6 @@
 /* eslint-disable jsdoc/informative-docs, jsdoc/sort-tags -- keep task-specified public docs. */
 
+import { debugLog } from "../events/index.js";
 import { redactText, type HarnessEvidenceReport } from "../security/index.js";
 import type { GitSecretScanResult } from "./secret-scan.js";
 
@@ -106,7 +107,14 @@ export function evaluateMergeGate(request: EvaluateMergeGateRequest): MergeGateE
       agentClaimDivergence(request),
     ].filter((blocker): blocker is MergeGateBlocker => blocker !== undefined),
   );
-  return freezeEvaluation(blockers);
+  const evaluation = freezeEvaluation(blockers);
+  debugLog("merge-gate.decision", {
+    decision: evaluation.decision,
+    passed: evaluation.passed,
+    blockers: evaluation.blockers.map((entry) => entry.code),
+    reason: evaluation.reason,
+  });
+  return evaluation;
 }
 
 const missingPullRequest = (request: EvaluateMergeGateRequest): MergeGateBlocker | undefined =>

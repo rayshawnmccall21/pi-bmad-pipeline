@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+import { debugLog } from "../events/index.js";
 import { isPipelineStateStoryId } from "./fs-state-store.js";
 
 /** Relative project directory where per-story dispatch locks are stored. */
@@ -185,6 +186,7 @@ export async function acquireDispatchLock(
   await mkdir(getDispatchLocksDir(request.projectRoot), { recursive: true });
   const info = await tryCreateAndWriteLock(lockDir, request.runId);
   if (info !== undefined) {
+    logLockAcquire("acquired", { lockDir, storyId: request.storyId, runId: request.runId });
     return createDispatchLock(request.storyId, lockDir, info);
   }
   return reclaimAndAcquire({ lockDir, storyId: request.storyId, runId: request.runId, staleMs });
@@ -206,6 +208,7 @@ export async function releaseDispatchLock(lockDir: string | null | undefined): P
   if (lockDir === null || lockDir === undefined) {
     return;
   }
+  debugLog("lock.release", { path: lockDir });
   await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
 }
 
@@ -257,14 +260,34 @@ const tryCreateAndWriteLock = async (
 const reclaimAndAcquire = async (
   request: Readonly<{ lockDir: string; storyId: string; runId: string; staleMs: number }>,
 ): Promise<DispatchLock | undefined> => {
-  if (!isDispatchLockStale(await readDispatchLockInfo(request.lockDir), request.staleMs)) {
+  const holder = await readDispatchLockInfo(request.lockDir);
+  if (!isDispatchLockStale(holder, request.staleMs)) {
+    logLockAcquire("held", request, holder);
     return undefined;
   }
   await releaseDispatchLock(request.lockDir);
   const info = await tryCreateAndWriteLock(request.lockDir, request.runId);
-  return info === undefined
-    ? undefined
-    : createDispatchLock(request.storyId, request.lockDir, info);
+  if (info === undefined) {
+    return undefined;
+  }
+  logLockAcquire("reclaimed", request);
+  return createDispatchLock(request.storyId, request.lockDir, info);
+};
+
+const logLockAcquire = (
+  outcome: "acquired" | "held" | "reclaimed",
+  request: Readonly<{ lockDir: string; storyId: string; runId: string }>,
+  holder?: DispatchLockInfo,
+): void => {
+  debugLog("lock.acquire", {
+    outcome,
+    storyId: request.storyId,
+    path: request.lockDir,
+    runId: request.runId,
+    ...(holder === undefined
+      ? {}
+      : { holderPid: holder.pid, holderRunId: holder.runId, holderStartedAt: holder.startedAt }),
+  });
 };
 
 const writeLockInfo = async (lockDir: string, info: DispatchLockInfo): Promise<void> => {

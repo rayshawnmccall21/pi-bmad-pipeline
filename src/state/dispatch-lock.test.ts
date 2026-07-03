@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DEBUG_LOG_PREFIX, PIPELINE_DEBUG_ENV_VAR } from "../events/index.js";
 import {
   DEFAULT_DISPATCH_LOCK_STALE_MS,
   DISPATCH_LOCK_INFO_FILE_NAME,
@@ -202,5 +203,91 @@ describe("dispatch lock", () => {
     await expect(
       acquireDispatchLock({ projectRoot: root, storyId: "STORY-123", runId: "run", staleMs: -1 }),
     ).rejects.toThrow(RangeError);
+  });
+});
+
+const captureDebug = () => {
+  vi.stubEnv(PIPELINE_DEBUG_ENV_VAR, "1");
+  return vi.spyOn(process.stderr, "write").mockReturnValue(true);
+};
+
+const debugEvents = (write: ReturnType<typeof captureDebug>): Record<string, unknown>[] =>
+  write.mock.calls
+    .map((call) => String(call[0]))
+    .filter((line) => line.startsWith(`${DEBUG_LOG_PREFIX} `))
+    .map((line) => JSON.parse(line.slice(DEBUG_LOG_PREFIX.length + 1)) as Record<string, unknown>);
+
+describe("dispatch lock debug logging", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("emits lock.acquire and lock.release events for a fresh lock", async () => {
+    const root = await createProjectRoot();
+    const write = captureDebug();
+
+    const lock = await acquireDispatchLock({
+      projectRoot: root,
+      storyId: "STORY-123",
+      runId: "run-1",
+    });
+    await lock?.release();
+
+    const events = debugEvents(write);
+    expect(events.find((entry) => entry["event"] === "lock.acquire")).toMatchObject({
+      outcome: "acquired",
+      storyId: "STORY-123",
+      runId: "run-1",
+      path: getDispatchLockDir(root, "STORY-123"),
+    });
+    expect(events.find((entry) => entry["event"] === "lock.release")).toMatchObject({
+      path: getDispatchLockDir(root, "STORY-123"),
+    });
+  });
+
+  it("emits a held verdict with holder context when the lock is live", async () => {
+    const root = await createProjectRoot();
+    const lockDir = await writeExistingLock(root, lockInfo({ runId: "run-live" }));
+    const write = captureDebug();
+
+    const lock = await acquireDispatchLock({
+      projectRoot: root,
+      storyId: "STORY-123",
+      runId: "run-2",
+    });
+    expect(lock).toBeUndefined();
+
+    expect(debugEvents(write).find((entry) => entry["event"] === "lock.acquire")).toMatchObject({
+      outcome: "held",
+      storyId: "STORY-123",
+      runId: "run-2",
+      path: lockDir,
+      holderPid: process.pid,
+      holderRunId: "run-live",
+    });
+  });
+
+  it("emits a reclaimed verdict when a stale lock is taken over", async () => {
+    const root = await createProjectRoot();
+    await writeExistingLock(
+      root,
+      lockInfo({ runId: "run-old", startedAt: new Date(0).toISOString() }),
+    );
+    const write = captureDebug();
+
+    const lock = await acquireDispatchLock({
+      projectRoot: root,
+      storyId: "STORY-123",
+      runId: "run-3",
+    });
+    expect(lock).toBeDefined();
+
+    const acquires = debugEvents(write).filter((entry) => entry["event"] === "lock.acquire");
+    expect(acquires.at(-1)).toMatchObject({
+      outcome: "reclaimed",
+      storyId: "STORY-123",
+      runId: "run-3",
+    });
   });
 });

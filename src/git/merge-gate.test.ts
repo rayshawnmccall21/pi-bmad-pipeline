@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DEBUG_LOG_PREFIX, PIPELINE_DEBUG_ENV_VAR } from "../events/index.js";
 import { evaluateMergeGate } from "./index.js";
 
 import type { GitSecretScanResult, MergeGatePullRequest } from "./index.js";
@@ -268,5 +269,59 @@ describe("merge gate", () => {
     evaluateMergeGate(request);
 
     expect(JSON.stringify(request)).toBe(before);
+  });
+});
+
+const captureDebug = () => {
+  vi.stubEnv(PIPELINE_DEBUG_ENV_VAR, "1");
+  return vi.spyOn(process.stderr, "write").mockReturnValue(true);
+};
+
+const debugEvents = (write: ReturnType<typeof captureDebug>): Record<string, unknown>[] =>
+  write.mock.calls
+    .map((call) => String(call[0]))
+    .filter((line) => line.startsWith(`${DEBUG_LOG_PREFIX} `))
+    .map((line) => JSON.parse(line.slice(DEBUG_LOG_PREFIX.length + 1)) as Record<string, unknown>);
+
+describe("merge gate debug logging", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("emits merge-gate.decision with blocker codes when blocked", () => {
+    const write = captureDebug();
+
+    evaluateMergeGate({
+      pullRequest: pullRequest(),
+      harnessEvidence: harnessEvidence(),
+      secretScan: secretScan(false),
+    });
+
+    const event = debugEvents(write).find((entry) => entry["event"] === "merge-gate.decision");
+    expect(event).toMatchObject({
+      decision: "merge-blocked",
+      passed: false,
+      blockers: ["secret-scan-blocked"],
+      reason: "Merge gate blocked 1 issue.",
+    });
+  });
+
+  it("emits merge-gate.decision with no blockers when allowed", () => {
+    const write = captureDebug();
+
+    evaluateMergeGate({
+      pullRequest: pullRequest(),
+      harnessEvidence: harnessEvidence(),
+      secretScan: secretScan(),
+    });
+
+    const event = debugEvents(write).find((entry) => entry["event"] === "merge-gate.decision");
+    expect(event).toMatchObject({
+      decision: "merge-allowed",
+      passed: true,
+      blockers: [],
+      reason: "Merge gate passed.",
+    });
   });
 });

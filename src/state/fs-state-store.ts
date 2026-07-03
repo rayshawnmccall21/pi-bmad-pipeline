@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
+import { debugLog } from "../events/index.js";
 import {
   freezePipelineState,
   getPipelineStateInvalidReason,
@@ -238,6 +239,7 @@ export async function loadPipelineState(
   const statePath = getPipelineStatePath(projectRoot, storyId);
   const raw = await readStateFile(statePath, storyId);
   if (raw === undefined) {
+    debugLog("state.load", { storyId, path: statePath, found: false });
     return undefined;
   }
   const parsed = parseStateFile(raw, statePath, storyId);
@@ -252,7 +254,15 @@ export async function loadPipelineState(
       `State storyId "${parsed.storyId}" does not match requested storyId "${storyId}".`,
     );
   }
-  return freezePipelineState(parsed);
+  const state = freezePipelineState(parsed);
+  debugLog("state.load", {
+    storyId,
+    path: statePath,
+    found: true,
+    status: state.status,
+    currentStage: state.currentStage,
+  });
+  return state;
 }
 
 const readStateFile = async (statePath: string, storyId: string): Promise<string | undefined> => {
@@ -324,7 +334,15 @@ export async function savePipelineState(
   const content = `${JSON.stringify(state, null, prettyJsonSpaces)}\n`;
   try {
     await mkdir(dirname(statePath), { recursive: true });
-    return await atomicWrite(statePath, content, state.storyId);
+    const written = await atomicWrite(statePath, content, state.storyId);
+    debugLog("state.save", {
+      storyId: state.storyId,
+      path: written,
+      status: state.status,
+      currentStage: state.currentStage,
+      regressions: state.regressions,
+    });
+    return written;
   } catch (error) {
     if (error instanceof PipelineStateStoreError) {
       throw error;

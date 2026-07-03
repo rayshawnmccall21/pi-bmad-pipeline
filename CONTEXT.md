@@ -49,7 +49,7 @@ pi-orchestrator (Pi tool wrapper)
                     └── pi loads pi-bmad extension
                     └── pi-bmad runs one WorkflowDef
                     └── child emits HeadlessWorkflowOutput JSONL
-              └── bmad-pipeline validates envelope via pi-bmad/contracts
+              └── bmad-pipeline gates the terminal envelope (gateHeadlessTerminalOutput + emission key)
               └── bmad-pipeline evaluates payload gate
               └── bmad-pipeline routes/regresses/continues
         └── run harness evidence (test/typecheck/lint)
@@ -93,9 +93,12 @@ pi-bmad-pipeline/
       workflow-executor.ts        # WorkflowExecutor interface
       pi/
         pi-cli-executor.ts        # PiCliWorkflowExecutor implements WorkflowExecutor
-        build-stage-args.ts       # buildStageArgs() — constructs pi CLI argv
+        build-stage-args.ts       # buildStageArgs() — real pi headless argv + emission env
         run-bmad-stage.ts         # runBmadStage() — spawn wrapper with JSONL parsing
         headless-jsonl-parser.ts  # Stream-parse child stdout JSONL
+        headless-stream-output.ts # Emission-gated terminal envelope extraction + usage
+        pi-bmad-extension.ts      # Resolves the pi-bmad extension file for `pi -e`
+        stage-debug-events.ts     # stage.spawn / stage.envelope-gate debug events
 
     contracts/
       workflow-contract-provider.ts  # WorkflowContractProvider interface
@@ -104,6 +107,7 @@ pi-bmad-pipeline/
     state/
       pipeline-state.ts           # PipelineState, StageState types
       fs-state-store.ts           # State persistence to .pi/pipeline/state/<id>.json
+      current-run-store.ts        # Current-run pointer (.pi/pipeline/state/current-run.json)
       dispatch-lock.ts            # Per-story mkdir-atomic dispatch lock
       state-reconcile.ts          # Crash recovery, contradiction repair
 
@@ -120,7 +124,8 @@ pi-bmad-pipeline/
       audit-pipeline-run.ts       # Pipeline audit report generation
 
     events/
-      pipeline-event.ts           # PipelineCliEvent types (JSONL event protocol)
+      debug-log.ts                # BMAD_PIPELINE_DEBUG structured stderr debug seam
+      pipeline-event.ts           # (planned) PipelineCliEvent types (JSONL event protocol)
 
     model/
       model-config.ts             # 5-source model resolution + pre-spawn validation
@@ -371,7 +376,9 @@ Move from pi-orchestrator/pipeline-runner/rundef/:
 - **knip**: dead-code detection
 - **Prettier**: format check
 
-Full gate: `npm run check` runs typecheck → format → lint → coverage → CRAP → knip.
+Full gate: `npm run check` runs typecheck → format → lint → coverage → CRAP → conformance → knip.
+
+- **Checkpoint conformance**: `npm run conformance` (vitest.conformance.config.ts) validates every checkpoint policy/module under `.pi/workflows/` against pi-bmad's checkpoint-conformance contract, including over-claim defeat fixtures for rung-3 module gates.
 
 ## 9. Role Definitions
 

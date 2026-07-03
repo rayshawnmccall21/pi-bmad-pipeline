@@ -8,7 +8,7 @@ All code must pass before any PR or completion:
 npm run check
 ```
 
-This runs: typecheck → prettier → eslint → vitest coverage → CRAP ≤ 5 → knip.
+This runs: typecheck → prettier → eslint → vitest coverage → CRAP ≤ 5 → checkpoint conformance → knip.
 
 ## Red/Green TDD
 
