@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "n
 import {
   DEFAULT_HARNESS_EVIDENCE_COMMANDS,
   runHarnessEvidenceCommand,
+  validateCommandCwd,
 } from "./harness-evidence-command.js";
 
 /** Standard harness-owned evidence command names. */
@@ -65,8 +66,11 @@ export interface HarnessEvidenceCommandResult {
 
 /** Complete harness-owned evidence report. */
 export interface HarnessEvidenceReport {
-  /** Project root used as command cwd. */
+  /** Supervised project root: the report identity and persistence root. */
   readonly projectRoot: string;
+
+  /** Directory the evidence commands executed in. */
+  readonly commandCwd?: string;
 
   /** Report start timestamp. */
   readonly startedAt: string;
@@ -90,8 +94,11 @@ export type HarnessEvidenceSpawn = (
 
 /** Request for running harness-owned evidence. */
 export interface RunHarnessEvidenceRequest {
-  /** Project root used as child cwd. */
+  /** Supervised project root recorded as the report identity. */
   readonly projectRoot: string;
+
+  /** Directory to execute commands in; defaults to projectRoot. */
+  readonly commandCwd?: string;
 
   /** Commands to run, or defaults when omitted. */
   readonly commands?: readonly HarnessEvidenceCommand[];
@@ -116,27 +123,37 @@ export {
 /**
  * Runs all harness-owned evidence commands sequentially.
  *
- * @param request - Project root, command list, and execution adapters.
+ * The commands execute with cwd = `commandCwd` (mechanism), while the report
+ * carries `projectRoot` as its identity (policy); the two are independent so
+ * evidence can run in an isolated worktree yet persist at the supervised root.
+ *
+ * @param request - Identity root, command cwd, command list, and adapters.
  *
  * @returns Frozen harness-owned evidence report.
  *
  * @example
  * ```ts
- * const report = await runHarnessEvidence({ projectRoot: process.cwd() });
+ * const report = await runHarnessEvidence({
+ *   projectRoot: "/repo",
+ *   commandCwd: "/repo/.pi/pipeline/worktrees/SH-1",
+ * });
  * ```
  */
 export async function runHarnessEvidence(
   request: RunHarnessEvidenceRequest,
 ): Promise<HarnessEvidenceReport> {
   validateProjectRoot(request.projectRoot);
+  const commandCwd = request.commandCwd ?? request.projectRoot;
+  validateCommandCwd(commandCwd);
   const now = request.now ?? (() => new Date());
   const startedAt = now();
   const results: HarnessEvidenceCommandResult[] = [];
   for (const command of request.commands ?? DEFAULT_HARNESS_EVIDENCE_COMMANDS) {
-    results.push(await runHarnessEvidenceCommand(request.projectRoot, command, request));
+    results.push(await runHarnessEvidenceCommand(commandCwd, command, request));
   }
   return freezeReport({
     projectRoot: request.projectRoot,
+    commandCwd,
     startedAt: startedAt.toISOString(),
     finishedAt: now().toISOString(),
     passed: results.every((result) => result.status === "passed"),

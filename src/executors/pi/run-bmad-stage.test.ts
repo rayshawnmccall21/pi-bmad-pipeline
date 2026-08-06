@@ -14,10 +14,15 @@ import {
   runBmadStage,
   toBuildStageArgsRequest,
 } from "./index.js";
+import { DEFAULT_KILL_ESCALATION_MS } from "./run-bmad-stage.js";
 
-import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
 import type { CompiledStageDef } from "../../rundef/index.js";
-import type { BmadStageSpawn, RunBmadStageRequest } from "./index.js";
+import type {
+  BmadStageChildProcess,
+  BmadStageSpawn,
+  BmadStageSpawnOptions,
+  RunBmadStageRequest,
+} from "./index.js";
 
 const piBmadRootDir = resolve(dirname(resolvePiBmadExtensionPath()), "..");
 
@@ -75,28 +80,28 @@ const request = (overrides: Partial<RunBmadStageRequest> = {}): RunBmadStageRequ
   ...overrides,
 });
 
-const createFakeChild = (): ChildProcessWithoutNullStreams => {
-  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+const createFakeChild = (): BmadStageChildProcess => {
+  const child = new EventEmitter() as BmadStageChildProcess;
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
-  child.stdin = new PassThrough();
   child.kill = vi.fn(() => true);
   return child;
 };
 
-const createSpawn = (
-  child = createFakeChild(),
-): [BmadStageSpawn, ChildProcessWithoutNullStreams] => [vi.fn(() => child), child];
+const createSpawn = (child = createFakeChild()): [BmadStageSpawn, BmadStageChildProcess] => [
+  vi.fn(() => child),
+  child,
+];
 
-const close = (child: ChildProcessWithoutNullStreams, code: number | null): void => {
+const close = (child: BmadStageChildProcess, code: number | null): void => {
   child.emit("close", code, null);
 };
 
-const writeStdout = (child: ChildProcessWithoutNullStreams, text: string): void => {
+const writeStdout = (child: BmadStageChildProcess, text: string): void => {
   (child.stdout as PassThrough).write(text);
 };
 
-const writeStderr = (child: ChildProcessWithoutNullStreams, text: string): void => {
+const writeStderr = (child: BmadStageChildProcess, text: string): void => {
   (child.stderr as PassThrough).write(text);
 };
 
@@ -173,7 +178,7 @@ describe("run BMAD stage", () => {
           PI_BMAD_RUN_ID: "STORY-123.dev-story.1",
           PI_BMAD_EMISSION_KEY: "key-1",
         }) as NodeJS.ProcessEnv,
-      }) as SpawnOptionsWithoutStdio,
+      }) as BmadStageSpawnOptions,
     );
   });
 
@@ -186,6 +191,20 @@ describe("run BMAD stage", () => {
     close(child, 0);
 
     await expect(promise).resolves.toMatchObject({ output: envelope, exitCode: 0 });
+  });
+
+  it("spawns the child with stdin ignored so print-mode children see EOF", async () => {
+    const [spawn, child] = createSpawn();
+    const promise = runBmadStage(request({ spawn }));
+
+    close(child, 0);
+    await promise;
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Array),
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
   });
 
   it("fails closed when the terminal envelope is forged (bare last line)", async () => {
@@ -383,6 +402,108 @@ describe("run BMAD stage", () => {
     await promise;
 
     expect(JSON.stringify({ input, findings })).toBe(before);
+  });
+});
+
+const killSignals = (child: BmadStageChildProcess): readonly unknown[] =>
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- fake child kill is a vi.fn.
+  vi.mocked(child.kill).mock.calls.map((call: readonly unknown[]) => call[0]);
+
+describe("run BMAD stage SIGTERM-to-SIGKILL escalation", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("exports a 10 second default grace period", () => {
+    expect(DEFAULT_KILL_ESCALATION_MS).toBe(10_000);
+  });
+
+  it("escalates to SIGKILL when the child ignores SIGTERM past the grace period", async () => {
+    vi.useFakeTimers();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, timeoutMs: 1 }));
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(DEFAULT_KILL_ESCALATION_MS);
+    close(child, null);
+
+    await expect(promise).resolves.toMatchObject({ timedOut: true });
+    expect(killSignals(child)).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  it("honors an injected killEscalationMs grace period", async () => {
+    vi.useFakeTimers();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, timeoutMs: 1, killEscalationMs: 5 }));
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(4);
+    expect(killSignals(child)).toEqual(["SIGTERM"]);
+    await vi.advanceTimersByTimeAsync(1);
+    close(child, null);
+
+    await expect(promise).resolves.toMatchObject({ timedOut: true });
+    expect(killSignals(child)).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  it("never sends SIGKILL when the child exits within the grace period", async () => {
+    vi.useFakeTimers();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, timeoutMs: 1 }));
+    await vi.advanceTimersByTimeAsync(1);
+    close(child, null);
+    await vi.advanceTimersByTimeAsync(DEFAULT_KILL_ESCALATION_MS);
+
+    await expect(promise).resolves.toMatchObject({ timedOut: true });
+    expect(killSignals(child)).toEqual(["SIGTERM"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("escalates aborted children that ignore SIGTERM", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, signal: controller.signal }));
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(DEFAULT_KILL_ESCALATION_MS);
+    close(child, null);
+
+    await expect(promise).resolves.toMatchObject({ aborted: true });
+    expect(killSignals(child)).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  it("schedules a single escalation when timeout and abort both fire", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, signal: controller.signal, timeoutMs: 1 }));
+    await vi.advanceTimersByTimeAsync(1);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(DEFAULT_KILL_ESCALATION_MS);
+    close(child, null);
+
+    await expect(promise).resolves.toMatchObject({ timedOut: true, aborted: true });
+    expect(killSignals(child)).toEqual(["SIGTERM", "SIGTERM", "SIGKILL"]);
+  });
+
+  it("leaves no timers behind on normal close", async () => {
+    vi.useFakeTimers();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn }));
+    close(child, 0);
+    await promise;
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([0, 1.5, -1])("rejects invalid killEscalationMs %j", (killEscalationMs) => {
+    expect(() => runBmadStage(request({ killEscalationMs }))).toThrow(
+      "killEscalationMs must be a positive integer.",
+    );
   });
 });
 

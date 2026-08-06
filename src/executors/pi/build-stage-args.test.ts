@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { PI_OFFLINE_ENV_VAR } from "./build-stage-args.js";
 import {
   DEFAULT_PI_BIN,
   PI_BMAD_EMISSION_KEY_ENV_VAR,
@@ -135,6 +136,18 @@ describe("Pi stage argv builder", () => {
     const invocation = buildStageArgs(request({ runId: "run-77" }));
 
     expect(invocation.env[PI_BMAD_RUN_ID_ENV_VAR]).toBe("run-77");
+  });
+
+  it("emits PI_OFFLINE=1 so the child skips startup network operations", () => {
+    expect(buildStageArgs(request()).env[PI_OFFLINE_ENV_VAR]).toBe("1");
+  });
+
+  it("emits exactly the documented hermetic child env contract", () => {
+    expect(buildStageArgs(request()).env).toEqual({
+      PI_BMAD_RUN_ID: "STORY-123.dev-story.1",
+      PI_BMAD_EMISSION_KEY: "emission-key-1",
+      PI_OFFLINE: "1",
+    });
   });
 
   it("uses stage-level thinking override when present", () => {

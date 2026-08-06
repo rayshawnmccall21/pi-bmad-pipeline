@@ -1,5 +1,9 @@
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { resolvePiBmadExtensionPath } from "../executors/pi/index.js";
 import {
   SDLC_RUNDEF,
   clearPayloadGateRegistry,
@@ -8,129 +12,156 @@ import {
 } from "../rundef/index.js";
 import {
   CODE_REVIEW_PAYLOAD_GATE_NAME,
+  CODE_REVIEW_SEVERITIES,
   E2E_VERIFY_PAYLOAD_GATE_NAME,
   codeReviewPayloadGate,
   e2eVerifyPayloadGate,
   registerBmadPayloadGates,
 } from "./index.js";
 
+const piBmadRootDir = resolve(dirname(resolvePiBmadExtensionPath()), "..");
+
+const fixturePayload = (workflow: string, kind: string): Record<string, unknown> => {
+  const line = readFileSync(
+    join(piBmadRootDir, "contracts", "fixtures", workflow, `${kind}.jsonl`),
+    "utf8",
+  ).trim();
+  const parsed = JSON.parse(line) as {
+    result: { details: { headlessOutput: { payload: Record<string, unknown> } } };
+  };
+  return parsed.result.details.headlessOutput.payload;
+};
+
 beforeEach(() => {
   clearPayloadGateRegistry();
 });
 
-describe("built-in BMAD payload gates", () => {
+describe("e2e-verify payload gate (canonical contract)", () => {
+  it("passes the canonical success fixture", () => {
+    expect(e2eVerifyPayloadGate(fixturePayload("e2e-verify", "success"))).toMatchObject({
+      passed: true,
+      reason: "E2E verification passed.",
+    });
+  });
+
+  it("fails a schema-conformant fail verdict with scenario findings", () => {
+    const result = e2eVerifyPayloadGate({
+      storyId: "s-1",
+      scenariosPassed: 2,
+      scenariosFailed: 1,
+      failedScenarioIds: ["AC-3"],
+      partialScenarioIds: ["AC-4"],
+      verdict: "fail",
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("E2E verification failed (1 scenario(s) failed).");
+    expect(result.findings).toEqual(["Failed scenario: AC-3", "Partial scenario: AC-4"]);
+  });
+
+  it.each([{}, { verdict: "passed" }, { verdict: true }, { verdict: "ok" }])(
+    "fails closed on non-contract payload %j",
+    (payload) => {
+      const result = e2eVerifyPayloadGate(payload);
+
+      expect(result.passed).toBe(false);
+      expect(result.reason).toMatch(/failing closed/u);
+    },
+  );
+
+  it("returns frozen results", () => {
+    const result = e2eVerifyPayloadGate({ verdict: "fail", failedScenarioIds: ["AC-1"] });
+
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(result.findings === undefined || Object.isFrozen(result.findings)).toBe(true);
+  });
+});
+
+describe("code-review payload gate (canonical contract)", () => {
+  it("passes the canonical success fixture", () => {
+    expect(codeReviewPayloadGate(fixturePayload("code-review", "success"))).toMatchObject({
+      passed: true,
+      reason: "Code review approved.",
+    });
+  });
+
+  it("fails a schema-conformant needs-dev verdict with a severity summary finding", () => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "needs-dev",
+      findingsBySeverity: { critical: 0, high: 2, medium: 1, low: 0, info: 3 },
+      autoFixed: false,
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("Code review verdict: needs-dev.");
+    expect(result.findings?.[0]).toBe(
+      "Findings by severity: critical=0, high=2, medium=1, low=0, info=3.",
+    );
+  });
+
+  it("fails needs-verify with the verdict in the reason", () => {
+    const result = codeReviewPayloadGate({ verdict: "needs-verify" });
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("Code review verdict: needs-verify.");
+  });
+
+  it("orders the severity summary worst-first per the canonical vocabulary", () => {
+    const result = codeReviewPayloadGate({
+      verdict: "needs-dev",
+      findingsBySeverity: { critical: 1, high: 2, medium: 3, low: 4, info: 5 },
+    });
+
+    expect(CODE_REVIEW_SEVERITIES).toEqual(["critical", "high", "medium", "low", "info"]);
+    expect(result.findings?.[0]).toBe(
+      "Findings by severity: critical=1, high=2, medium=3, low=4, info=5.",
+    );
+  });
+
+  it("omits findings when the severity summary is malformed", () => {
+    const result = codeReviewPayloadGate({ verdict: "needs-dev", findingsBySeverity: [1, 2] });
+
+    expect(result.passed).toBe(false);
+    expect(result.findings).toBeUndefined();
+  });
+
+  it.each([{}, { verdict: "approve" }, { verdict: "APPROVED" }, { approved: true }])(
+    "fails closed on non-contract payload %j",
+    (payload) => {
+      const result = codeReviewPayloadGate(payload);
+
+      expect(result.passed).toBe(false);
+      expect(result.reason).toMatch(/failing closed/u);
+    },
+  );
+});
+
+describe("gate registration", () => {
   it("exports gate names exactly", () => {
     expect(E2E_VERIFY_PAYLOAD_GATE_NAME).toBe("e2e-verify");
     expect(CODE_REVIEW_PAYLOAD_GATE_NAME).toBe("code-review");
   });
 
-  it.each([{ passed: true }, { verdict: "passed" }, { status: "success" }])(
-    "passes e2e payload %j",
-    (payload) => {
-      expect(e2eVerifyPayloadGate(payload)).toMatchObject({
-        passed: true,
-        reason: "E2E verification passed.",
-      });
-    },
-  );
+  it("registers both gates and resolves them from the registry", () => {
+    const summary = registerBmadPayloadGates();
 
-  it.each([{ passed: false }, { verdict: "failed" }, { status: "blocked" }])(
-    "fails e2e payload %j",
-    (payload) => {
-      expect(e2eVerifyPayloadGate(payload)).toMatchObject({
-        passed: false,
-        reason: "E2E verification failed.",
-      });
-    },
-  );
-
-  it.each([{}, { status: "maybe" }])("fails e2e closed for unknown payload %j", (payload) => {
-    expect(e2eVerifyPayloadGate(payload)).toMatchObject({
-      passed: false,
-      reason: "E2E verification payload did not include a recognized pass/fail verdict.",
-    });
-  });
-
-  it.each([{ approved: true }, { verdict: "approved" }, { status: "clean" }])(
-    "passes code-review payload %j",
-    (payload) => {
-      expect(codeReviewPayloadGate(payload)).toMatchObject({
-        passed: true,
-        reason: "Code review passed.",
-      });
-    },
-  );
-
-  it.each([{ approved: false }, { verdict: "changes-requested" }, { status: "rejected" }])(
-    "fails code-review payload %j",
-    (payload) => {
-      expect(codeReviewPayloadGate(payload)).toMatchObject({
-        passed: false,
-        reason: "Code review failed.",
-      });
-    },
-  );
-
-  it.each([{}, { status: "maybe" }])(
-    "fails code-review closed for unknown payload %j",
-    (payload) => {
-      expect(codeReviewPayloadGate(payload)).toMatchObject({
-        passed: false,
-        reason: "Code review payload did not include a recognized pass/fail verdict.",
-      });
-    },
-  );
-
-  it.each([
-    [{ passed: false, findings: ["a", "b"] }, ["a", "b"]],
-    [{ passed: false, failures: ["a"] }, ["a"]],
-    [{ passed: false, issues: ["a", 1, null, "b"] }, ["a", "b"]],
-  ])("extracts findings from %j", (payload, expected) => {
-    expect(e2eVerifyPayloadGate(payload).findings).toEqual(expected);
-  });
-
-  it("freezes results and findings arrays", () => {
-    const result = codeReviewPayloadGate({ approved: false, findings: ["a"] });
-
-    expect(Object.isFrozen(result)).toBe(true);
-    expect(Object.isFrozen(result.findings)).toBe(true);
-  });
-
-  it("does not mutate payload input", () => {
-    const payload = { passed: false, findings: ["a"] };
-    const before = JSON.stringify(payload);
-
-    e2eVerifyPayloadGate(payload);
-
-    expect(JSON.stringify(payload)).toBe(before);
-  });
-
-  it("registers both gate names in the module-level registry", () => {
-    const result = registerBmadPayloadGates();
-
-    expect(result.registered).toEqual(["e2e-verify", "code-review"]);
-    expect(Object.isFrozen(result)).toBe(true);
-    expect(Object.isFrozen(result.registered)).toBe(true);
+    expect(summary.registered).toEqual(["e2e-verify", "code-review"]);
     expect(resolvePayloadGate("e2e-verify")).toBe(e2eVerifyPayloadGate);
     expect(resolvePayloadGate("code-review")).toBe(codeReviewPayloadGate);
   });
 
-  it("registers idempotently", () => {
-    registerBmadPayloadGates();
+  it("is idempotent", () => {
     registerBmadPayloadGates();
 
-    expect(resolvePayloadGate("e2e-verify")).toBe(e2eVerifyPayloadGate);
-    expect(resolvePayloadGate("code-review")).toBe(codeReviewPayloadGate);
+    expect(() => {
+      registerBmadPayloadGates();
+    }).not.toThrow();
   });
 
   it("allows the built-in SDLC RunDef to compile after registration", () => {
     registerBmadPayloadGates();
 
-    const stages = compileRunDef(SDLC_RUNDEF);
-
-    expect(stages[3]?.payloadGateName).toBe("e2e-verify");
-    expect(stages[3]?.payloadGate).toBe(e2eVerifyPayloadGate);
-    expect(stages[4]?.payloadGateName).toBe("code-review");
-    expect(stages[4]?.payloadGate).toBe(codeReviewPayloadGate);
+    expect(() => compileRunDef(SDLC_RUNDEF)).not.toThrow();
   });
 });

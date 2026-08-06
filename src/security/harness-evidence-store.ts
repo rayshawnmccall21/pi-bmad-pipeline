@@ -230,9 +230,13 @@ const reportStringFields = ["projectRoot", "startedAt", "finishedAt"] as const;
 const isReport = (value: unknown): value is HarnessEvidenceReport =>
   isRecord(value) &&
   hasStringFields(value, reportStringFields) &&
+  isOptionalString(value["commandCwd"]) &&
   typeof value["passed"] === "boolean" &&
   Array.isArray(value["commands"]) &&
   value["commands"].every(isCommandResult);
+
+const isOptionalString = (value: unknown): boolean =>
+  value === undefined || typeof value === "string";
 
 const hasStringFields = (value: Record<string, unknown>, fields: readonly string[]): boolean =>
   fields.every((field) => typeof value[field] === "string");

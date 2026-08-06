@@ -49,4 +49,11 @@ export type { ResolvePiBmadExtensionPathOptions } from "./pi-bmad-extension.js";
 
 export type { PiCliWorkflowExecutorOptions, RunBmadStageFunction } from "./pi-cli-executor.js";
 
-export type { BmadStageSpawn, RunBmadStageRequest } from "./run-bmad-stage.js";
+export type { RunBmadStageRequest } from "./run-bmad-stage.js";
+
+export { BMAD_STAGE_STDIO, nodeStageSpawn } from "./stage-spawn.js";
+export type {
+  BmadStageChildProcess,
+  BmadStageSpawn,
+  BmadStageSpawnOptions,
+} from "./stage-spawn.js";

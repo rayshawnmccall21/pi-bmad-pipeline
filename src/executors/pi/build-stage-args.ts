@@ -4,11 +4,12 @@
  * The emitted shape follows pi-bmad docs/CLI.md ("JSON Output for CI"): pi
  * runs with JSON mode, print, no session, no extension discovery, an explicit
  * pi-bmad extension file, the bmad workflow and story flags, and a trailing
- * prompt, while the PI_BMAD_RUN_ID / PI_BMAD_EMISSION_KEY environment
- * contract stamps and gates the headless output envelope. Pipeline-only
- * metadata (spec file, stage id, attempt, prior findings) is folded into the
- * prompt because pi exposes no flags for it; timeouts and the worktree cwd
- * stay supervisor-owned.
+ * prompt, while the PI_BMAD_RUN_ID / PI_BMAD_EMISSION_KEY / PI_OFFLINE
+ * environment contract stamps the headless output envelope, gates its
+ * emission, and forces pi offline (pi hangs on startup network operations
+ * without PI_OFFLINE=1). Pipeline-only metadata (spec file, stage id,
+ * attempt, prior findings) is folded into the prompt because pi exposes no
+ * flags for it; timeouts and the worktree cwd stay supervisor-owned.
  *
  * @packageDocumentation
  */
@@ -24,6 +25,9 @@ export const PI_BMAD_RUN_ID_ENV_VAR = "PI_BMAD_RUN_ID" as const;
 
 /** Environment variable carrying the emission key that gates headless output. */
 export const PI_BMAD_EMISSION_KEY_ENV_VAR = "PI_BMAD_EMISSION_KEY" as const;
+
+/** Environment variable forcing pi offline so children skip startup network operations. */
+export const PI_OFFLINE_ENV_VAR = "PI_OFFLINE" as const;
 
 /** Minimal stage shape required to construct Pi stage argv. */
 export type StageArgsStage = Pick<CompiledStageDef, "id" | "workflow" | "thinking">;
@@ -73,9 +77,12 @@ export interface BuildStageArgsRequest {
   readonly piBin?: string;
 }
 
-/** Environment variables required by the headless emission contract. */
+/** Hermetic child env contract: emission stamping/gating plus forced pi offline mode. */
 export type BuiltStageEnv = Readonly<
-  Record<typeof PI_BMAD_RUN_ID_ENV_VAR | typeof PI_BMAD_EMISSION_KEY_ENV_VAR, string>
+  Record<
+    typeof PI_BMAD_RUN_ID_ENV_VAR | typeof PI_BMAD_EMISSION_KEY_ENV_VAR | typeof PI_OFFLINE_ENV_VAR,
+    string
+  >
 >;
 
 /** Built Pi invocation. */
@@ -123,6 +130,7 @@ export function buildStageArgs(request: BuildStageArgsRequest): BuiltStageArgs {
     env: Object.freeze({
       [PI_BMAD_RUN_ID_ENV_VAR]: request.runId ?? defaultRunId(request),
       [PI_BMAD_EMISSION_KEY_ENV_VAR]: request.emissionKey,
+      [PI_OFFLINE_ENV_VAR]: "1",
     }),
   });
 }

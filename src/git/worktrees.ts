@@ -8,6 +8,7 @@ import {
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { isPipelineStateStoryId } from "../state/index.js";
+import { classifyWorktreeRegistration, parseWorktreePorcelain } from "./worktree-registry.js";
 import { redactText } from "../security/index.js";
 
 /** Relative directory where pipeline worktrees are created. */
@@ -115,7 +116,7 @@ export interface RemoveStoryWorktreeRequest {
 
 /** Git worktree error code. */
 export type GitWorktreeErrorCode =
-  "git-command-failed" | "git-command-timed-out" | "invalid-worktree-path";
+  "git-command-failed" | "git-command-timed-out" | "invalid-worktree-path" | "worktree-conflict";
 
 /** Git worktree error details. */
 export interface GitWorktreeErrorDetails {
@@ -202,7 +203,13 @@ export async function runGitCommand(request: RunGitCommandRequest): Promise<GitC
   return spawnGit(request);
 }
 
-/** Ensures an isolated story worktree exists. */
+/**
+ * Ensures an isolated story worktree exists.
+ *
+ * Idempotent for durable resume: an existing registration at the story path on
+ * the story branch is reused as-is; a registration that pins the path or the
+ * branch anywhere else fails closed with code "worktree-conflict".
+ */
 export async function ensureStoryWorktree(
   request: EnsureStoryWorktreeRequest,
 ): Promise<StoryWorktree> {
@@ -212,8 +219,23 @@ export async function ensureStoryWorktree(
   const options = gitOptions(request);
 
   await runGitCommand({ ...options, args: ["worktree", "prune"] });
-  await runGitCommand({ ...options, args: ["worktree", "add", "-B", branch, path, baseRef] });
-
+  const listing = await runGitCommand({ ...options, args: ["worktree", "list", "--porcelain"] });
+  const state = classifyWorktreeRegistration(
+    parseWorktreePorcelain(listing.stdout),
+    path,
+    `refs/heads/${branch}`,
+  );
+  if (state === "conflict") {
+    throw new GitWorktreeError({
+      code: "worktree-conflict",
+      command: "git",
+      args: ["worktree", "list", "--porcelain"],
+      cwd: request.projectRoot,
+    });
+  }
+  if (state === "absent") {
+    await runGitCommand({ ...options, args: ["worktree", "add", "-B", branch, path, baseRef] });
+  }
   return Object.freeze({ storyId: request.storyId, branch, path });
 }
 

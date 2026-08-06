@@ -89,6 +89,18 @@ describe("harness evidence", () => {
     );
   });
 
+  it("rejects blank command cwd on the report request", async () => {
+    await expect(runHarnessEvidence({ projectRoot: "/repo", commandCwd: " " })).rejects.toThrow(
+      new RangeError("Command cwd must not be blank."),
+    );
+  });
+
+  it("rejects blank command cwd on the command runner", () => {
+    expect(() => runHarnessEvidenceCommand(" ", command())).toThrow(
+      new RangeError("Command cwd must not be blank."),
+    );
+  });
+
   it("rejects blank command", () => {
     expect(() => runHarnessEvidenceCommand("/repo", command({ command: " " }))).toThrow(
       new RangeError("command must not be blank."),
@@ -215,6 +227,60 @@ describe("harness evidence", () => {
     await expect(promise).resolves.toMatchObject({ status: "aborted", aborted: true });
     // eslint-disable-next-line @typescript-eslint/unbound-method -- fake child kill is a vi.fn.
     expect(vi.mocked(childAt(children, 0).kill)).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("runs commands in commandCwd while keeping projectRoot as report identity", async () => {
+    const [spawn, children] = createSpawn();
+
+    const promise = runHarnessEvidence({
+      projectRoot: "/repo",
+      commandCwd: "/repo/.pi/pipeline/worktrees/SH-1",
+      commands: [command()],
+      spawn,
+    });
+    close(childAt(children, 0), 0);
+    const report = await promise;
+
+    expect(spawn).toHaveBeenCalledWith(
+      "npm",
+      ["test"],
+      expect.objectContaining({
+        cwd: "/repo/.pi/pipeline/worktrees/SH-1",
+      }) as SpawnOptionsWithoutStdio,
+    );
+    expect(report.projectRoot).toBe("/repo");
+    expect(report.commandCwd).toBe("/repo/.pi/pipeline/worktrees/SH-1");
+  });
+
+  it("defaults commandCwd to projectRoot when omitted", async () => {
+    const [spawn, children] = createSpawn();
+
+    const promise = runHarnessEvidence({ projectRoot: "/repo", commands: [command()], spawn });
+    close(childAt(children, 0), 0);
+    const report = await promise;
+
+    expect(spawn).toHaveBeenCalledWith(
+      "npm",
+      ["test"],
+      expect.objectContaining({ cwd: "/repo" }) as SpawnOptionsWithoutStdio,
+    );
+    expect(report.commandCwd).toBe("/repo");
+  });
+
+  it("runs the default commands when none are provided", async () => {
+    const children = [createFakeChild(), createFakeChild(), createFakeChild()];
+    const [spawn] = createSpawn(children);
+
+    const promise = runHarnessEvidence({ projectRoot: "/repo", spawn });
+    for (const [index, child] of children.entries()) {
+      await vi.waitFor(() => {
+        expect(spawn).toHaveBeenCalledTimes(index + 1);
+      });
+      close(child, 0);
+    }
+    const report = await promise;
+
+    expect(report.commands.map((result) => result.name)).toEqual(["test", "typecheck", "lint"]);
   });
 
   it("runs commands sequentially", async () => {
