@@ -1,0 +1,8 @@
+$ bun src/cli.ts run
+pi-bmad-pipeline: Missing required "rundef-id" argument. (missing-positional)
+Usage: bmad-pipeline [command] [options]
+Commands:
+  run <rundef-id> --story-id ID --spec-file PATH [--project-root DIR]
+      [--model NAME] [--thinking EFFORT] [--max-regressions N] [--jsonl]
+  help | version
+exit=1

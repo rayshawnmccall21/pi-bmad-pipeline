@@ -1,0 +1,8 @@
+$ bun src/cli.ts run --no-pr
+pi-bmad-pipeline: Unknown option "--no-pr". (unknown-option)
+Usage: bmad-pipeline [command] [options]
+Commands:
+  run <rundef-id> --story-id ID --spec-file PATH [--project-root DIR]
+      [--model NAME] [--thinking EFFORT] [--max-regressions N] [--jsonl]
+  help | version
+exit=1

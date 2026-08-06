@@ -1,0 +1,3 @@
+$ bun src/cli.ts version
+pi-bmad-pipeline v0.1.0
+exit=0
