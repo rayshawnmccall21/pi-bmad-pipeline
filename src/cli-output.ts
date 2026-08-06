@@ -23,7 +23,7 @@ export const CLI_EXIT_BLOCKED = 2;
 /**
  * Maps a terminal run status to the CLI exit code policy.
  *
- * @param status - Terminal run or audit status.
+ * @param status - Terminal run status.
  *
  * @returns 0 for "passed", otherwise 2.
  *

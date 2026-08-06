@@ -58,7 +58,7 @@ export interface StageDecision {
   /** True only when the execution and optional payload gate passed. */
   readonly passed: boolean;
 
-  /** Human-readable audit reason. */
+  /** Human-readable decision reason. */
   readonly reason: string;
 
   /** Optional findings emitted by a failed payload gate. */

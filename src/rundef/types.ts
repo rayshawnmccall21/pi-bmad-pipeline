@@ -82,7 +82,7 @@ export interface StageDef {
   /** Effective stage timeout in seconds after applying compilation defaults. */
   readonly timeoutSeconds: number;
 
-  /** Optional payload gate name retained for audit and event output. */
+  /** Optional payload gate name retained for state and event output. */
   readonly payloadGateName?: string;
 
   /** Optional payload gate function resolved from the registry at compile time. */
@@ -106,7 +106,7 @@ export interface PayloadGateResult {
   /** True when the payload satisfies the gate, false when it fails. */
   readonly passed: boolean;
 
-  /** Optional human-readable reason for audit logging and event emission. */
+  /** Optional human-readable reason for state and event emission. */
   readonly reason?: string;
 
   /** Optional findings to carry into a regression attempt when the gate fails. */

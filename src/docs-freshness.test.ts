@@ -21,18 +21,22 @@ describe("narrowed mission documentation", () => {
   it("keeps source module documentation free of deleted policy vocabulary", () => {
     const sourceDocumentation = [
       "src/rundef/loader.ts",
+      "src/rundef/compile.ts",
       "src/rundef/schema.ts",
       "src/rundef/types.ts",
       "src/cli-output.ts",
       "src/state/pipeline-state.ts",
       "src/events/debug-log.ts",
+      "src/events/pipeline-event.ts",
+      "src/core/stage-decision.ts",
+      "src/core/budgets.ts",
       "src/actions/run-pipeline-action.ts",
     ]
       .map(readProjectFile)
       .join("\n");
 
     expect(sourceDocumentation).not.toMatch(
-      /built-in definition|evidence|pull request|\bPR\b|merge|audit artifact|stage extension|current-run/iu,
+      /built-in(?:-vs-discovered| definition| definitions)|evidence|pull request|\bPR\b|merge|audit (?:artifact|logging|output|reason|status)|stage extension|current-run/iu,
     );
   });
 });

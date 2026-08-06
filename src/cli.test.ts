@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -182,11 +182,14 @@ describe("isMainModule", () => {
 });
 
 describe("published CLI", () => {
-  it("executes the built bin target under Node", () => {
+  it("executes the built bin target under Node for accepted and rejected commands", () => {
     const builtCliPath = resolve(import.meta.dirname, "../dist/src/cli.js");
 
     expect(execFileSync("node", [builtCliPath, "help"], { encoding: "utf8" })).toContain(
       "run <rundef-id>",
     );
+    const rejectedCommand = spawnSync("node", [builtCliPath, "audit"], { encoding: "utf8" });
+    expect(rejectedCommand.status).toBe(1);
+    expect(rejectedCommand.stderr).toContain("unknown-command");
   });
 });

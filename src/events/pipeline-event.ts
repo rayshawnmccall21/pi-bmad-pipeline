@@ -72,7 +72,7 @@ export interface PipelineStageFinishedEvent extends PipelineCliEventBase {
   /** Stage duration in milliseconds. */
   readonly durationMs: number;
 
-  /** Human-readable audit reason. */
+  /** Human-readable decision reason. */
   readonly reason: string;
 }
 

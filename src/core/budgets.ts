@@ -53,7 +53,7 @@ export interface StageBudgetEvaluation {
   /** Exceeded limits. Empty when passed. */
   readonly exceeded: readonly StageBudgetExceededLimit[];
 
-  /** Human-readable audit reason. */
+  /** Human-readable budget decision reason. */
   readonly reason: string;
 }
 
@@ -89,7 +89,7 @@ export interface RunBudgetEvaluation {
   /** Exceeded limits. Empty when passed. */
   readonly exceeded: readonly StageBudgetExceededLimit[];
 
-  /** Human-readable audit reason. */
+  /** Human-readable budget decision reason. */
   readonly reason: string;
 }
 
