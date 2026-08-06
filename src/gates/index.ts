@@ -2,6 +2,7 @@
 
 export {
   CODE_REVIEW_PAYLOAD_GATE_NAME,
+  CODE_REVIEW_SEVERITIES,
   E2E_VERIFY_PAYLOAD_GATE_NAME,
   codeReviewPayloadGate,
   e2eVerifyPayloadGate,
