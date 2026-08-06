@@ -1,4 +1,4 @@
-/** Events barrel — structured debug logging seam. */
+/** Events barrel — structured debug logging seam + CLI wire protocol. */
 export {
   DEBUG_LOG_PREFIX,
   debugLog,
@@ -8,3 +8,30 @@ export {
   type DebugLogFieldValue,
   type DebugLogOptions,
 } from "./debug-log.js";
+
+export {
+  createPipelineEventEmitter,
+  PipelineEventError,
+  serializePipelineEvent,
+  type CreatePipelineEventEmitterOptions,
+  type PipelineBudgetScope,
+  type PipelineBudgetDecisionEvent,
+  type PipelineCliEvent,
+  type PipelineCliEventBase,
+  type PipelineCliEventFields,
+  type PipelineCliEventOf,
+  type PipelineCliEventType,
+  type PipelineErrorEvent,
+  type PipelineEventEmitter,
+  type PipelineEventErrorCode,
+  type PipelineEventSink,
+  type PipelineEvidenceFinishedEvent,
+  type PipelineGateDecisionEvent,
+  type PipelineMergeDecisionEvent,
+  type PipelinePrOpenedEvent,
+  type PipelineProgressEvent,
+  type PipelineResultEvent,
+  type PipelineRunStartedEvent,
+  type PipelineStageFinishedEvent,
+  type PipelineStageStartedEvent,
+} from "./pipeline-event.js";
