@@ -4,7 +4,8 @@ import type {
   StageExecutionResult,
   WorkflowExecutor,
 } from "../workflow-executor.js";
-import { runBmadStage, type BmadStageSpawn, type RunBmadStageRequest } from "./run-bmad-stage.js";
+import { runBmadStage, type RunBmadStageRequest } from "./run-bmad-stage.js";
+import type { BmadStageSpawn } from "./stage-spawn.js";
 
 /** Stable executor id for the Pi CLI executor. */
 export const PI_CLI_WORKFLOW_EXECUTOR_ID = "pi-cli" as const;

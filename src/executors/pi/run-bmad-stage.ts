@@ -1,8 +1,3 @@
-import {
-  spawn as nodeSpawn,
-  type ChildProcessWithoutNullStreams,
-  type SpawnOptionsWithoutStdio,
-} from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve as resolvePath } from "node:path";
 
@@ -21,6 +16,12 @@ import {
 } from "./headless-stream-output.js";
 import { resolvePiBmadExtensionPath } from "./pi-bmad-extension.js";
 import {
+  BMAD_STAGE_STDIO,
+  nodeStageSpawn,
+  type BmadStageChildProcess,
+  type BmadStageSpawn,
+} from "./stage-spawn.js";
+import {
   logEnvelopeGate,
   logStageSpawn,
   type EnvelopeGateLogContext,
@@ -30,14 +31,11 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- small fixed diagnostic cap.
 export const MAX_STAGE_STDERR_CHARS = 16_384 as const;
 
-const millisecondsPerSecond = 1000;
+/** Default grace period in milliseconds before SIGTERM escalates to SIGKILL. */
+// eslint-disable-next-line @typescript-eslint/no-magic-numbers -- small fixed escalation grace.
+export const DEFAULT_KILL_ESCALATION_MS = 10_000 as const;
 
-/** Minimal spawn function used by runBmadStage; injectable for tests. */
-export type BmadStageSpawn = (
-  command: string,
-  args: readonly string[],
-  options: SpawnOptionsWithoutStdio,
-) => ChildProcessWithoutNullStreams;
+const millisecondsPerSecond = 1000;
 
 /** Request for running one BMAD stage through the Pi CLI. */
 export interface RunBmadStageRequest extends Omit<StageExecutionRequest, "signal"> {
@@ -70,6 +68,12 @@ export interface RunBmadStageRequest extends Omit<StageExecutionRequest, "signal
 
   /** Optional timeout override in milliseconds. Defaults to stage timeout seconds. */
   readonly timeoutMs?: number;
+
+  /**
+   * Optional grace period in milliseconds before a SIGTERM-ignoring child is
+   * escalated to SIGKILL. Defaults to DEFAULT_KILL_ESCALATION_MS.
+   */
+  readonly killEscalationMs?: number;
 
   /** Optional clock for tests. */
   readonly now?: () => number;
@@ -105,7 +109,7 @@ export class BmadStageSpawnError extends Error {
  *
  * @returns Stage execution result.
  *
- * @throws RangeError When timeout configuration is invalid.
+ * @throws RangeError When timeout or kill-escalation configuration is invalid.
  * @throws BmadStageSpawnError When the child process cannot be spawned.
  *
  * @example
@@ -121,8 +125,8 @@ export function runBmadStage(request: RunBmadStageRequest): Promise<StageExecuti
   const startMs = now();
   const parser = new HeadlessJsonlParser();
   const stderr = createStderrCapture();
-  const state = createRunState();
-  const spawn = request.spawn ?? nodeSpawn;
+  const state = createRunState(resolveKillEscalationMs(request));
+  const spawn = request.spawn ?? nodeStageSpawn;
   logStageSpawn(request, invocation, timeoutMs);
 
   return new Promise((resolve, reject) => {
@@ -131,10 +135,10 @@ export function runBmadStage(request: RunBmadStageRequest): Promise<StageExecuti
       return;
     }
     const timeout = setTimeout(() => {
-      killTimedOut(child, state);
+      killWithEscalation(child, state, "timedOut");
     }, timeoutMs);
     const onAbort = (): void => {
-      killAborted(child, state);
+      killWithEscalation(child, state, "aborted");
     };
     request.signal.addEventListener("abort", onAbort, { once: true });
     attachChildHandlers(child, {
@@ -203,6 +207,8 @@ interface RunState {
   aborted: boolean;
   timedOut: boolean;
   settled: boolean;
+  killTimer: NodeJS.Timeout | undefined;
+  readonly killEscalationMs: number;
 }
 
 interface CloseContext {
@@ -229,6 +235,14 @@ const resolveTimeoutMs = (request: RunBmadStageRequest): number => {
   return timeoutMs;
 };
 
+const resolveKillEscalationMs = (request: RunBmadStageRequest): number => {
+  const killEscalationMs = request.killEscalationMs ?? DEFAULT_KILL_ESCALATION_MS;
+  if (!Number.isInteger(killEscalationMs) || killEscalationMs < 1) {
+    throw new RangeError("killEscalationMs must be a positive integer.");
+  }
+  return killEscalationMs;
+};
+
 interface SpawnChildRequest {
   readonly spawn: BmadStageSpawn;
   readonly invocation: BuiltStageArgs;
@@ -236,11 +250,12 @@ interface SpawnChildRequest {
   readonly reject: (error: unknown) => void;
 }
 
-const spawnChild = (request: SpawnChildRequest): ChildProcessWithoutNullStreams | undefined => {
+const spawnChild = (request: SpawnChildRequest): BmadStageChildProcess | undefined => {
   try {
     return request.spawn(request.invocation.bin, request.invocation.args, {
       cwd: request.cwd,
       env: { ...process.env, ...request.invocation.env },
+      stdio: BMAD_STAGE_STDIO,
     });
   } catch (error) {
     request.reject(new BmadStageSpawnError(request.invocation.bin, error));
@@ -248,10 +263,7 @@ const spawnChild = (request: SpawnChildRequest): ChildProcessWithoutNullStreams 
   }
 };
 
-const attachChildHandlers = (
-  child: ChildProcessWithoutNullStreams,
-  context: CloseContext,
-): void => {
+const attachChildHandlers = (child: BmadStageChildProcess, context: CloseContext): void => {
   child.stdout.on("data", (chunk: Uint8Array | string) => {
     context.parser.push(chunk);
   });
@@ -272,6 +284,7 @@ const resolveClose = (context: CloseContext, exitCode: number | null): void => {
   }
   context.state.settled = true;
   clearTimeout(context.timeout);
+  clearTimeout(context.state.killTimer);
   context.request.signal.removeEventListener("abort", context.onAbort);
   context.parser.finish();
   context.resolve(buildResult(context, exitCode));
@@ -283,6 +296,7 @@ const rejectOnce = (context: CloseContext, error: unknown): void => {
   }
   context.state.settled = true;
   clearTimeout(context.timeout);
+  clearTimeout(context.state.killTimer);
   context.request.signal.removeEventListener("abort", context.onAbort);
   context.reject(error);
 };
@@ -349,17 +363,24 @@ const getParseError = (request: ParseErrorRequest): string | undefined => {
 const piBmadSchemaRootDir = (extensionPath: string): string =>
   resolvePath(dirname(extensionPath), "..");
 
-const killTimedOut = (child: ChildProcessWithoutNullStreams, state: RunState): void => {
-  state.timedOut = true;
+// Marks why the child is being killed, sends SIGTERM, and schedules one SIGKILL escalation.
+const killWithEscalation = (
+  child: BmadStageChildProcess,
+  state: RunState,
+  reason: "timedOut" | "aborted",
+): void => {
+  state[reason] = true;
   child.kill("SIGTERM");
+  state.killTimer ??= setTimeout(() => child.kill("SIGKILL"), state.killEscalationMs);
 };
 
-const killAborted = (child: ChildProcessWithoutNullStreams, state: RunState): void => {
-  state.aborted = true;
-  child.kill("SIGTERM");
-};
-
-const createRunState = (): RunState => ({ aborted: false, timedOut: false, settled: false });
+const createRunState = (killEscalationMs: number): RunState => ({
+  aborted: false,
+  timedOut: false,
+  settled: false,
+  killTimer: undefined,
+  killEscalationMs,
+});
 
 const createStderrCapture = (): {
   readonly push: (chunk: Uint8Array | string) => void;
