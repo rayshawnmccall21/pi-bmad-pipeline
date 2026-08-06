@@ -11,7 +11,11 @@
  * @packageDocumentation
  */
 
-import { payloadGateRegistry, type CompiledStageDef } from "../rundef/index.js";
+import {
+  computeRunDefDigest,
+  payloadGateRegistry,
+  type CompiledStageDef,
+} from "../rundef/index.js";
 import { createInitialPipelineState, type PipelineState } from "../state/index.js";
 
 import type { PipelineActionContext, RunPipelineActionRequest } from "./run-pipeline-action.js";
@@ -22,7 +26,7 @@ import type {
 } from "../core/index.js";
 import type { PipelineEventEmitter } from "../events/index.js";
 import type { WorkflowExecutor } from "../executors/index.js";
-import type { StoryWorktree } from "../git/index.js";
+import { canonicalizeWorktreePath, type StoryWorktree } from "../git/index.js";
 import type {
   ModelConfigCandidate,
   ResolveModelConfigRequest,
@@ -75,15 +79,21 @@ export const preparePipeline = async (
     registry: payloadGateRegistry,
   });
   const model = deps.resolveModel(buildModelRequest(request));
-  const worktree = await deps.ensureWorktree({
+  const ensuredWorktree = await deps.ensureWorktree({
     projectRoot: request.projectRoot,
     storyId: request.storyId,
+  });
+  const worktree = Object.freeze({
+    ...ensuredWorktree,
+    path: canonicalizeWorktreePath(ensuredWorktree.path),
   });
   const state = await resolveStartingState(context, {
     loaded,
     stages: selection.stages,
     worktree,
     model,
+    runDefId: selection.id,
+    runDefDigest: computeRunDefDigest(selection.runDef),
   });
   const executor = deps.createExecutor({ model: model.model, thinking: model.thinking });
   return Object.freeze({ stages: selection.stages, worktree, model, state, executor });
@@ -147,6 +157,8 @@ interface StartingStateInput {
   readonly stages: readonly CompiledStageDef[];
   readonly worktree: StoryWorktree;
   readonly model: ResolvedModelConfig;
+  readonly runDefId: string;
+  readonly runDefDigest: string;
 }
 
 const resolveStartingState = async (
@@ -157,6 +169,8 @@ const resolveStartingState = async (
   if (input.loaded === undefined) {
     const initial = createInitialPipelineState({
       storyId: request.storyId,
+      runDefId: input.runDefId,
+      runDefDigest: input.runDefDigest,
       specFile: request.specFile,
       worktreePath: input.worktree.path,
       branch: input.worktree.branch,
@@ -168,6 +182,7 @@ const resolveStartingState = async (
     await deps.saveState(request.projectRoot, initial);
     return initial;
   }
+  assertResumeIdentity(input.loaded, request, input);
   const reconciled = deps.reconcileState({
     state: input.loaded,
     stages: input.stages,
@@ -177,6 +192,31 @@ const resolveStartingState = async (
     await deps.saveState(request.projectRoot, reconciled.state);
   }
   return reconciled.state;
+};
+
+const assertResumeIdentity = (
+  loaded: PipelineState,
+  request: RunPipelineActionRequest,
+  input: StartingStateInput,
+): void => {
+  const matches = [
+    loaded.storyId === request.storyId,
+    loaded.runDefId === input.runDefId,
+    loaded.runDefDigest === input.runDefDigest,
+    loaded.specFile === request.specFile,
+    loaded.worktreePath === input.worktree.path,
+    loaded.branch === input.worktree.branch,
+    loaded.model === input.model.model,
+    loaded.thinking === input.model.thinking,
+  ].every(Boolean);
+  if (!matches) {
+    throw Object.assign(
+      new Error("Loaded state RunDef identity or run configuration does not match the active run."),
+      {
+        code: "state-identity-mismatch",
+      },
+    );
+  }
 };
 
 const createStageObserver = (emitter: PipelineEventEmitter): PipelineStageObserver =>

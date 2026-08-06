@@ -1,0 +1,3 @@
+$ node dist/src/cli.js version
+pi-bmad-pipeline v0.1.0
+exit=0

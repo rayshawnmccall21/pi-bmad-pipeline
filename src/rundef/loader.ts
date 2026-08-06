@@ -3,8 +3,8 @@
  *
  * Scans a project's `.pi/bmad/pipelines/*.yaml` directory, parses each file,
  * validates it through the schema boundary, and returns a deterministic catalog
- * of discovered RunDefs. Built-in RunDefs are not loaded here; the selector
- * module handles built-in-vs-discovered resolution.
+ * of discovered RunDefs. The selector resolves definitions only from this
+ * discovered catalog.
  *
  * @packageDocumentation
  */

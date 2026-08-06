@@ -9,8 +9,7 @@
  * pure types, a pure serializer, and an emitter factory with an injected sink
  * and clock — it never touches process, stdout, or any other ambient state.
  * Vocabularies owned by other modules (stage decision kinds, run statuses,
- * merge decisions) are carried as opaque strings; their sources of truth stay
- * in the owning modules.
+ * are carried as opaque strings; their sources of truth stay in owning modules.
  *
  * @packageDocumentation
  */
@@ -73,7 +72,7 @@ export interface PipelineStageFinishedEvent extends PipelineCliEventBase {
   /** Stage duration in milliseconds. */
   readonly durationMs: number;
 
-  /** Human-readable audit reason. */
+  /** Human-readable decision reason. */
   readonly reason: string;
 }
 
@@ -117,45 +116,6 @@ export interface PipelineBudgetDecisionEvent extends PipelineCliEventBase {
 
   /** Human-readable budget reason. */
   readonly reason: string;
-}
-
-/** Emitted after harness-owned evidence collection finishes. */
-export interface PipelineEvidenceFinishedEvent extends PipelineCliEventBase {
-  /** Event type discriminator. */
-  readonly event: "evidence.finished";
-
-  /** True when every harness evidence command passed. */
-  readonly passed: boolean;
-
-  /** Names of harness evidence commands that failed. */
-  readonly failedCommands: readonly string[];
-}
-
-/** Emitted after a story pull request is opened. */
-export interface PipelinePrOpenedEvent extends PipelineCliEventBase {
-  /** Event type discriminator. */
-  readonly event: "pr.opened";
-
-  /** Opened pull request URL. */
-  readonly prUrl: string;
-
-  /** Opened pull request number. */
-  readonly prNumber: number;
-
-  /** Story branch the pull request was opened from. */
-  readonly branch: string;
-}
-
-/** Emitted after the merge gate evaluates a story. */
-export interface PipelineMergeDecisionEvent extends PipelineCliEventBase {
-  /** Event type discriminator. */
-  readonly event: "merge.decision";
-
-  /** Merge gate decision (vocabulary owned by git/merge-gate). */
-  readonly decision: string;
-
-  /** Blockers preventing the merge, empty when allowed. */
-  readonly blockers: readonly string[];
 }
 
 /** Emitted for human-oriented progress updates. */
@@ -207,9 +167,6 @@ export type PipelineCliEvent =
   | PipelineStageFinishedEvent
   | PipelineGateDecisionEvent
   | PipelineBudgetDecisionEvent
-  | PipelineEvidenceFinishedEvent
-  | PipelinePrOpenedEvent
-  | PipelineMergeDecisionEvent
   | PipelineProgressEvent
   | PipelineResultEvent
   | PipelineErrorEvent;
@@ -427,31 +384,6 @@ const buildBudgetDecision: PipelineEventBuilder<"budget.decision"> = (base, fiel
     reason: redactString(fields.reason),
   });
 
-const buildEvidenceFinished: PipelineEventBuilder<"evidence.finished"> = (base, fields) =>
-  Object.freeze({
-    ...base,
-    event: "evidence.finished",
-    passed: fields.passed,
-    failedCommands: redactStringList(fields.failedCommands),
-  });
-
-const buildPrOpened: PipelineEventBuilder<"pr.opened"> = (base, fields) =>
-  Object.freeze({
-    ...base,
-    event: "pr.opened",
-    prUrl: redactString(fields.prUrl),
-    prNumber: fields.prNumber,
-    branch: redactString(fields.branch),
-  });
-
-const buildMergeDecision: PipelineEventBuilder<"merge.decision"> = (base, fields) =>
-  Object.freeze({
-    ...base,
-    event: "merge.decision",
-    decision: redactString(fields.decision),
-    blockers: redactStringList(fields.blockers),
-  });
-
 const buildProgress: PipelineEventBuilder<"progress"> = (base, fields) =>
   Object.freeze({
     ...base,
@@ -484,9 +416,6 @@ const eventBuilders: PipelineEventBuilders = Object.freeze({
   "stage.finished": buildStageFinished,
   "gate.decision": buildGateDecision,
   "budget.decision": buildBudgetDecision,
-  "evidence.finished": buildEvidenceFinished,
-  "pr.opened": buildPrOpened,
-  "merge.decision": buildMergeDecision,
   progress: buildProgress,
   result: buildResult,
   error: buildError,

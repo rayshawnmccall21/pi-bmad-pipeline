@@ -248,7 +248,7 @@ function compileStage(stage: RunDef["stages"][number], ctx: StageCompileContext)
 /**
  * Validates and compiles an unknown candidate into compiled stage definitions.
  *
- * @param candidate - Candidate RunDef loaded from YAML, JSON, or a built-in definition.
+ * @param candidate - Candidate RunDef loaded from discovered YAML or supplied directly.
  * @param options - Optional compilation dependencies and defaults.
  *
  * @returns Frozen compiled stage definitions in execution order.

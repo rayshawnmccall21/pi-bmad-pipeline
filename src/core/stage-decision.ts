@@ -40,6 +40,9 @@ export interface CheckStageDecisionRequest {
   /** Compiled stage definition. */
   readonly stage: Pick<CompiledStageDef, "id" | "payloadGate" | "payloadGateName">;
 
+  /** Story id being supervised by the active run. */
+  readonly storyId?: string;
+
   /** Execution result returned by the stage executor. */
   readonly result: StageDecisionExecutionResult;
 }
@@ -55,7 +58,7 @@ export interface StageDecision {
   /** True only when the execution and optional payload gate passed. */
   readonly passed: boolean;
 
-  /** Human-readable audit reason. */
+  /** Human-readable decision reason. */
   readonly reason: string;
 
   /** Optional findings emitted by a failed payload gate. */
@@ -143,20 +146,32 @@ const checkPayloadGate = (
   gate: NonNullable<CheckStageDecisionRequest["stage"]["payloadGate"]>,
   payload: Record<string, unknown>,
 ): StageDecision => {
-  const gateResult = gate(payload);
-  const gateName = request.stage.payloadGateName ?? "unnamed";
-  const reason =
-    gateResult.reason ??
-    `Stage "${request.stage.id}" payload gate "${gateName}" ${gateResult.passed ? "passed" : "failed"}.`;
+  const gateResult = gate(payload, payloadGateContext(request.storyId));
   return freezeDecision({
     stageId: request.stage.id,
     kind: gateResult.passed ? "passed" : "gate-failed",
     passed: gateResult.passed,
-    reason,
+    reason: payloadGateReason(request, gateResult),
     ...usageField(request.result.usage),
-    ...(gateResult.findings === undefined ? {} : { findings: [...gateResult.findings] }),
+    ...findingsField(gateResult.findings),
   });
 };
+
+const payloadGateContext = (
+  storyId: string | undefined,
+): { readonly storyId: string } | undefined => (storyId === undefined ? undefined : { storyId });
+
+const payloadGateReason = (
+  request: CheckStageDecisionRequest,
+  gateResult: ReturnType<NonNullable<CheckStageDecisionRequest["stage"]["payloadGate"]>>,
+): string =>
+  gateResult.reason ??
+  `Stage "${request.stage.id}" payload gate "${request.stage.payloadGateName ?? "unnamed"}" ${gateResult.passed ? "passed" : "failed"}.`;
+
+const findingsField = (
+  findings: readonly string[] | undefined,
+): Partial<Pick<StageDecision, "findings">> =>
+  findings === undefined ? {} : { findings: [...findings] };
 
 const failure = (
   request: CheckStageDecisionRequest,

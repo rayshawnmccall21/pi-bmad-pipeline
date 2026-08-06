@@ -1,7 +1,7 @@
 {
   "name": "pi-bmad-pipeline",
   "version": "0.1.0",
-  "description": "Standalone BMAD pipeline supervisor CLI. Owns durable cross-process SDLC pipeline execution: RunDef loading/compilation, stage spawning, JSONL parsing, payload gates, routing/regression, worktrees, budgets/timeouts, harness-owned evidence, PR/merge logic, and audit. Imports pi-bmad/contracts; shells out to pi as an opaque binary.",
+  "description": "Supervises discovered-YAML FSM execution with hermetic Pi children, durable state, and redacted JSONL events.",
   "type": "module",
   "main": "src/index.ts",
   "exports": {
@@ -21,15 +21,18 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && bun build src/cli.ts --target=node --outfile=dist/src/cli.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ --max-warnings 0",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:coverage": "npm run build",
     "test:coverage": "vitest run --coverage",
+    "precrap": "npm run build",
     "crap": "vitest run --coverage && node scripts/crap-report.mjs",
     "crap:ratchet": "node scripts/crap-ratchet.mjs",
     "crap:update-baseline": "node scripts/crap-ratchet.mjs --update-baseline",

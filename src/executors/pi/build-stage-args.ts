@@ -70,9 +70,6 @@ export interface BuildStageArgsRequest {
   /** Optional prior findings folded into regression attempt prompts. */
   readonly priorFindings?: readonly string[];
 
-  /** Optional additional stage extension file loaded via a second -e. */
-  readonly stageExtensionPath?: string;
-
   /** Optional Pi executable name/path. */
   readonly piBin?: string;
 }
@@ -146,7 +143,6 @@ const headlessPrefixArgs = (): readonly string[] => [
 const extensionArgs = (request: BuildStageArgsRequest): readonly string[] => [
   "-e",
   request.piBmadExtensionPath,
-  ...(request.stageExtensionPath === undefined ? [] : ["-e", request.stageExtensionPath]),
 ];
 
 const bmadArgs = (request: BuildStageArgsRequest, thinking: ModelThinking): readonly string[] => [
@@ -203,7 +199,6 @@ const validateOptionalStrings = (request: BuildStageArgsRequest): void => {
   const fields = [
     ["piBin", request.piBin],
     ["runId", request.runId],
-    ["stageExtensionPath", request.stageExtensionPath],
   ] as const;
   for (const [field, value] of fields) {
     if (value !== undefined) {

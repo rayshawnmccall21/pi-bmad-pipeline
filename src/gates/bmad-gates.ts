@@ -8,7 +8,12 @@
  *
  * @packageDocumentation
  */
-import { registerPayloadGate, type PayloadGate, type PayloadGateResult } from "../rundef/index.js";
+import {
+  registerPayloadGate,
+  type PayloadGate,
+  type PayloadGateContext,
+  type PayloadGateResult,
+} from "../rundef/index.js";
 
 /** Built-in payload gate name for E2E verification. */
 export const E2E_VERIFY_PAYLOAD_GATE_NAME = "e2e-verify" as const;
@@ -39,6 +44,7 @@ export const CODE_REVIEW_SEVERITIES = Object.freeze([
  * Evaluates the canonical e2e-verify result payload.
  *
  * @param payload - Validated e2e-verify workflow payload.
+ * @param context - Optional active story identity.
  *
  * @returns Pass only for verdict "pass"; "fail" carries failed/partial scenario
  * ids as findings; any other shape fails closed.
@@ -48,10 +54,14 @@ export const CODE_REVIEW_SEVERITIES = Object.freeze([
  * const result = e2eVerifyPayloadGate({ verdict: "pass" });
  * ```
  */
-export const e2eVerifyPayloadGate: PayloadGate = (payload) => {
+export const e2eVerifyPayloadGate: PayloadGate = (payload, context) => {
+  const identityFailure = storyIdentityFailure(payload, context);
+  if (identityFailure !== undefined) {
+    return identityFailure;
+  }
   const verdict = payload["verdict"];
   if (verdict === "pass") {
-    return Object.freeze({ passed: true, reason: "E2E verification passed." });
+    return e2ePassResult(payload);
   }
   if (verdict === "fail") {
     return failedResult(
@@ -66,6 +76,7 @@ export const e2eVerifyPayloadGate: PayloadGate = (payload) => {
  * Evaluates the canonical code-review result payload.
  *
  * @param payload - Validated code-review workflow payload.
+ * @param context - Optional active story identity.
  *
  * @returns Pass only for verdict "approved"; "needs-dev" and "needs-verify"
  * carry a severity summary as findings; any other shape fails closed.
@@ -75,10 +86,14 @@ export const e2eVerifyPayloadGate: PayloadGate = (payload) => {
  * const result = codeReviewPayloadGate({ verdict: "approved" });
  * ```
  */
-export const codeReviewPayloadGate: PayloadGate = (payload) => {
+export const codeReviewPayloadGate: PayloadGate = (payload, context) => {
+  const identityFailure = storyIdentityFailure(payload, context);
+  if (identityFailure !== undefined) {
+    return identityFailure;
+  }
   const verdict = payload["verdict"];
   if (verdict === "approved") {
-    return Object.freeze({ passed: true, reason: "Code review approved." });
+    return codeReviewApprovalResult(payload);
   }
   if (verdict === "needs-dev" || verdict === "needs-verify") {
     return failedResult(`Code review verdict: ${verdict}.`, severityFindings(payload));
@@ -104,6 +119,42 @@ export function registerBmadPayloadGates(): RegisterBmadPayloadGatesResult {
   });
 }
 
+const storyIdentityFailure = (
+  payload: Record<string, unknown>,
+  context: PayloadGateContext | undefined,
+): PayloadGateResult | undefined =>
+  context !== undefined && payload["storyId"] !== context.storyId
+    ? failedResult(
+        `Payload story identity ${JSON.stringify(payload["storyId"] ?? null)} does not match active story ${JSON.stringify(context.storyId)}.`,
+        [],
+      )
+    : undefined;
+
+const e2ePassResult = (payload: Record<string, unknown>): PayloadGateResult => {
+  if (!isValidE2ePassPayload(payload)) {
+    return failedResult("E2E pass payload is malformed; failing closed.", []);
+  }
+  const contradictory =
+    countOf(payload, "scenariosFailed") !== 0 ||
+    stringList(payload, "failedScenarioIds").length !== 0 ||
+    stringList(payload, "partialScenarioIds").length !== 0;
+  return contradictory
+    ? failedResult("E2E pass verdict contradicts reported failed or partial scenarios.", [])
+    : Object.freeze({ passed: true, reason: "E2E verification passed." });
+};
+
+const codeReviewApprovalResult = (payload: Record<string, unknown>): PayloadGateResult => {
+  if (!isValidCodeReviewApprovalPayload(payload)) {
+    return failedResult("Code review approval payload is malformed; failing closed.", []);
+  }
+  const counts = payload["findingsBySeverity"];
+  const contradictory =
+    !isRecord(counts) || CODE_REVIEW_SEVERITIES.some((severity) => countOf(counts, severity) !== 0);
+  return contradictory
+    ? failedResult("Code review approval contradicts reported findings.", severityFindings(payload))
+    : Object.freeze({ passed: true, reason: "Code review approved." });
+};
+
 const failedResult = (reason: string, findings: readonly string[]): PayloadGateResult =>
   findings.length === 0
     ? Object.freeze({ passed: false, reason })
@@ -114,6 +165,62 @@ const failClosed = (gate: string, verdict: unknown): PayloadGateResult =>
     passed: false,
     reason: `Unrecognized ${gate} verdict ${JSON.stringify(verdict ?? null)}; failing closed.`,
   });
+
+const E2E_VERIFY_PAYLOAD_KEYS = Object.freeze([
+  "storyId",
+  "scenariosPassed",
+  "scenariosFailed",
+  "failedScenarioIds",
+  "partialScenarioIds",
+  "verdict",
+] as const);
+
+const CODE_REVIEW_PAYLOAD_KEYS = Object.freeze([
+  "storyId",
+  "verdict",
+  "findingsBySeverity",
+  "autoFixed",
+] as const);
+
+const isValidE2ePassPayload = (payload: Record<string, unknown>): boolean =>
+  hasExactKeys(payload, E2E_VERIFY_PAYLOAD_KEYS) &&
+  isNonEmptyString(payload["storyId"]) &&
+  isNonNegativeInteger(payload["scenariosPassed"]) &&
+  isNonNegativeInteger(payload["scenariosFailed"]) &&
+  isStringList(payload["failedScenarioIds"]) &&
+  isStringList(payload["partialScenarioIds"]);
+
+const isValidCodeReviewApprovalPayload = (payload: Record<string, unknown>): boolean => {
+  const counts = payload["findingsBySeverity"];
+  return (
+    hasExactKeys(payload, CODE_REVIEW_PAYLOAD_KEYS) &&
+    isNonEmptyString(payload["storyId"]) &&
+    typeof payload["autoFixed"] === "boolean" &&
+    isRecord(counts) &&
+    hasExactKeys(counts, CODE_REVIEW_SEVERITIES) &&
+    CODE_REVIEW_SEVERITIES.every((severity) => isNonNegativeInteger(counts[severity]))
+  );
+};
+
+const hasExactKeys = (
+  payload: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): boolean => {
+  const actualKeys = Object.keys(payload);
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key) => expectedKeys.includes(key))
+  );
+};
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0;
+
+const isNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0;
+
+const isStringList = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
 
 const countOf = (payload: Record<string, unknown>, field: string): number => {
   const value = payload[field];

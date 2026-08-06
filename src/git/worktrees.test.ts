@@ -260,6 +260,31 @@ describe("git worktrees", () => {
     expect(fake.calls).toHaveLength(2);
   });
 
+  it("reuses a worktree registered through a canonical filesystem alias", async () => {
+    const fake = fakeSpawn();
+    const aliasProjectRoot = "/tmp/project";
+    const promise = ensureStoryWorktree({
+      projectRoot: aliasProjectRoot,
+      storyId,
+      spawn: fake.spawn,
+      canonicalizePath: (candidatePath) => candidatePath.replace(/^\/tmp\//u, "/private/tmp/"),
+    });
+
+    close(call(fake.calls, 0).child, 0);
+    await tick();
+    writeStdout(
+      call(fake.calls, 1).child,
+      "worktree /private/tmp/project/.pi/pipeline/worktrees/STORY-123\nHEAD abc\nbranch refs/heads/bmad/STORY-123\n",
+    );
+    close(call(fake.calls, 1).child, 0);
+
+    await expect(promise).resolves.toMatchObject({
+      branch: "bmad/STORY-123",
+      path: "/private/tmp/project/.pi/pipeline/worktrees/STORY-123",
+    });
+    expect(fake.calls).toHaveLength(2);
+  });
+
   it("ensureStoryWorktree fails closed when the story branch is pinned elsewhere", async () => {
     const fake = fakeSpawn();
     const promise = ensureStoryWorktree({ projectRoot, storyId, spawn: fake.spawn });

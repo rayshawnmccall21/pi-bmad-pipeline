@@ -7,7 +7,6 @@ const pipelineStatuses = new Set([
   "failed",
   "needs-approval",
   "paused",
-  "pr-opened",
   "needs-attention",
 ]);
 
@@ -24,6 +23,8 @@ const stageAttemptStatuses = new Set([
 
 const requiredStrings = [
   "storyId",
+  "runDefId",
+  "runDefDigest",
   "specFile",
   "worktreePath",
   "branch",

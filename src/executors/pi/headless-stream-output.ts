@@ -22,6 +22,9 @@ export interface GatedHeadlessOutputContext {
 
   /** The pi-bmad package root used to resolve result payload schemas. */
   readonly rootDir: string;
+
+  /** Workflow requested for the active stage. */
+  readonly expectedWorkflow?: string;
 }
 
 /** Fail-closed extraction result for the gated headless terminal output. */
@@ -97,17 +100,55 @@ const gateCandidates = (
     candidate,
     verdict: gateHeadlessTerminalOutput(candidate, context),
   }));
-  const accepted = gated.filter((entry) => entry.verdict.accepted).at(-1);
+  const accepted = gated.filter((entry) => isExpectedOutput(entry, context)).at(-1);
   if (accepted !== undefined) {
     return { output: accepted.candidate };
   }
-  const lastVerdict = gated[gated.length - 1]?.verdict;
-  const stage = lastVerdict !== undefined && !lastVerdict.accepted ? lastVerdict.stage : "unknown";
+  const lastEntry = gated[gated.length - 1];
+  const workflowFailure = workflowMismatchFailure(lastEntry, context.expectedWorkflow);
+  if (workflowFailure !== undefined) {
+    return { output: null, failure: workflowFailure };
+  }
+  const stage = rejectedStage(lastEntry);
   return {
     output: null,
     failure: `Headless terminal output rejected at the ${stage} gate under the emission key.`,
   };
 };
+
+const workflowMismatchFailure = (
+  entry:
+    | {
+        readonly candidate: Record<string, unknown>;
+        readonly verdict: ReturnType<typeof gateHeadlessTerminalOutput>;
+      }
+    | undefined,
+  expectedWorkflow: string | undefined,
+): string | undefined => {
+  if (
+    entry?.verdict.accepted !== true ||
+    expectedWorkflow === undefined ||
+    entry.candidate["workflow"] === expectedWorkflow
+  ) {
+    return undefined;
+  }
+  return `Headless terminal output workflow ${JSON.stringify(entry.candidate["workflow"] ?? null)} does not match requested workflow ${JSON.stringify(expectedWorkflow)}.`;
+};
+
+const rejectedStage = (
+  entry: { readonly verdict: ReturnType<typeof gateHeadlessTerminalOutput> } | undefined,
+): string => (entry !== undefined && !entry.verdict.accepted ? entry.verdict.stage : "unknown");
+
+const isExpectedOutput = (
+  entry: {
+    readonly candidate: Record<string, unknown>;
+    readonly verdict: ReturnType<typeof gateHeadlessTerminalOutput>;
+  },
+  context: GatedHeadlessOutputContext,
+): boolean =>
+  entry.verdict.accepted &&
+  (context.expectedWorkflow === undefined ||
+    entry.candidate["workflow"] === context.expectedWorkflow);
 
 const headlessOutputCandidate = (value: unknown): Record<string, unknown> | undefined => {
   const event = eventOfType(value, "tool_execution_end");

@@ -2,7 +2,7 @@
  * TypeBox schema validation and cross-field invariant enforcement for RunDef.
  *
  * This module is the runtime validation boundary for raw RunDef objects loaded
- * from YAML, JSON, or built-in definitions. Structural validation runs first
+ * from discovered YAML. Structural validation runs first
  * via TypeBox; cross-field invariants (unique ids, gate/onFail pairing, onFail
  * target existence and ordering, budget non-emptiness) run only after structural
  * validation passes.
@@ -243,7 +243,7 @@ function checkBudgetNonEmpty(
  * Runs TypeBox structural validation first, then cross-field invariants only if
  * structural validation passes. Does not mutate the candidate.
  *
- * @param candidate - Candidate value loaded from YAML, JSON, or a built-in definition.
+ * @param candidate - Candidate value loaded from discovered YAML.
  *
  * @returns A discriminated validation result.
  *
@@ -271,7 +271,7 @@ export function validateRunDef(candidate: unknown): RunDefValidationResult {
 /**
  * Parses an unknown candidate as a RunDef, throwing on failure.
  *
- * @param candidate - Candidate value loaded from YAML, JSON, or a built-in definition.
+ * @param candidate - Candidate value loaded from discovered YAML.
  *
  * @returns The validated RunDef.
  *
@@ -293,7 +293,7 @@ export function parseRunDef(candidate: unknown): RunDef {
 /**
  * Asserts that an unknown candidate is a RunDef.
  *
- * @param candidate - Candidate value loaded from YAML, JSON, or a built-in definition.
+ * @param candidate - Candidate value loaded from discovered YAML.
  *
  * @throws RunDefValidationError When validation fails.
  *
@@ -313,7 +313,7 @@ export function assertRunDef(candidate: unknown): asserts candidate is RunDef {
 /**
  * Checks whether an unknown candidate is a valid RunDef.
  *
- * @param candidate - Candidate value loaded from YAML, JSON, or a built-in definition.
+ * @param candidate - Candidate value loaded from discovered YAML.
  *
  * @returns True when the candidate is a valid RunDef.
  *

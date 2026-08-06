@@ -70,6 +70,8 @@ describe("pipeline state contracts", () => {
 
     expect(state).toEqual({
       storyId: "STORY-123",
+      runDefId: "legacy-unbound",
+      runDefDigest: "legacy-unbound",
       specFile: "./specs/story-123.md",
       worktreePath: "/tmp/worktree",
       branch: "bmad/story-123",
@@ -174,7 +176,6 @@ describe("pipeline state contracts", () => {
     ["failed", "failed"],
     ["needs-approval", "needs-approval"],
     ["paused", "paused"],
-    ["pr-opened", "pr-opened"],
     ["needs-attention", "needs-attention"],
   ] satisfies readonly [PipelineStatus, string][])(
     "maps terminal pipeline status %j to run result status %j",
@@ -197,7 +198,6 @@ describe("pipeline state contracts", () => {
     ["failed", true],
     ["needs-approval", true],
     ["paused", true],
-    ["pr-opened", true],
     ["needs-attention", true],
   ] satisfies readonly [PipelineStatus, boolean][])(
     "detects terminal pipeline status %j",

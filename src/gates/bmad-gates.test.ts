@@ -5,10 +5,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { resolvePiBmadExtensionPath } from "../executors/pi/index.js";
 import {
-  SDLC_RUNDEF,
   clearPayloadGateRegistry,
-  compileRunDef,
   resolvePayloadGate,
+  selectAndCompileRunDef,
 } from "../rundef/index.js";
 import {
   CODE_REVIEW_PAYLOAD_GATE_NAME,
@@ -59,6 +58,80 @@ describe("e2e-verify payload gate (canonical contract)", () => {
     expect(result.findings).toEqual(["Failed scenario: AC-3", "Partial scenario: AC-4"]);
   });
 
+  it("fails closed when a pass verdict contradicts scenario failures", () => {
+    const result = e2eVerifyPayloadGate({
+      storyId: "s-1",
+      scenariosPassed: 2,
+      scenariosFailed: 1,
+      failedScenarioIds: ["AC-3"],
+      partialScenarioIds: [],
+      verdict: "pass",
+    });
+
+    expect(result).toMatchObject({ passed: false, reason: expect.stringContaining("contradict") });
+  });
+
+  it.each([
+    ["storyId", undefined],
+    ["storyId", 1],
+    ["scenariosPassed", undefined],
+    ["scenariosPassed", "2"],
+    ["scenariosFailed", undefined],
+    ["scenariosFailed", "0"],
+    ["failedScenarioIds", undefined],
+    ["failedScenarioIds", [1]],
+    ["partialScenarioIds", undefined],
+    ["partialScenarioIds", [1]],
+  ] as const)("fails closed when pass field %s has malformed value %j", (field, value) => {
+    const payload: Record<string, unknown> = {
+      storyId: "s-1",
+      scenariosPassed: 2,
+      scenariosFailed: 0,
+      failedScenarioIds: [],
+      partialScenarioIds: [],
+      verdict: "pass",
+      [field]: value,
+    };
+
+    expect(e2eVerifyPayloadGate(payload)).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
+
+  it("fails closed when a pass payload has an unknown root property", () => {
+    const result = e2eVerifyPayloadGate({
+      storyId: "s-1",
+      scenariosPassed: 2,
+      scenariosFailed: 0,
+      failedScenarioIds: [],
+      partialScenarioIds: [],
+      verdict: "pass",
+      unexpected: true,
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
+
+  it("fails closed when the payload belongs to another story", () => {
+    const result = e2eVerifyPayloadGate(
+      {
+        storyId: "other-story",
+        scenariosPassed: 2,
+        scenariosFailed: 0,
+        failedScenarioIds: [],
+        partialScenarioIds: [],
+        verdict: "pass",
+      },
+      { storyId: "s-1" },
+    );
+
+    expect(result).toMatchObject({ passed: false, reason: expect.stringContaining("story") });
+  });
+
   it.each([{}, { verdict: "passed" }, { verdict: true }, { verdict: "ok" }])(
     "fails closed on non-contract payload %j",
     (payload) => {
@@ -78,11 +151,13 @@ describe("e2e-verify payload gate (canonical contract)", () => {
 });
 
 describe("code-review payload gate (canonical contract)", () => {
-  it("passes the canonical success fixture", () => {
-    expect(codeReviewPayloadGate(fixturePayload("code-review", "success"))).toMatchObject({
-      passed: true,
-      reason: "Code review approved.",
-    });
+  it("passes an approved canonical payload with zero findings", () => {
+    expect(
+      codeReviewPayloadGate({
+        ...fixturePayload("code-review", "success"),
+        findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      }),
+    ).toMatchObject({ passed: true, reason: "Code review approved." });
   });
 
   it("fails a schema-conformant needs-dev verdict with a severity summary finding", () => {
@@ -105,6 +180,89 @@ describe("code-review payload gate (canonical contract)", () => {
 
     expect(result.passed).toBe(false);
     expect(result.reason).toBe("Code review verdict: needs-verify.");
+  });
+
+  it.each([
+    ["storyId", undefined],
+    ["storyId", 1],
+    ["autoFixed", undefined],
+    ["autoFixed", "false"],
+    ["findingsBySeverity", undefined],
+    ["findingsBySeverity", []],
+  ] as const)("fails closed when approval field %s has malformed value %j", (field, value) => {
+    const payload: Record<string, unknown> = {
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+      [field]: value,
+    };
+
+    expect(codeReviewPayloadGate(payload)).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
+
+  it.each(CODE_REVIEW_SEVERITIES)(
+    "fails closed when approval severity %s is missing or the wrong type",
+    (severity) => {
+      const missingCounts = Object.fromEntries(
+        CODE_REVIEW_SEVERITIES.filter((candidateSeverity) => candidateSeverity !== severity).map(
+          (candidateSeverity) => [candidateSeverity, 0],
+        ),
+      );
+      const wrongTypeCounts = { ...missingCounts, [severity]: "0" };
+      const basePayload = { storyId: "s-1", verdict: "approved", autoFixed: false };
+
+      expect(
+        codeReviewPayloadGate({ ...basePayload, findingsBySeverity: missingCounts }),
+      ).toMatchObject({ passed: false, reason: expect.stringContaining("malformed") });
+      expect(
+        codeReviewPayloadGate({ ...basePayload, findingsBySeverity: wrongTypeCounts }),
+      ).toMatchObject({ passed: false, reason: expect.stringContaining("malformed") });
+    },
+  );
+
+  it.each([
+    ["root", { unexpected: true }],
+    [
+      "findings summary",
+      {
+        findingsBySeverity: {
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+          info: 0,
+          blocker: 99,
+        },
+      },
+    ],
+  ] as const)("fails closed when an approval has an unknown %s property", (_location, extra) => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+      ...extra,
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
+
+  it("fails closed when approval contradicts nonzero findings", () => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+    });
+
+    expect(result).toMatchObject({ passed: false, reason: expect.stringContaining("contradict") });
   });
 
   it("orders the severity summary worst-first per the canonical vocabulary", () => {
@@ -159,9 +317,11 @@ describe("gate registration", () => {
     }).not.toThrow();
   });
 
-  it("allows the built-in SDLC RunDef to compile after registration", () => {
+  it("allows the discovered SDLC YAML to compile after registration", async () => {
     registerBmadPayloadGates();
 
-    expect(() => compileRunDef(SDLC_RUNDEF)).not.toThrow();
+    await expect(
+      selectAndCompileRunDef(resolve(import.meta.dirname, "../.."), "sdlc"),
+    ).resolves.toMatchObject({ source: "discovered" });
   });
 });

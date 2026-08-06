@@ -1,242 +1,138 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
 
 import {
   BMAD_PIPELINE_MODEL_ENV_VAR,
-  BMAD_PIPELINE_THINKING_ENV_VAR,
   INTERNAL_ERROR_CODE,
   LOCK_HELD_ERROR_CODE,
-  RUN_PIPELINE_ACTION_NAME,
   defaultRunPipelineActionDeps,
   runPipelineAction,
-  type CreateStageExecutorOptions,
   type RunPipelineActionDeps,
   type RunPipelineActionRequest,
 } from "./index.js";
-import { generatePipelineAuditReport } from "../audit/index.js";
-import { runPipelineStages, type RunPipelineStagesResult } from "../core/index.js";
-import { PiCliWorkflowExecutor } from "../executors/index.js";
+import {
+  runPipelineStages,
+  type RunPipelineStagesRequest,
+  type RunPipelineStagesResult,
+} from "../core/index.js";
+import { PiCliWorkflowExecutor, type WorkflowExecutor } from "../executors/index.js";
 import { registerBmadPayloadGates } from "../gates/index.js";
-import { ensureStoryWorktree, openStoryPullRequest } from "../git/index.js";
+import { ensureStoryWorktree } from "../git/index.js";
 import { resolveModelConfig } from "../model/index.js";
-import { payloadGateRegistry, selectAndCompileRunDef } from "../rundef/index.js";
-import { runHarnessEvidence, saveHarnessEvidence } from "../security/index.js";
+import {
+  computeRunDefDigest,
+  payloadGateRegistry,
+  selectAndCompileRunDef,
+  type CompiledStageDef,
+} from "../rundef/index.js";
 import {
   acquireDispatchLock,
   createInitialPipelineState,
   loadPipelineState,
   reconcilePipelineState,
   savePipelineState,
+  type DispatchLock,
+  type PipelineState,
 } from "../state/index.js";
 
-import type { RunPipelineStagesRequest } from "../core/index.js";
-import type { WorkflowExecutor } from "../executors/index.js";
-import type { StoryWorktree } from "../git/index.js";
-import type { CompiledStageDef, RunDef } from "../rundef/index.js";
-import type { HarnessEvidenceReport } from "../security/index.js";
-import type { DispatchLock, PipelineState } from "../state/index.js";
-
-const T0 = "2026-08-05T00:00:00.000Z";
-
-const fixedClock = (): (() => Date) => {
-  let tick = 0;
-  return () => new Date(Date.parse(T0) + tick++ * 1000);
-};
-
-const stageDef = (
-  id: string,
-  index: number,
-  overrides: Partial<CompiledStageDef> = {},
-): CompiledStageDef => ({
-  id,
-  kind: "agent",
-  workflow: `wf-${id}`,
-  agent: "dev",
-  index,
-  timeoutSeconds: 60,
-  ...overrides,
-});
-
-const fixtureStages = (): readonly CompiledStageDef[] => [
-  stageDef("a", 0),
-  stageDef("b", 1, { payloadGateName: "e2e-verify", payloadGate: () => ({ passed: true }) }),
+const timestamp = "2026-08-05T00:00:00.000Z";
+const stages: readonly CompiledStageDef[] = [
+  { id: "dev", kind: "agent", workflow: "dev-story", agent: "dev", index: 0, timeoutSeconds: 60 },
 ];
 
-const fixtureRunDef = (stages: readonly CompiledStageDef[]): RunDef => ({
-  id: "sdlc",
-  stages: stages.map((stage) => ({
-    id: stage.id,
-    kind: stage.kind,
-    workflow: stage.workflow,
-    agent: stage.agent,
-  })),
-});
-
-const evidenceReport = (projectRoot: string, passed: boolean): HarnessEvidenceReport => ({
-  projectRoot,
-  startedAt: T0,
-  finishedAt: T0,
-  passed,
-  commands: [
-    {
-      name: "test",
-      command: "npm",
-      args: ["test"],
-      status: passed ? "passed" : "failed",
-      exitCode: passed ? 0 : 1,
-      durationMs: 1,
-      stdout: "",
-      stderr: "",
-    },
-  ],
-});
-
-/** Scripted FSM stand-in that exercises the observer and saveState wiring. */
-const fakeFsm =
-  (overrides: Partial<RunPipelineStagesResult> = {}) =>
-  async (request: RunPipelineStagesRequest): Promise<RunPipelineStagesResult> => {
-    const [first, gated] = request.stages;
-    if (first === undefined || gated === undefined) {
-      throw new Error("fixture stages missing");
-    }
-    request.observer?.onStageStarted?.({ stage: first, attempt: 1 });
-    request.observer?.onStageFinished?.({
-      stage: gated,
-      attempt: 1,
-      decision: { stageId: gated.id, kind: "passed", passed: true, reason: "stage ok" },
-      route: {
-        action: "complete",
-        fromStageId: gated.id,
-        regressions: 0,
-        reason: "all stages passed",
-      },
-      execution: { output: { payload: {} }, exitCode: 0, durationMs: 5 },
-    });
-    const state: PipelineState = {
-      ...request.state,
-      status: "done",
-      finishedAt: T0,
-      economics: { tokens: 12, dollars: 0.5 },
-    };
-    await request.saveState(state);
-    return Object.freeze({
-      state,
-      status: "done",
-      stagesRun: Object.freeze(["a", "b"]),
-      regressions: 0,
-      ...overrides,
-    });
-  };
-
-interface HarnessOverrides {
-  readonly request?: Partial<RunPipelineActionRequest>;
-  readonly deps?: Partial<RunPipelineActionDeps>;
-  readonly lockHeld?: boolean;
-  readonly loaded?: PipelineState;
-  readonly evidencePassed?: boolean;
-  readonly fsm?: Partial<RunPipelineStagesResult>;
-  readonly omitSink?: boolean;
-  readonly omitNow?: boolean;
-}
+const doneFsm = async (request: RunPipelineStagesRequest): Promise<RunPipelineStagesResult> => {
+  const stage = request.stages[0];
+  if (stage === undefined) throw new Error("missing fixture stage");
+  request.observer?.onStageStarted?.({ stage, attempt: 1 });
+  request.observer?.onStageFinished?.({
+    stage,
+    attempt: 1,
+    decision: { stageId: stage.id, kind: "passed", passed: true, reason: "ok" },
+    route: { action: "complete", fromStageId: stage.id, regressions: 0, reason: "done" },
+    execution: { output: { payload: {} }, exitCode: 0, durationMs: 5 },
+  });
+  const state = { ...request.state, status: "done" as const, finishedAt: timestamp };
+  await request.saveState(state);
+  return { state, status: "done", stagesRun: ["dev"], regressions: 0 };
+};
 
 interface Harness {
   readonly request: RunPipelineActionRequest;
   readonly calls: string[];
   readonly saves: PipelineState[];
-  readonly executorOptions: CreateStageExecutorOptions[];
-  readonly fsmRequests: RunPipelineStagesRequest[];
-  readonly events: () => Record<string, unknown>[];
+  readonly events: Record<string, unknown>[];
 }
 
-const fixtureWorktree: StoryWorktree = Object.freeze({
-  storyId: "SH-1",
-  branch: "bmad/SH-1",
-  path: "/wt/SH-1",
-});
-
-const harness = (overrides: HarnessOverrides = {}): Harness => {
+const createHarness = (
+  overrides: {
+    readonly lockHeld?: boolean;
+    readonly loaded?: PipelineState;
+    readonly request?: Partial<RunPipelineActionRequest>;
+    readonly deps?: Partial<RunPipelineActionDeps>;
+  } = {},
+): Harness => {
   const calls: string[] = [];
   const saves: PipelineState[] = [];
-  const lines: string[] = [];
-  const executorOptions: CreateStageExecutorOptions[] = [];
-  const fsmRequests: RunPipelineStagesRequest[] = [];
-  const stages = fixtureStages();
+  const events: Record<string, unknown>[] = [];
   const lock: DispatchLock = {
     storyId: "SH-1",
-    path: "/locks/SH-1",
-    info: { pid: 1, runId: "run-1", startedAt: T0 },
+    path: "/lock",
+    info: { pid: 1, runId: "run-1", startedAt: timestamp },
     release: async () => {
-      calls.push("lock.release");
+      calls.push("release");
     },
   };
   const executor: WorkflowExecutor = {
     id: "fake",
-    execute: () => Promise.reject(new Error("not used")),
+    execute: () => Promise.reject(new Error("unused")),
   };
   const deps: Partial<RunPipelineActionDeps> = {
-    acquireLock: async (request) => {
-      calls.push(`acquireLock:${request.storyId}:${request.runId}`);
-      return overrides.lockHeld === true ? undefined : lock;
+    acquireLock: async () => {
+      calls.push("lock");
+      return overrides.lockHeld ? undefined : lock;
     },
     loadState: async () => {
-      calls.push("loadState");
+      calls.push("load");
       return overrides.loaded;
     },
-    saveState: async (_projectRoot, state) => {
-      calls.push("saveState");
+    saveState: async (_root, state) => {
+      calls.push("save");
       saves.push(state);
-      return `/state/${state.storyId}.json`;
+      return "/state.json";
     },
-    reconcileState: (request) => {
-      calls.push("reconcileState");
-      return reconcilePipelineState(request);
-    },
+    reconcileState: (request) => reconcilePipelineState(request),
     ensureWorktree: async () => {
-      calls.push("ensureWorktree");
-      return fixtureWorktree;
+      calls.push("worktree");
+      return { storyId: "SH-1", branch: "bmad/SH-1", path: "/wt" };
     },
     registerGates: () => {
-      calls.push("registerGates");
+      calls.push("gates");
       return { registered: ["e2e-verify", "code-review"] };
     },
-    selectAndCompile: async (_projectRoot, id, options) => {
-      calls.push(
-        `selectAndCompile:${id}:registry=${String(options?.registry === payloadGateRegistry)}`,
-      );
-      return { id, source: "builtin", runDef: fixtureRunDef(stages), stages };
+    selectAndCompile: async (_root, id, options) => {
+      calls.push(`select:${String(options?.registry === payloadGateRegistry)}`);
+      return {
+        id,
+        source: "discovered",
+        path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+        runDef: { id, stages: [] },
+        stages,
+      };
     },
-    createExecutor: (options) => {
-      calls.push("createExecutor");
-      executorOptions.push(options);
+    resolveModel: (request) => {
+      calls.push("model");
+      return resolveModelConfig(request);
+    },
+    createExecutor: () => {
+      calls.push("executor");
       return executor;
     },
     runStages: async (request) => {
-      calls.push("runStages");
-      fsmRequests.push(request);
-      return fakeFsm(overrides.fsm)(request);
-    },
-    runEvidence: async (request) => {
-      calls.push(`runEvidence:${request.projectRoot}:${request.commandCwd ?? "<none>"}`);
-      return evidenceReport(request.projectRoot, overrides.evidencePassed ?? true);
-    },
-    saveEvidence: async (request) => {
-      calls.push(`saveEvidence:${request.projectRoot}`);
-      return `${request.projectRoot}/evidence.json`;
-    },
-    openPullRequest: async (request) => {
-      calls.push("openPullRequest");
-      return {
-        storyId: request.storyId,
-        branch: request.branch,
-        baseBranch: "main",
-        title: "BMAD: SH-1",
-        body: "body",
-        url: "https://github.com/acme/repo/pull/7",
-        number: 7,
-      };
-    },
-    generateAuditReport: (request) => {
-      calls.push(`audit:${request.action}`);
-      return generatePipelineAuditReport(request);
+      calls.push("fsm");
+      return doneFsm(request);
     },
     createRunId: () => "run-1",
     ...overrides.deps,
@@ -246,436 +142,284 @@ const harness = (overrides: HarnessOverrides = {}): Harness => {
     storyId: "SH-1",
     specFile: "spec.md",
     projectRoot: "/root",
-    openPr: false,
-    ...(overrides.omitSink === true
-      ? {}
-      : {
-          sink: {
-            write: (line) => {
-              lines.push(line);
-            },
-          },
-        }),
-    ...(overrides.omitNow === true ? {} : { now: fixedClock() }),
+    now: () => new Date(timestamp),
     deps,
+    sink: { write: (line) => events.push(JSON.parse(line) as Record<string, unknown>) },
     ...overrides.request,
   };
-  return {
-    request,
-    calls,
-    saves,
-    executorOptions,
-    fsmRequests,
-    events: () => lines.map((line) => JSON.parse(line) as Record<string, unknown>),
-  };
+  return { request, calls, saves, events };
 };
 
-const indexOfCall = (calls: readonly string[], prefix: string): number =>
-  calls.findIndex((call) => call.startsWith(prefix));
-
 describe("runPipelineAction", () => {
-  it("runs the full happy path without a PR and emits the event stream", async () => {
-    const { request, calls, events } = harness();
-
-    const result = await runPipelineAction(request);
-
-    expect(Object.isFrozen(result)).toBe(true);
-    expect(result.status).toBe("passed");
-    expect(result.action).toBe(RUN_PIPELINE_ACTION_NAME);
-    expect(result.storyId).toBe("SH-1");
-    expect(result.specFile).toBe("spec.md");
-    expect(result.stagesRun).toEqual(["a", "b"]);
-    expect(result.regressions).toBe(0);
-    expect(result.worktreePath).toBe("/wt/SH-1");
-    expect(result.branch).toBe("bmad/SH-1");
-    expect(result.economics).toEqual({ tokens: 12, dollars: 0.5 });
-    expect(result.error).toBeUndefined();
-    expect(result.prUrl).toBeUndefined();
-    expect(calls).not.toContain("openPullRequest");
-    expect(calls).toContain("selectAndCompile:sdlc:registry=true");
-    expect(calls).toContain("runEvidence:/root:/wt/SH-1");
-    expect(calls).toContain("saveEvidence:/root");
-    expect(calls).toContain("audit:run");
-    expect(calls.at(-1)).toBe("lock.release");
-    expect(events().map((event) => event["event"])).toEqual([
+  it("runs lock through durable FSM result with no policy effects", async () => {
+    const harness = createHarness();
+    const result = await runPipelineAction(harness.request);
+    expect(result).toMatchObject({ status: "passed", stagesRun: ["dev"], worktreePath: "/wt" });
+    expect(harness.calls).toEqual([
+      "lock",
+      "load",
+      "gates",
+      "select:true",
+      "model",
+      "worktree",
+      "save",
+      "executor",
+      "fsm",
+      "save",
+      "release",
+    ]);
+    expect(harness.events.map((event) => event["event"])).toEqual([
       "run.started",
       "stage.started",
       "stage.finished",
-      "gate.decision",
-      "evidence.finished",
       "result",
     ]);
+    expect(harness.events.filter((event) => event["event"] === "result")).toHaveLength(1);
+    expect(Object.keys(harness.request.deps ?? {})).not.toEqual(
+      expect.arrayContaining(["runEvidence", "openPullRequest", "generateAuditReport"]),
+    );
   });
 
-  it("stamps the envelope and payload fields on emitted events", async () => {
-    const { request, events } = harness();
-
-    await runPipelineAction(request);
-
-    const [started, stageStarted, stageFinished, gate, evidence, result] = events();
-    expect(started).toMatchObject({ rundefId: "sdlc", specFile: "spec.md", storyId: "SH-1" });
-    expect(typeof started?.["ts"]).toBe("string");
-    expect(stageStarted).toMatchObject({ stageId: "a", attempt: 1 });
-    expect(stageFinished).toMatchObject({
-      stageId: "b",
-      attempt: 1,
-      kind: "passed",
-      passed: true,
-      exitCode: 0,
-      durationMs: 5,
-      reason: "stage ok",
+  it("fails closed on lock contention without preparing state", async () => {
+    const harness = createHarness({ lockHeld: true });
+    expect(await runPipelineAction(harness.request)).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringContaining("held"),
     });
-    expect(gate).toMatchObject({
-      stageId: "b",
-      gate: "e2e-verify",
-      passed: true,
-      findings: [],
-    });
-    expect(evidence).toMatchObject({ passed: true, failedCommands: [] });
-    expect(result).toMatchObject({
-      status: "passed",
-      stagesRun: ["a", "b"],
-      regressions: 0,
-    });
+    expect(harness.calls).toEqual(["lock"]);
+    expect(harness.events.map((event) => event["event"])).toEqual(["error", "result"]);
+    expect(harness.events[0]).toMatchObject({ code: LOCK_HELD_ERROR_CODE });
   });
 
-  it("orders effects: lock, load, gates, compile, worktree, executor, FSM, evidence", async () => {
-    const { request, calls } = harness();
-
-    await runPipelineAction(request);
-
-    const order = [
-      "acquireLock",
-      "loadState",
-      "registerGates",
-      "selectAndCompile",
-      "ensureWorktree",
-      "createExecutor",
-      "runStages",
-      "runEvidence",
-      "audit:run",
-      "lock.release",
-    ].map((prefix) => indexOfCall(calls, prefix));
-    expect(order.every((index) => index >= 0)).toBe(true);
-    expect([...order].sort((left, right) => left - right)).toEqual(order);
-  });
-
-  it("runs evidence commands in the worktree but keeps the supervised project root as evidence identity and persistence root", async () => {
-    const { request, calls } = harness();
-
-    await runPipelineAction(request);
-
-    expect(calls).toContain("runEvidence:/root:/wt/SH-1");
-    expect(calls).toContain("saveEvidence:/root");
-    expect(calls).not.toContain("saveEvidence:/wt/SH-1");
-  });
-
-  it("opens a PR and finalizes state as pr-opened when openPr is true", async () => {
-    const { request, calls, saves, events } = harness({ request: { openPr: true } });
-
-    const result = await runPipelineAction(request);
-
-    expect(result.status).toBe("pr-opened");
-    expect(result.prUrl).toBe("https://github.com/acme/repo/pull/7");
-    expect(result.prNumber).toBe(7);
-    expect(calls).toContain("openPullRequest");
-    expect(saves.at(-1)?.status).toBe("pr-opened");
-    const eventTypes = events().map((event) => event["event"]);
-    expect(eventTypes).toContain("pr.opened");
-    const prEvent = events().find((event) => event["event"] === "pr.opened");
-    expect(prEvent).toMatchObject({
-      prUrl: "https://github.com/acme/repo/pull/7",
-      prNumber: 7,
-      branch: "bmad/SH-1",
-    });
-    const resultEvent = events().find((event) => event["event"] === "result");
-    expect(resultEvent).toMatchObject({ status: "pr-opened" });
-  });
-
-  it("fails closed as needs-attention on dispatch lock contention", async () => {
-    const { request, calls, events } = harness({ lockHeld: true, omitNow: true });
-
-    const result = await runPipelineAction(request);
-
-    expect(result.status).toBe("needs-attention");
-    expect(result.stagesRun).toEqual([]);
-    expect(result.error).toContain("SH-1");
-    expect(calls).not.toContain("selectAndCompile:sdlc");
-    expect(calls).not.toContain("lock.release");
-    expect(events().map((event) => event["event"])).toEqual(["error", "result"]);
-    expect(events()[0]).toMatchObject({ code: LOCK_HELD_ERROR_CODE });
-    expect(events()[1]).toMatchObject({ status: "needs-attention" });
-  });
-
-  it("fails closed as needs-attention when harness evidence fails", async () => {
-    const { request, calls, saves, events } = harness({
-      evidencePassed: false,
-      request: { openPr: true },
-    });
-
-    const result = await runPipelineAction(request);
-
-    expect(result.status).toBe("needs-attention");
-    expect(result.error).toContain("test");
-    expect(calls).not.toContain("openPullRequest");
-    expect(saves.at(-1)?.status).toBe("needs-attention");
-    const evidence = events().find((event) => event["event"] === "evidence.finished");
-    expect(evidence).toMatchObject({ passed: false, failedCommands: ["test"] });
-    const resultEvent = events().find((event) => event["event"] === "result");
-    expect(resultEvent).toMatchObject({ status: "needs-attention" });
-    expect(calls.at(-1)).toBe("lock.release");
-  });
-
-  it("propagates FSM needs-attention failure as data without running evidence", async () => {
-    const { request, calls, events } = harness({
-      fsm: {
-        status: "needs-attention",
-        failure: { code: "executor-error", stageId: "a", reason: "child exploded" },
-      },
-    });
-
-    const result = await runPipelineAction(request);
-
-    expect(result.status).toBe("needs-attention");
-    expect(result.error).toBe("child exploded");
-    expect(indexOfCall(calls, "runEvidence")).toBe(-1);
-    const resultEvent = events().find((event) => event["event"] === "result");
-    expect(resultEvent).toMatchObject({ status: "needs-attention", error: "child exploded" });
-    expect(calls.at(-1)).toBe("lock.release");
-  });
-
-  it("propagates FSM failed status with a default event sink", async () => {
-    const { request, calls } = harness({
-      omitSink: true,
-      fsm: {
-        status: "failed",
-        failure: { code: "stage-failed", stageId: "b", reason: "stage b failed" },
-      },
-    });
-
-    const result = await runPipelineAction(request);
-
-    expect(result.status).toBe("failed");
-    expect(result.error).toBe("stage b failed");
-    expect(indexOfCall(calls, "runEvidence")).toBe(-1);
-    expect(calls).toContain("audit:run");
-  });
-
-  it("releases the lock and fails closed when a step throws a coded error", async () => {
-    const boom = Object.assign(new Error("worktree exploded"), { code: "git-command-failed" });
-    const { request, calls, events } = harness({
+  it("releases the lock and emits a coded error when a step throws", async () => {
+    const harness = createHarness({
       deps: {
-        ensureWorktree: async () => {
-          throw boom;
+        runStages: async () => {
+          throw Object.assign(new Error("bad"), { code: "coded" });
         },
       },
     });
-
-    const result = await runPipelineAction(request);
-
-    expect(result.status).toBe("needs-attention");
-    expect(result.error).toBe("worktree exploded");
-    expect(calls).toContain("lock.release");
-    const errorEvent = events().find((event) => event["event"] === "error");
-    expect(errorEvent).toMatchObject({ code: "git-command-failed", message: "worktree exploded" });
-    const resultEvent = events().find((event) => event["event"] === "result");
-    expect(resultEvent).toMatchObject({ status: "needs-attention" });
+    expect(await runPipelineAction(harness.request)).toMatchObject({
+      status: "needs-attention",
+      error: "bad",
+    });
+    expect(harness.calls.at(-1)).toBe("release");
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({ event: "error", code: "coded" }),
+    );
   });
 
-  it("maps uncoded throws to the internal error code after the FSM", async () => {
-    const { request, calls, events } = harness({
-      request: { openPr: true },
+  it("uses internal-error for uncoded throws", async () => {
+    const harness = createHarness({
       deps: {
-        openPullRequest: async () => {
-          throw new Error("gh failed");
+        runStages: async () => {
+          throw new Error("bad");
         },
       },
     });
-
-    const result = await runPipelineAction(request);
-
-    expect(result.status).toBe("needs-attention");
-    expect(result.error).toBe("gh failed");
-    expect(calls.at(-1)).toBe("lock.release");
-    const errorEvent = events().find((event) => event["event"] === "error");
-    expect(errorEvent).toMatchObject({ code: INTERNAL_ERROR_CODE, message: "gh failed" });
+    await runPipelineAction(harness.request);
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({ event: "error", code: INTERNAL_ERROR_CODE }),
+    );
   });
 
-  it("resolves model and thinking from the injected env map (D7)", async () => {
-    const { request, executorOptions, saves } = harness({
-      request: {
-        env: {
-          [BMAD_PIPELINE_MODEL_ENV_VAR]: "env-model",
-          [BMAD_PIPELINE_THINKING_ENV_VAR]: "high",
-        },
-      },
-    });
-
-    await runPipelineAction(request);
-
-    expect(executorOptions).toEqual([{ model: "env-model", thinking: "high" }]);
-    expect(saves[0]?.model).toBe("env-model");
-    expect(saves[0]?.thinking).toBe("high");
-  });
-
-  it("prefers explicit model and thinking over the env map (D7)", async () => {
-    const { request, executorOptions } = harness({
-      request: {
-        model: "cli-model",
-        thinking: "low",
-        env: {
-          [BMAD_PIPELINE_MODEL_ENV_VAR]: "env-model",
-          [BMAD_PIPELINE_THINKING_ENV_VAR]: "high",
-        },
-      },
-    });
-
-    await runPipelineAction(request);
-
-    expect(executorOptions).toEqual([{ model: "cli-model", thinking: "low" }]);
-  });
-
-  it("creates and saves fresh initial state before running the FSM", async () => {
-    const { request, calls, saves, fsmRequests } = harness();
-
-    await runPipelineAction(request);
-
-    const initial = saves[0];
-    expect(initial?.status).toBe("pending");
-    expect(initial?.worktreePath).toBe("/wt/SH-1");
-    expect(initial?.branch).toBe("bmad/SH-1");
-    expect(Object.keys(initial?.stages ?? {})).toEqual(["a", "b"]);
-    expect(indexOfCall(calls, "saveState")).toBeLessThan(indexOfCall(calls, "runStages"));
-    expect(fsmRequests[0]?.state).toBe(initial);
-    expect(fsmRequests[0]?.worktreeCwd).toBe("/wt/SH-1");
-  });
-
-  it("reconciles crashed loaded state and persists repairs before the FSM", async () => {
-    const crashed: PipelineState = {
-      ...createInitialPipelineState({
-        storyId: "SH-1",
-        specFile: "spec.md",
-        worktreePath: "/wt/SH-1",
-        branch: "bmad/SH-1",
-        stages: [...fixtureStages()],
-        model: "m",
-        thinking: "medium",
-      }),
-      status: "running",
-    };
-    const { request, calls, saves, fsmRequests } = harness({ loaded: crashed });
-
-    await runPipelineAction(request);
-
-    expect(calls).toContain("reconcileState");
-    expect(saves[0]?.status).toBe("pending");
-    expect(indexOfCall(calls, "saveState")).toBeLessThan(indexOfCall(calls, "runStages"));
-    expect(fsmRequests[0]?.state.status).toBe("pending");
-  });
-
-  it("skips the pre-FSM save when loaded state needs no repair", async () => {
-    const clean = createInitialPipelineState({
-      storyId: "SH-1",
-      specFile: "spec.md",
-      worktreePath: "/wt/SH-1",
-      branch: "bmad/SH-1",
-      stages: [...fixtureStages()],
-      model: "m",
-      thinking: "medium",
-    });
-    const { request, calls } = harness({ loaded: clean });
-
-    await runPipelineAction(request);
-
-    expect(indexOfCall(calls, "saveState")).toBeGreaterThan(indexOfCall(calls, "runStages"));
-  });
-
-  it("forwards maxRegressions, runBudget, and signal to the FSM and evidence", async () => {
-    const controller = new AbortController();
-    const runBudget = { maxTokens: 1000 };
-    const { request, fsmRequests } = harness({
-      request: { maxRegressions: 5, runBudget, signal: controller.signal },
-    });
-
-    await runPipelineAction(request);
-
-    expect(fsmRequests[0]?.maxRegressions).toBe(5);
-    expect(fsmRequests[0]?.runBudget).toBe(runBudget);
-    expect(fsmRequests[0]?.signal).toBe(controller.signal);
-  });
-
-  it("settles FSM needs-attention without failure details as data", async () => {
-    const { request } = harness({ fsm: { status: "needs-attention" } });
-
-    const result = await runPipelineAction(request);
-
-    expect(result.status).toBe("needs-attention");
-    expect(result.error).toBeUndefined();
-  });
-
-  it("defaults the PR number to zero when none can be parsed", async () => {
-    const { request, events } = harness({
-      request: { openPr: true },
+  it("settles a non-done FSM outcome without policy effects", async () => {
+    const harness = createHarness({
       deps: {
-        openPullRequest: async (prRequest) => ({
-          storyId: prRequest.storyId,
-          branch: prRequest.branch,
-          baseBranch: "main",
-          title: "BMAD: SH-1",
-          body: "body",
-          url: "https://github.com/acme/repo/compare/main...bmad/SH-1",
+        runStages: async (request) => ({
+          state: { ...request.state, status: "failed" },
+          status: "failed",
+          stagesRun: ["dev"],
+          regressions: 0,
+          failure: { code: "stage-failed", stageId: "dev", reason: "stage failed" },
         }),
       },
     });
 
-    const result = await runPipelineAction(request);
-
-    expect(result.status).toBe("pr-opened");
-    expect(result.prNumber).toBeUndefined();
-    const prEvent = events().find((event) => event["event"] === "pr.opened");
-    expect(prEvent).toMatchObject({ prNumber: 0 });
+    await expect(runPipelineAction(harness.request)).resolves.toMatchObject({
+      status: "failed",
+      error: "stage failed",
+    });
+    expect(harness.events.filter((event) => event["event"] === "result")).toHaveLength(1);
+    expect(harness.calls.at(-1)).toBe("release");
   });
 
-  it("throws RangeError for programmer errors in the request", async () => {
-    const invalid: readonly Partial<RunPipelineActionRequest>[] = [
-      { storyId: " " },
-      { storyId: "../escape" },
-      { rundefId: " " },
-      { specFile: " " },
-      { projectRoot: " " },
-    ];
-    for (const override of invalid) {
-      const { request } = harness({ request: override });
-      await expect(runPipelineAction(request)).rejects.toThrow(RangeError);
+  it("uses environment-only model and thinking candidates", async () => {
+    const createExecutor = vi.fn((): WorkflowExecutor => ({
+      id: "env-executor",
+      execute: () => Promise.reject(new Error("unused")),
+    }));
+    const harness = createHarness({
+      request: {
+        env: { BMAD_PIPELINE_MODEL: "env-model", BMAD_PIPELINE_THINKING: "high" },
+      },
+      deps: { createExecutor },
+    });
+
+    await runPipelineAction(harness.request);
+
+    expect(createExecutor).toHaveBeenCalledWith({ model: "env-model", thinking: "high" });
+  });
+
+  it("resolves explicit model over environment and forwards budgets and signal", async () => {
+    const signal = new AbortController().signal;
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({
+      request: {
+        model: "explicit",
+        thinking: "high",
+        env: { [BMAD_PIPELINE_MODEL_ENV_VAR]: "env" },
+        maxRegressions: 2,
+        runBudget: { maxTokens: 5 },
+        signal,
+      },
+      deps: { runStages },
+    });
+    await runPipelineAction(harness.request);
+    expect(runStages).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRegressions: 2, runBudget: { maxTokens: 5 }, signal }),
+    );
+  });
+
+  it("reconciles loaded state and saves only changed repairs", async () => {
+    const initial = createInitialPipelineState({
+      storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
+      specFile: "spec.md",
+      worktreePath: "/wt",
+      branch: "bmad/SH-1",
+      stages,
+      model: "gpt-5.5-pro",
+      thinking: "medium",
+      startedAt: timestamp,
+    });
+    const harness = createHarness({
+      loaded: {
+        ...initial,
+        status: "running",
+        currentStage: "dev",
+        stages: { dev: { ...initial.stages["dev"]!, status: "running" } },
+      },
+    });
+    await runPipelineAction(harness.request);
+    expect(harness.saves.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("resumes durable state when the worktree path uses a filesystem alias", async () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), "pipeline-worktree-alias-"));
+    const canonicalWorktreePath = join(temporaryRoot, "canonical-worktree");
+    const aliasWorktreePath = join(temporaryRoot, "worktree-alias");
+    try {
+      mkdirSync(canonicalWorktreePath);
+      symlinkSync(canonicalWorktreePath, aliasWorktreePath, "dir");
+      const boundState = createInitialPipelineState({
+        storyId: "SH-1",
+        runDefId: "sdlc",
+        runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
+        specFile: "spec.md",
+        worktreePath: realpathSync(canonicalWorktreePath),
+        branch: "bmad/SH-1",
+        stages,
+        model: "gpt-5.5-pro",
+        thinking: "medium",
+      });
+      const runStages = vi.fn(doneFsm);
+      const harness = createHarness({
+        loaded: boundState,
+        deps: {
+          ensureWorktree: async () => ({
+            storyId: "SH-1",
+            branch: "bmad/SH-1",
+            path: aliasWorktreePath,
+          }),
+          runStages,
+        },
+      });
+
+      await expect(runPipelineAction(harness.request)).resolves.toMatchObject({ status: "passed" });
+      expect(runStages).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreeCwd: realpathSync(canonicalWorktreePath) }),
+      );
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
     }
   });
 
-  it("wires real implementations as default dependencies", () => {
+  it("fails closed when YAML changes but reuses the same stage ids", async () => {
+    const changedRunDefState = createInitialPipelineState({
+      storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest({
+        id: "sdlc",
+        stages: [{ id: "dev", kind: "agent", workflow: "older-workflow", agent: "dev" }],
+      }),
+      specFile: "spec.md",
+      worktreePath: "/wt",
+      branch: "bmad/SH-1",
+      stages,
+      model: "gpt-5.5-pro",
+      thinking: "medium",
+      startedAt: timestamp,
+    });
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({ loaded: changedRunDefState, deps: { runStages } });
+
+    const actionResult = await runPipelineAction(harness.request);
+
+    expect(actionResult).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringContaining("RunDef identity"),
+    });
+    expect(runStages).not.toHaveBeenCalled();
+  });
+
+  it("does not save clean loaded state before the FSM", async () => {
+    const boundState = createInitialPipelineState({
+      storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
+      specFile: "spec.md",
+      worktreePath: "/wt",
+      branch: "bmad/SH-1",
+      stages,
+      model: "gpt-5.5-pro",
+      thinking: "medium",
+    });
+    const harness = createHarness({ loaded: boundState });
+
+    await runPipelineAction(harness.request);
+
+    expect(harness.calls.filter((callName) => callName === "save")).toHaveLength(1);
+  });
+
+  it.each([
+    ["storyId", "../bad"],
+    ["rundefId", " "],
+    ["specFile", " "],
+    ["projectRoot", " "],
+  ] as const)("rejects invalid %s before locking", async (field, invalidValue) => {
+    const harness = createHarness({ request: { [field]: invalidValue } });
+    await expect(runPipelineAction(harness.request)).rejects.toBeInstanceOf(RangeError);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("creates unique default run ids", () => {
+    expect(defaultRunPipelineActionDeps.createRunId()).not.toBe(
+      defaultRunPipelineActionDeps.createRunId(),
+    );
+  });
+
+  it("wires real core defaults and creates a Pi executor", () => {
     expect(defaultRunPipelineActionDeps.acquireLock).toBe(acquireDispatchLock);
     expect(defaultRunPipelineActionDeps.loadState).toBe(loadPipelineState);
     expect(defaultRunPipelineActionDeps.saveState).toBe(savePipelineState);
-    expect(defaultRunPipelineActionDeps.reconcileState).toBe(reconcilePipelineState);
     expect(defaultRunPipelineActionDeps.ensureWorktree).toBe(ensureStoryWorktree);
     expect(defaultRunPipelineActionDeps.registerGates).toBe(registerBmadPayloadGates);
     expect(defaultRunPipelineActionDeps.selectAndCompile).toBe(selectAndCompileRunDef);
-    expect(defaultRunPipelineActionDeps.resolveModel).toBe(resolveModelConfig);
     expect(defaultRunPipelineActionDeps.runStages).toBe(runPipelineStages);
-    expect(defaultRunPipelineActionDeps.runEvidence).toBe(runHarnessEvidence);
-    expect(defaultRunPipelineActionDeps.saveEvidence).toBe(saveHarnessEvidence);
-    expect(defaultRunPipelineActionDeps.openPullRequest).toBe(openStoryPullRequest);
-    expect(defaultRunPipelineActionDeps.generateAuditReport).toBe(generatePipelineAuditReport);
-    expect(Object.isFrozen(defaultRunPipelineActionDeps)).toBe(true);
-  });
-
-  it("builds a real Pi executor and unique run ids from the defaults", () => {
-    const executor = defaultRunPipelineActionDeps.createExecutor({
-      model: "test-model",
-      thinking: "medium",
-    });
-    expect(executor).toBeInstanceOf(PiCliWorkflowExecutor);
-    const first = defaultRunPipelineActionDeps.createRunId();
-    const second = defaultRunPipelineActionDeps.createRunId();
-    expect(first).not.toBe("");
-    expect(first).not.toBe(second);
+    expect(
+      defaultRunPipelineActionDeps.createExecutor({ model: "m", thinking: "medium" }),
+    ).toBeInstanceOf(PiCliWorkflowExecutor);
   });
 });

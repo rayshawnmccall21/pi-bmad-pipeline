@@ -158,33 +158,6 @@ describe("PiCliWorkflowExecutor", () => {
     expect(calls[0]?.spawn).toBe(spawn);
   });
 
-  it("execute passes stageExtensionPath from resolver", async () => {
-    const [runStage, calls] = runner();
-    const input = request();
-
-    await new PiCliWorkflowExecutor({
-      model: "gpt-5",
-      thinking: "medium",
-      resolveStageExtensionPath: (stageRequest) => `${stageRequest.projectRoot}/.pi/ext`,
-      runStage,
-    }).execute(input);
-
-    expect(calls[0]).toMatchObject({ stageExtensionPath: "/repo/.pi/ext" });
-  });
-
-  it("execute omits stageExtensionPath when resolver returns undefined", async () => {
-    const [runStage, calls] = runner();
-
-    await new PiCliWorkflowExecutor({
-      model: "gpt-5",
-      thinking: "medium",
-      resolveStageExtensionPath: () => undefined,
-      runStage,
-    }).execute(request());
-
-    expect(calls[0]).not.toHaveProperty("stageExtensionPath");
-  });
-
   it("execute returns the exact result from runStage", async () => {
     const expected = { ...result, output: { exact: true } };
     const runStage = vi.fn(async () => expected);

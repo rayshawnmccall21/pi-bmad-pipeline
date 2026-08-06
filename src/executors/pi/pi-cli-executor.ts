@@ -30,9 +30,6 @@ export interface PiCliWorkflowExecutorOptions {
   /** Optional spawn implementation for tests. */
   readonly spawn?: BmadStageSpawn;
 
-  /** Optional stage extension path resolver. */
-  readonly resolveStageExtensionPath?: (request: StageExecutionRequest) => string | undefined;
-
   /** Optional stage runner implementation for tests. */
   readonly runStage?: RunBmadStageFunction;
 }
@@ -105,7 +102,6 @@ const toRunBmadStageRequest = (
   model: options.model,
   thinking: options.thinking,
   ...optionalCliFields(options),
-  ...optionalStageExtensionPath(request, options),
 });
 
 const optionalCliFields = (
@@ -117,11 +113,3 @@ const optionalCliFields = (
     : { piBmadExtensionPath: options.piBmadExtensionPath }),
   ...(options.spawn === undefined ? {} : { spawn: options.spawn }),
 });
-
-const optionalStageExtensionPath = (
-  request: StageExecutionRequest,
-  options: PiCliWorkflowExecutorOptions,
-): Partial<Pick<RunBmadStageRequest, "stageExtensionPath">> => {
-  const stageExtensionPath = options.resolveStageExtensionPath?.(request);
-  return stageExtensionPath === undefined ? {} : { stageExtensionPath };
-};

@@ -268,6 +268,7 @@ interface SettleInput {
 
 const settleExecution = async (context: RunContext, input: SettleInput): Promise<StageStep> => {
   const evaluated = evaluateStageExecution({
+    storyId: context.request.storyId,
     stages: context.request.stages,
     stage: input.stage,
     execution: input.execution,

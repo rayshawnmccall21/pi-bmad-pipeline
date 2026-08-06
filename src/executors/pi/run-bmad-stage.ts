@@ -48,9 +48,6 @@ export interface RunBmadStageRequest extends Omit<StageExecutionRequest, "signal
   /** Resolved default thinking effort. */
   readonly thinking: ModelThinking;
 
-  /** Optional stage extension directory path. */
-  readonly stageExtensionPath?: string;
-
   /** Optional Pi executable name/path. */
   readonly piBin?: string;
 
@@ -191,15 +188,12 @@ export function toBuildStageArgsRequest(request: RunBmadStageRequest): BuildStag
 }
 
 type OptionalStageArgsFields = Partial<
-  Pick<BuildStageArgsRequest, "runId" | "priorFindings" | "stageExtensionPath" | "piBin">
+  Pick<BuildStageArgsRequest, "runId" | "priorFindings" | "piBin">
 >;
 
 const optionalStageArgsFields = (request: RunBmadStageRequest): OptionalStageArgsFields => ({
   ...(request.runId === undefined ? {} : { runId: request.runId }),
   ...(request.priorFindings === undefined ? {} : { priorFindings: request.priorFindings }),
-  ...(request.stageExtensionPath === undefined
-    ? {}
-    : { stageExtensionPath: request.stageExtensionPath }),
   ...(request.piBin === undefined ? {} : { piBin: request.piBin }),
 });
 
@@ -306,6 +300,7 @@ const buildResult = (context: CloseContext, exitCode: number | null): StageExecu
   const extraction = extractGatedHeadlessOutput(snapshot.records, {
     emissionKey: context.emissionKey,
     rootDir: context.schemaRootDir,
+    expectedWorkflow: context.request.stage.workflow,
   });
   const gateContext: EnvelopeGateLogContext = {
     request: context.request,

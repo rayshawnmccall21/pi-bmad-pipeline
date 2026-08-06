@@ -69,7 +69,7 @@ describe("Pi stage argv builder", () => {
   });
 
   it("does not emit flags that do not exist in pi or pi-bmad", () => {
-    const args = buildStageArgs(request({ priorFindings: ["a"], stageExtensionPath: "/ext" })).args;
+    const args = buildStageArgs(request({ priorFindings: ["a"] })).args;
     const removedFlags = [
       "--jsonl",
       "bmad:run-workflow",
@@ -118,11 +118,6 @@ describe("Pi stage argv builder", () => {
       args.filter((arg) => arg === "-e").length;
 
     expect(countExtensionFlags(buildStageArgs(request()).args)).toBe(1);
-
-    const args = buildStageArgs(request({ stageExtensionPath: "/tmp/ext" })).args;
-
-    expect(countExtensionFlags(args)).toBe(2);
-    expect(args[args.lastIndexOf("-e") + 1]).toBe("/tmp/ext");
   });
 
   it("emits the run id and emission key env contract", () => {
@@ -212,7 +207,6 @@ describe("Pi stage argv builder", () => {
   it.each([
     ["piBin", { piBin: " " }],
     ["runId", { runId: " " }],
-    ["stageExtensionPath", { stageExtensionPath: " " }],
   ] satisfies readonly [string, Partial<BuildStageArgsRequest>][])(
     "rejects blank optional string %s",
     (field, overrides) => {

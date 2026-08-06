@@ -109,7 +109,6 @@ describe("run BMAD stage", () => {
   it("maps requests to build-stage-args requests", () => {
     const input = request({
       priorFindings: ["a"],
-      stageExtensionPath: "/ext",
       piBin: "pix",
       piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
       emissionKey: "key-1",
@@ -126,7 +125,6 @@ describe("run BMAD stage", () => {
       model: "gpt-5.5-pro",
       thinking: "medium",
       priorFindings: ["a"],
-      stageExtensionPath: "/ext",
       piBin: "pix",
       piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
       emissionKey: "key-1",
@@ -136,7 +134,6 @@ describe("run BMAD stage", () => {
 
   it("omits optional build-stage-args fields when absent", () => {
     expect(toBuildStageArgsRequest(request())).not.toHaveProperty("priorFindings");
-    expect(toBuildStageArgsRequest(request())).not.toHaveProperty("stageExtensionPath");
     expect(toBuildStageArgsRequest(request())).not.toHaveProperty("piBin");
     expect(toBuildStageArgsRequest(request())).not.toHaveProperty("runId");
   });

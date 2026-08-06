@@ -1,46 +1,21 @@
-# Agent Rules
+# AGENTS.md
 
-## Quality Gates (non-negotiable)
+Orientation index for agents working in this package. No analysis, planning, or architecture artifacts are currently present under `.pi/artifacts/`; use the context links below and the implementation story for current scope.
 
-All code must pass before any PR or completion:
+## Current Context
 
-```
-npm run check
-```
+- [Package context](CONTEXT.md) — mission, core flow, boundaries, and operational invariants
+- [Story strip-1](.pi/artifacts/implementation/stories/strip-1.md) — accepted implementation scope and agent record
+- [Story specification](specs/strip-to-yaml-fsm.md) — YAML-only FSM requirements and acceptance criteria
 
-This runs: typecheck → prettier → eslint → vitest coverage → CRAP ≤ 5 → checkpoint conformance → knip.
+## Per-Module Context
 
-## Red/Green TDD
+Each top-level module under `src/` has a `CONTEXT.md` with its responsibility, public seams, invariants, dependencies, and testing guidance. Read it before changing that module.
 
-1. **Red** — Write a failing test first.
-2. **Green** — Write the minimum code to pass.
-3. **Refactor** — Clean up while keeping tests green.
+## Working Rules
 
-Never write implementation without a test. Test files live next to source: `src/foo.ts` → `src/foo.test.ts`.
-
-## Do Not Modify
-
-These files are locked by the quality guard extension and must not be changed:
-
-- `eslint.config.js` — Strict linter config
-- `.prettierrc` / `.prettierignore` — Formatter config
-- `scripts/crap-report.mjs` / `scripts/crap-ratchet.mjs` — CRAP scoring
-- `vitest.config.ts` — Coverage thresholds
-- `knip.json` — Dead code detection
-- `tsconfig.json` / `tsconfig.test.json` — Compiler strictness
-- `CLAUDE.md` — Agent instructions
-
-## Conventions
-
-- `src/` — All business logic.
-- `src/cli.ts` — CLI entry point.
-- Max complexity 8, max cognitive complexity 10, max 50 lines per function.
-- All public functions need JSDoc with `@param`, `@returns`, `@example`.
-- CRAP score ≤ 5 per function (complexity² × (1 - coverage)³ + complexity).
-
-## Package Identity
-
-This is `pi-bmad-pipeline` — the standalone BMAD pipeline supervisor CLI.
-It is NOT a Pi extension. It imports `pi-bmad/contracts` and shells out to
-`pi` as an opaque binary. It owns durable cross-process SDLC pipeline
-execution.
+- Run `npm run check` before completion; it covers typecheck, formatting, lint, coverage, CRAP, checkpoint conformance, and dead-code checks.
+- Use red/green/refactor TDD. Keep colocated tests (`src/foo.ts` → `src/foo.test.ts`).
+- Do not modify locked quality configuration: `eslint.config.js`, `.prettierrc*`, `vitest.config.ts`, `knip.json`, `tsconfig*.json`, or `scripts/crap-*.mjs`.
+- Keep public functions documented and within the configured complexity limits.
+- This package is the standalone `pi-bmad-pipeline` supervisor CLI, not a Pi extension.

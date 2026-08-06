@@ -6,7 +6,7 @@
  * Every line is passed through credential redaction before it is written, and
  * call sites must never include emission keys or other secrets in fields.
  * Events cover supervisor decision seams only (stage spawn argv, envelope
- * gating verdicts, merge-gate decisions, state-store transitions, dispatch
+ * gating verdicts, state-store transitions, dispatch
  * lock acquire/release) — never per-iteration stream chatter.
  *
  * @packageDocumentation
@@ -69,7 +69,7 @@ export function isPipelineDebugEnabled(
  *
  * @example
  * ```ts
- * debugLog("merge-gate.decision", { decision: "merge-blocked", blockers: ["secret-scan-blocked"] });
+ * debugLog("envelope-gate.verdict", { accepted: false, stage: "provenance" });
  * ```
  */
 export function debugLog(
