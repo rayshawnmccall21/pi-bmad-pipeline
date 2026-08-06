@@ -12,10 +12,13 @@ capability means deleting ALL of it).
 
 ## Unix philosophy mandate (governs every decision)
 
-1. Each module does ONE thing well. 2. Compose via minimal interfaces.
-3. No hidden shared mutable state. 4. Fail closed with typed errors.
-5. Mechanism over policy. 6. Single source of truth — no orphans, no mirrors
-of deleted code. 7. Text streams and exit codes at boundaries.
+1. Each module does ONE thing well.
+2. Compose via minimal interfaces.
+3. No hidden shared mutable state.
+4. Fail closed with typed errors.
+5. Mechanism over policy.
+6. Single source of truth — no orphans, no mirrors of deleted code.
+7. Text streams and exit codes at boundaries.
 
 ## DELETE
 
