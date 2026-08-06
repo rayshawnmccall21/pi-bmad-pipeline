@@ -1,0 +1,43 @@
+id: strip
+stages:
+  - id: create-story
+    kind: agent
+    workflow: create-story
+    agent: sm
+    timeout: 1800
+
+  - id: e2e-plan
+    kind: agent
+    workflow: e2e-plan
+    agent: tea
+    timeout: 1800
+
+  - id: dev-story
+    kind: agent
+    workflow: dev-story
+    agent: dev
+    timeout: 7200
+
+  - id: e2e-verify
+    kind: agent
+    workflow: e2e-verify
+    agent: tea
+    gate: e2e-verify
+    onFail: dev-story
+    timeout: 7200
+
+  - id: code-review
+    kind: agent
+    workflow: code-review
+    agent: dev
+    gate: code-review
+    onFail: dev-story
+    thinking: high
+    timeout: 2400
+
+  - id: docs
+    kind: agent
+    workflow: docs
+    agent: architect
+    thinking: high
+    timeout: 1800
