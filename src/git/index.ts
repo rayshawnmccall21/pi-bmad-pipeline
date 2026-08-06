@@ -1,6 +1,8 @@
 /** Public Git subsystem exports. */
 export { evaluateMergeGate } from "./merge-gate.js";
 export { hasBlockingGitSecretFindings, scanGitDiffForSecrets } from "./secret-scan.js";
+export { classifyWorktreeRegistration, parseWorktreePorcelain } from "./worktree-registry.js";
+export type { WorktreeRegistration, WorktreeRegistrationState } from "./worktree-registry.js";
 
 export {
   DEFAULT_STORY_PR_TITLE_PREFIX,

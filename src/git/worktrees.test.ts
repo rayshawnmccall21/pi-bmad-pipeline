@@ -218,13 +218,15 @@ describe("git worktrees", () => {
     ).rejects.toThrow("timeoutMs must be a positive integer.");
   });
 
-  it("ensureStoryWorktree runs prune then add", async () => {
+  it("ensureStoryWorktree runs prune, list, then add when absent", async () => {
     const fake = fakeSpawn();
     const promise = ensureStoryWorktree({ projectRoot, storyId, spawn: fake.spawn });
 
     close(call(fake.calls, 0).child, 0);
     await tick();
     close(call(fake.calls, 1).child, 0);
+    await tick();
+    close(call(fake.calls, 2).child, 0);
 
     await expect(promise).resolves.toEqual({
       storyId,
@@ -233,8 +235,61 @@ describe("git worktrees", () => {
     });
     expect(fake.calls.map((call) => call.args)).toEqual([
       ["worktree", "prune"],
+      ["worktree", "list", "--porcelain"],
       ["worktree", "add", "-B", "bmad/STORY-123", "/repo/.pi/pipeline/worktrees/STORY-123", "HEAD"],
     ]);
+  });
+
+  it("ensureStoryWorktree reuses an existing registration on the story branch", async () => {
+    const fake = fakeSpawn();
+    const promise = ensureStoryWorktree({ projectRoot, storyId, spawn: fake.spawn });
+
+    close(call(fake.calls, 0).child, 0);
+    await tick();
+    writeStdout(
+      call(fake.calls, 1).child,
+      `worktree /repo\nHEAD abc\nbranch refs/heads/master\n\nworktree /repo/.pi/pipeline/worktrees/STORY-123\nHEAD abc\nbranch refs/heads/bmad/STORY-123\n`,
+    );
+    close(call(fake.calls, 1).child, 0);
+
+    await expect(promise).resolves.toEqual({
+      storyId,
+      branch: "bmad/STORY-123",
+      path: "/repo/.pi/pipeline/worktrees/STORY-123",
+    });
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  it("ensureStoryWorktree fails closed when the story branch is pinned elsewhere", async () => {
+    const fake = fakeSpawn();
+    const promise = ensureStoryWorktree({ projectRoot, storyId, spawn: fake.spawn });
+
+    close(call(fake.calls, 0).child, 0);
+    await tick();
+    writeStdout(
+      call(fake.calls, 1).child,
+      "worktree /elsewhere\nHEAD abc\nbranch refs/heads/bmad/STORY-123\n",
+    );
+    close(call(fake.calls, 1).child, 0);
+
+    await expect(promise).rejects.toMatchObject({ code: "worktree-conflict" });
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  it("ensureStoryWorktree fails closed when the path is registered on another branch", async () => {
+    const fake = fakeSpawn();
+    const promise = ensureStoryWorktree({ projectRoot, storyId, spawn: fake.spawn });
+
+    close(call(fake.calls, 0).child, 0);
+    await tick();
+    writeStdout(
+      call(fake.calls, 1).child,
+      "worktree /repo/.pi/pipeline/worktrees/STORY-123\nHEAD abc\nbranch refs/heads/other\n",
+    );
+    close(call(fake.calls, 1).child, 0);
+
+    await expect(promise).rejects.toMatchObject({ code: "worktree-conflict" });
+    expect(fake.calls).toHaveLength(2);
   });
 
   it("ensureStoryWorktree supports custom branch and base ref", async () => {
@@ -250,9 +305,11 @@ describe("git worktrees", () => {
     close(call(fake.calls, 0).child, 0);
     await tick();
     close(call(fake.calls, 1).child, 0);
+    await tick();
+    close(call(fake.calls, 2).child, 0);
 
     await promise;
-    expect(call(fake.calls, 1).args).toEqual([
+    expect(call(fake.calls, 2).args).toEqual([
       "worktree",
       "add",
       "-B",
@@ -269,6 +326,8 @@ describe("git worktrees", () => {
     close(call(fake.calls, 0).child, 0);
     await tick();
     close(call(fake.calls, 1).child, 0);
+    await tick();
+    close(call(fake.calls, 2).child, 0);
 
     expect(Object.isFrozen(await promise)).toBe(true);
   });
@@ -307,6 +366,8 @@ describe("git worktrees", () => {
     close(call(fake.calls, 0).child, 0);
     await tick();
     close(call(fake.calls, 1).child, 0);
+    await tick();
+    close(call(fake.calls, 2).child, 0);
     await promise;
 
     expect(JSON.stringify({ projectRoot: request.projectRoot, storyId: request.storyId })).toBe(
