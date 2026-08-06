@@ -11,9 +11,10 @@
     "./executors/pi": "./src/executors/pi/index.ts"
   },
   "bin": {
-    "bmad-pipeline": "dist/cli.js"
+    "bmad-pipeline": "dist/src/cli.js"
   },
   "files": [
+    "dist/",
     "src/",
     "scripts/",
     "quality/",
