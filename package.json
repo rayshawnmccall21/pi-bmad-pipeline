@@ -1,7 +1,7 @@
 {
   "name": "pi-bmad-pipeline",
   "version": "0.1.0",
-  "description": "Standalone BMAD pipeline supervisor CLI. Owns durable cross-process SDLC pipeline execution: RunDef loading/compilation, stage spawning, JSONL parsing, payload gates, routing/regression, worktrees, budgets/timeouts, harness-owned evidence, PR/merge logic, and audit. Imports pi-bmad/contracts; shells out to pi as an opaque binary.",
+  "description": "Supervises discovered-YAML FSM execution with hermetic Pi children, durable state, and redacted JSONL events.",
   "type": "module",
   "main": "src/index.ts",
   "exports": {
