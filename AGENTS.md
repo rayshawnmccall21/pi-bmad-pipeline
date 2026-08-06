@@ -1,12 +1,14 @@
 # AGENTS.md
 
-Orientation index for agents working in this package. No analysis, planning, or architecture artifacts are currently present under `.pi/artifacts/`; use the context links below and the implementation story for current scope.
+Orientation index for agents working in this package. No analysis, planning, or architecture artifacts are currently published under `.pi/artifacts/`; use the current implementation records below.
 
 ## Current Context
 
 - [Package context](CONTEXT.md) — mission, core flow, boundaries, and operational invariants
-- [Story strip-1](.pi/artifacts/implementation/stories/strip-1.md) — accepted implementation scope and agent record
-- [Story specification](specs/strip-to-yaml-fsm.md) — YAML-only FSM requirements and acceptance criteria
+- [Story strip-2](.pi/artifacts/implementation/stories/strip-2.md) — implementation scope and agent record
+- [Story specification](specs/strip-2-orphaned-merge-gate.md) — requirements and acceptance criteria
+- [E2E plan](.pi/artifacts/validation/strip-2/e2e-plan.json) — behavioral verification plan
+- [E2E verification](.pi/artifacts/validation/strip-2/e2e-verify.json) — verification result
 
 ## Per-Module Context
 
