@@ -11,7 +11,7 @@
 import type { PipelineEventSink } from "./events/index.js";
 import type { RunResultStatus } from "./state/index.js";
 
-/** Exit code for passing terminal outcomes ("passed", "pr-opened"). */
+/** Exit code for a passing terminal outcome. */
 export const CLI_EXIT_OK = 0;
 
 /** Exit code for usage errors and unexpected internal failures. */
@@ -25,7 +25,7 @@ export const CLI_EXIT_BLOCKED = 2;
  *
  * @param status - Terminal run or audit status.
  *
- * @returns 0 for "passed" and "pr-opened", otherwise 2.
+ * @returns 0 for "passed", otherwise 2.
  *
  * @example
  * ```ts
@@ -33,7 +33,7 @@ export const CLI_EXIT_BLOCKED = 2;
  * ```
  */
 export function runStatusExitCode(status: RunResultStatus): number {
-  return status === "passed" || status === "pr-opened" ? CLI_EXIT_OK : CLI_EXIT_BLOCKED;
+  return status === "passed" ? CLI_EXIT_OK : CLI_EXIT_BLOCKED;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

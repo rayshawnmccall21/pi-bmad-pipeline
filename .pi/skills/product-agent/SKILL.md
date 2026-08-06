@@ -3,7 +3,7 @@ name: product-agent
 description: >
   Product knowledge for the pi-bmad-pipeline command-line agent surface. How to
   build, invoke, and verify the pipeline supervisor CLI. Maintained by TEA during e2e-plan exploration.
-updated: 2026-08-06T16:05:18Z
+updated: 2026-08-06T17:10:00Z
 stories: [strip-1]
 ---
 
@@ -25,7 +25,7 @@ node dist/src/cli.js <command>
 
 The expected ready signal is immediate CLI output followed by an exit code; this is a non-interactive command-line product, not a Pi extension or persistent TUI.
 
-Current exploration blocker: the TypeScript build succeeds, but every attempted built CLI command fails before argument dispatch because Node cannot resolve `/Users/Apple/pi-bmad/src/index.js`, imported through the local `pi-bmad` dependency's TypeScript contracts barrel. Therefore current help, version, run, and command-error rendering could not be observed live in this worktree.
+The build now bundles the bin target's runtime dependency graph. `node dist/src/cli.js` executes under Node for help, version, run dispatch, and typed command errors.
 
 ## Navigation
 
@@ -49,16 +49,16 @@ For strip-1, adversarial navigation also invokes `audit`, `iso`, `merge`, `run -
 
 ## Current Screenshots
 
-These are captured terminal transcripts and have been read:
+These post-implementation terminal transcripts were captured and read:
 
-- `screenshots/cli-help-current.txt` — build succeeds, but `help` crashes during module resolution before rendering usage.
-- `screenshots/cli-version-current.txt` — `version` hits the same pre-dispatch module-resolution crash.
-- `screenshots/cli-merge-current.txt` — deleted-command baseline cannot be observed because the same import failure happens first.
+- `screenshots/cli-help-current.txt` — built help renders only run/help/version and exits 0.
+- `screenshots/cli-version-current.txt` — built version renders the package banner and exits 0.
+- `screenshots/cli-merge-current.txt` — the deleted command returns `unknown-command`, core-only usage, and exit 1.
 
 ## Learnings
 
 - This package is a standalone CLI that supervises fresh Pi child processes; it is not itself a Pi extension.
 - The strongest live observations are command text/exit codes, JSONL stdout, structured debug stderr, durable state JSON, and spawned argv captured with a fake child.
 - A real end-to-end run must use a hermetic fixture project and fake/stub Pi executable so tests do not invoke a network or an unbounded agent.
-- Current built-product exploration is blocked by local file-dependency runtime resolution, despite a successful `tsc` build. Verification must either fix/provision that dependency's built entry point or invoke a supported source-runtime launcher before testing CLI behavior.
+- The published bin is bundled after TypeScript compilation so its `pi-bmad/contracts` runtime is Node-resolvable while source/library builds remain TypeScript ESM.
 - The repository has no PRD, epics document, project SYSTEM context, UI mock, golden, or platform research catalog in this worktree; the story/spec is the available acceptance contract.

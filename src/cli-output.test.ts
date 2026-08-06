@@ -16,7 +16,6 @@ const fixedIso = "2026-08-05T12:34:56.000Z";
 describe("runStatusExitCode", () => {
   it.each([
     ["passed", CLI_EXIT_OK],
-    ["pr-opened", CLI_EXIT_OK],
     ["failed", CLI_EXIT_BLOCKED],
     ["needs-attention", CLI_EXIT_BLOCKED],
     ["needs-approval", CLI_EXIT_BLOCKED],

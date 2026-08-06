@@ -1,5 +1,9 @@
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
 import { describe, expect, it, vi } from "vitest";
-import { pathToFileURL } from "node:url";
 
 import { defaultRunCliDeps, isMainModule, runCli, versionBanner } from "./cli.js";
 import { runPipelineAction } from "./actions/index.js";
@@ -48,6 +52,27 @@ describe("runCli", () => {
     expect(stdout.lines.at(-1)).toBe(versionBanner());
   });
 
+  it("forwards a minimal command with dependency defaults", async () => {
+    const runPipeline = vi.fn(async () => result());
+
+    expect(
+      await runCli(["run", "custom", "--story-id", "S-1", "--spec-file", "s.md"], {
+        cwd: () => "/default-root",
+        env: { BMAD_PIPELINE_MODEL: "env" },
+        runPipeline,
+      }),
+    ).toBe(0);
+    expect(runPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rundefId: "custom",
+        storyId: "S-1",
+        specFile: "s.md",
+        projectRoot: "/default-root",
+        env: { BMAD_PIPELINE_MODEL: "env" },
+      }),
+    );
+  });
+
   it("forwards the exact run mechanism request", async () => {
     const stdout = sink();
     const runPipeline = vi.fn(async (request: Parameters<typeof runPipelineAction>[0]) => {
@@ -86,6 +111,22 @@ describe("runCli", () => {
       }),
     );
     expect(runPipeline.mock.calls[0]?.[0]).not.toHaveProperty("openPr");
+  });
+
+  it("emits raw JSONL event lines with --jsonl", async () => {
+    const stdout = sink();
+    const rawEvent = JSON.stringify({ event: "progress", message: "working" });
+    const runPipeline = vi.fn(async (request) => {
+      request.sink?.write(rawEvent);
+      return result();
+    });
+
+    await runCli(["run", "x", "--story-id", "S-1", "--spec-file", "s", "--jsonl"], {
+      stdout,
+      runPipeline,
+    });
+
+    expect(stdout.lines).toEqual([rawEvent]);
   });
 
   it("maps evaluated failure to exit 2 and formats human events", async () => {
@@ -127,9 +168,25 @@ describe("defaultRunCliDeps", () => {
 });
 
 describe("isMainModule", () => {
-  it("matches resolved entry paths and rejects missing entries", () => {
+  it("matches resolved entry paths and rejects mismatched or missing entries", () => {
     const moduleUrl = pathToFileURL("/real/cli.js").href;
     expect(isMainModule(moduleUrl, ["node", "/shim"], () => "/real/cli.js")).toBe(true);
+    expect(isMainModule(moduleUrl, ["node", "/other"], (path) => path)).toBe(false);
     expect(isMainModule(moduleUrl, ["node"])).toBe(false);
+  });
+
+  it("realpaths an existing entry with the default resolver", () => {
+    const testPath = fileURLToPath(import.meta.url);
+    expect(isMainModule(pathToFileURL(realpathSync(testPath)).href, ["node", testPath])).toBe(true);
+  });
+});
+
+describe("published CLI", () => {
+  it("executes the built bin target under Node", () => {
+    const builtCliPath = resolve(import.meta.dirname, "../dist/src/cli.js");
+
+    expect(execFileSync("node", [builtCliPath, "help"], { encoding: "utf8" })).toContain(
+      "run <rundef-id>",
+    );
   });
 });

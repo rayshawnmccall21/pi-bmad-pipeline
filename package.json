@@ -21,7 +21,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && bun build src/cli.ts --target=node --outfile=dist/src/cli.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ --max-warnings 0",
     "lint:fix": "eslint src/ --fix",
