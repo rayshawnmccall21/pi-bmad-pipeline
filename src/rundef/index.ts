@@ -1,4 +1,4 @@
-/** Public RunDef type, registry, schema, and compile exports. */
+/** Public discovered RunDef type, registry, schema, loader, selector, and compile exports. */
 
 export type {
   CompiledStageDef,
@@ -12,7 +12,6 @@ export type {
   StageKind,
   StageThinking,
 } from "./types.js";
-
 export {
   clearPayloadGateRegistry,
   listPayloadGateNames,
@@ -20,7 +19,6 @@ export {
   registerPayloadGate,
   resolvePayloadGate,
 } from "./registry.js";
-
 export {
   RUNDEF_IDENTIFIER_PATTERN,
   RunDefSchema,
@@ -32,7 +30,6 @@ export {
   parseRunDef,
   validateRunDef,
 } from "./schema.js";
-
 export type {
   RunDefSchemaValue,
   RunDefStageSchemaValue,
@@ -40,32 +37,17 @@ export type {
   RunDefValidationResult,
   StageBudgetSchemaValue,
 } from "./schema.js";
-
 export {
   DEFAULT_STAGE_TIMEOUT_SECONDS,
   RunDefCompileError,
   compileRunDef,
   compileValidatedRunDef,
 } from "./compile.js";
-
 export type {
   CompileRunDefOptions,
   RunDefCompileErrorCode,
   RunDefCompileErrorDetails,
 } from "./compile.js";
-
-export {
-  BUILTIN_RUNDEF_IDS,
-  SDLC_RUNDEF,
-  SDLC_RUNDEF_ID,
-  isBuiltinRunDefId,
-  listBuiltinRunDefIds,
-  resolveBuiltinRunDef,
-  resolveRunDef,
-} from "./builtin.js";
-
-export type { BuiltinRunDefId } from "./builtin.js";
-
 export {
   RUNDEF_PIPELINE_EXTENSION,
   RUNDEF_PIPELINES_RELATIVE_DIR,
@@ -76,19 +58,14 @@ export {
   loadRunDefFile,
   resolveDiscoveredRunDef,
 } from "./loader.js";
-
 export type { DiscoveredRunDef, RunDefLoadErrorCode, RunDefLoadErrorDetails } from "./loader.js";
-
 export {
   RunDefSelectionError,
   resolveRunDefSelection,
   selectAndCompileRunDef,
   selectRunDef,
 } from "./selector.js";
-
 export type {
-  BuiltinRunDefSelection,
-  CompiledBuiltinRunDefSelection,
   CompiledDiscoveredRunDefSelection,
   CompiledRunDefSelection,
   DiscoveredRunDefSelection,
@@ -99,19 +76,3 @@ export type {
   SelectAndCompileRunDefOptions,
   SelectRunDefOptions,
 } from "./selector.js";
-
-export {
-  RUNDEF_STAGE_EXTENSIONS_RELATIVE_DIR,
-  getStageExtensionsDir,
-  resolveStageExtensionBaseDir,
-  resolveStageExtensionPath,
-  resolveStageExtensionPaths,
-} from "./ext-resolve.js";
-
-export type {
-  ResolveStageExtensionBaseDirRequest,
-  ResolveStageExtensionPathRequest,
-  ResolveStageExtensionPathsRequest,
-  ResolvedStageExtensionPath,
-  StageExtensionPathStage,
-} from "./ext-resolve.js";

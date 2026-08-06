@@ -5,10 +5,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { resolvePiBmadExtensionPath } from "../executors/pi/index.js";
 import {
-  SDLC_RUNDEF,
   clearPayloadGateRegistry,
-  compileRunDef,
   resolvePayloadGate,
+  selectAndCompileRunDef,
 } from "../rundef/index.js";
 import {
   CODE_REVIEW_PAYLOAD_GATE_NAME,
@@ -159,9 +158,11 @@ describe("gate registration", () => {
     }).not.toThrow();
   });
 
-  it("allows the built-in SDLC RunDef to compile after registration", () => {
+  it("allows the discovered SDLC YAML to compile after registration", async () => {
     registerBmadPayloadGates();
 
-    expect(() => compileRunDef(SDLC_RUNDEF)).not.toThrow();
+    await expect(
+      selectAndCompileRunDef(resolve(import.meta.dirname, "../.."), "sdlc"),
+    ).resolves.toMatchObject({ source: "discovered" });
   });
 });
