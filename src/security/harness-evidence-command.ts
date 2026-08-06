@@ -28,11 +28,11 @@ export const DEFAULT_HARNESS_EVIDENCE_COMMANDS: readonly HarnessEvidenceCommand[
 ]);
 
 export function runHarnessEvidenceCommand(
-  projectRoot: string,
+  commandCwd: string,
   command: HarnessEvidenceCommand,
   options: Pick<RunHarnessEvidenceRequest, "signal" | "spawn" | "now"> = {},
 ): Promise<HarnessEvidenceCommandResult> {
-  validateCommandRequest(projectRoot, command);
+  validateCommandRequest(commandCwd, command);
   const timeoutMs = resolveTimeoutMs(command);
   const now = options.now ?? (() => new Date());
   const startedAt = now().getTime();
@@ -42,7 +42,7 @@ export function runHarnessEvidenceCommand(
   const spawn = options.spawn ?? nodeSpawn;
 
   return new Promise((resolve) => {
-    const child = spawnChild(spawn, projectRoot, command, startedAt, now, resolve);
+    const child = spawnChild(spawn, commandCwd, command, startedAt, now, resolve);
     if (child === undefined) {
       return;
     }
@@ -109,14 +109,14 @@ const watchChild = (request: WatchChildRequest): void => {
   }
 };
 
-const validateProjectRoot = (projectRoot: string): void => {
-  if (projectRoot.trim().length === 0) {
-    throw new RangeError("Project root must not be blank.");
+export function validateCommandCwd(commandCwd: string): void {
+  if (commandCwd.trim().length === 0) {
+    throw new RangeError("Command cwd must not be blank.");
   }
-};
+}
 
-const validateCommandRequest = (projectRoot: string, command: HarnessEvidenceCommand): void => {
-  validateProjectRoot(projectRoot);
+const validateCommandRequest = (commandCwd: string, command: HarnessEvidenceCommand): void => {
+  validateCommandCwd(commandCwd);
   validateNonBlank("command", command.command);
   for (const arg of command.args) {
     validateNonBlank("arg", arg);
@@ -139,14 +139,14 @@ const resolveTimeoutMs = (command: HarnessEvidenceCommand): number => {
 
 const spawnChild = (
   spawn: HarnessEvidenceSpawn,
-  projectRoot: string,
+  commandCwd: string,
   command: HarnessEvidenceCommand,
   startedAt: number,
   now: () => Date,
   resolve: (result: HarnessEvidenceCommandResult) => void,
 ): ChildProcessWithoutNullStreams | undefined => {
   try {
-    return spawn(command.command, command.args, { cwd: projectRoot, env: process.env });
+    return spawn(command.command, command.args, { cwd: commandCwd, env: process.env });
   } catch (error) {
     resolve(buildSpawnFailedResult(command, startedAt, now, sanitizeUnknownError(error)));
     return undefined;

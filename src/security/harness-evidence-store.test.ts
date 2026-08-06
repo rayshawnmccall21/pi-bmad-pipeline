@@ -113,6 +113,26 @@ describe("harness evidence store", () => {
     await expect(loadHarnessEvidence({ projectRoot: root, storyId })).resolves.toEqual(evidence);
   });
 
+  it("round-trips reports that record a commandCwd", async () => {
+    const root = await tempRoot();
+    const evidence = { ...report(root), commandCwd: join(root, "worktree") };
+
+    await saveHarnessEvidence({ projectRoot: root, storyId, report: evidence });
+
+    await expect(loadHarnessEvidence({ projectRoot: root, storyId })).resolves.toEqual(evidence);
+  });
+
+  it("throws invalid-evidence for non-string commandCwd", async () => {
+    const root = await tempRoot();
+    const path = getHarnessEvidencePath(root, storyId);
+    await mkdir(getHarnessEvidenceStoryDir(root, storyId), { recursive: true });
+    await writeFile(path, `${JSON.stringify({ ...report(root), commandCwd: 5 })}\n`, "utf8");
+
+    await expect(loadHarnessEvidence({ projectRoot: root, storyId })).rejects.toMatchObject({
+      code: "invalid-evidence",
+    });
+  });
+
   it("returns undefined for missing evidence", async () => {
     const root = await tempRoot();
 
