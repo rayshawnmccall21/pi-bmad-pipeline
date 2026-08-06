@@ -99,6 +99,23 @@ describe("e2e-verify payload gate (canonical contract)", () => {
     });
   });
 
+  it("fails closed when a pass payload has an unknown root property", () => {
+    const result = e2eVerifyPayloadGate({
+      storyId: "s-1",
+      scenariosPassed: 2,
+      scenariosFailed: 0,
+      failedScenarioIds: [],
+      partialScenarioIds: [],
+      verdict: "pass",
+      unexpected: true,
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
+
   it("fails closed when the payload belongs to another story", () => {
     const result = e2eVerifyPayloadGate(
       {
@@ -206,6 +223,36 @@ describe("code-review payload gate (canonical contract)", () => {
       ).toMatchObject({ passed: false, reason: expect.stringContaining("malformed") });
     },
   );
+
+  it.each([
+    ["root", { unexpected: true }],
+    [
+      "findings summary",
+      {
+        findingsBySeverity: {
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+          info: 0,
+          blocker: 99,
+        },
+      },
+    ],
+  ] as const)("fails closed when an approval has an unknown %s property", (_location, extra) => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+      ...extra,
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
 
   it("fails closed when approval contradicts nonzero findings", () => {
     const result = codeReviewPayloadGate({

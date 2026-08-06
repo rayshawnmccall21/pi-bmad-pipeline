@@ -166,7 +166,24 @@ const failClosed = (gate: string, verdict: unknown): PayloadGateResult =>
     reason: `Unrecognized ${gate} verdict ${JSON.stringify(verdict ?? null)}; failing closed.`,
   });
 
+const E2E_VERIFY_PAYLOAD_KEYS = Object.freeze([
+  "storyId",
+  "scenariosPassed",
+  "scenariosFailed",
+  "failedScenarioIds",
+  "partialScenarioIds",
+  "verdict",
+] as const);
+
+const CODE_REVIEW_PAYLOAD_KEYS = Object.freeze([
+  "storyId",
+  "verdict",
+  "findingsBySeverity",
+  "autoFixed",
+] as const);
+
 const isValidE2ePassPayload = (payload: Record<string, unknown>): boolean =>
+  hasExactKeys(payload, E2E_VERIFY_PAYLOAD_KEYS) &&
   isNonEmptyString(payload["storyId"]) &&
   isNonNegativeInteger(payload["scenariosPassed"]) &&
   isNonNegativeInteger(payload["scenariosFailed"]) &&
@@ -176,10 +193,23 @@ const isValidE2ePassPayload = (payload: Record<string, unknown>): boolean =>
 const isValidCodeReviewApprovalPayload = (payload: Record<string, unknown>): boolean => {
   const counts = payload["findingsBySeverity"];
   return (
+    hasExactKeys(payload, CODE_REVIEW_PAYLOAD_KEYS) &&
     isNonEmptyString(payload["storyId"]) &&
     typeof payload["autoFixed"] === "boolean" &&
     isRecord(counts) &&
+    hasExactKeys(counts, CODE_REVIEW_SEVERITIES) &&
     CODE_REVIEW_SEVERITIES.every((severity) => isNonNegativeInteger(counts[severity]))
+  );
+};
+
+const hasExactKeys = (
+  payload: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): boolean => {
+  const actualKeys = Object.keys(payload);
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key) => expectedKeys.includes(key))
   );
 };
 
