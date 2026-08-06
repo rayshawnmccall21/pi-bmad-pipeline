@@ -22,7 +22,6 @@ import {
   settleFsmFailure,
   finishAction,
 } from "./run-pipeline-settlement.js";
-import { generatePipelineAuditReport } from "../audit/index.js";
 import { runPipelineStages, type RunBudget } from "../core/index.js";
 import { errorMessage } from "../core/runner-evaluation.js";
 import {
@@ -32,10 +31,9 @@ import {
 } from "../events/index.js";
 import { PiCliWorkflowExecutor, type WorkflowExecutor } from "../executors/index.js";
 import { registerBmadPayloadGates } from "../gates/index.js";
-import { ensureStoryWorktree, openStoryPullRequest } from "../git/index.js";
+import { ensureStoryWorktree } from "../git/index.js";
 import { resolveModelConfig, type ModelThinking } from "../model/index.js";
 import { selectAndCompileRunDef } from "../rundef/index.js";
-import { runHarnessEvidence, saveHarnessEvidence } from "../security/index.js";
 import {
   acquireDispatchLock,
   isPipelineStateStoryId,
@@ -92,18 +90,6 @@ export interface RunPipelineActionDeps {
   /** Runs compiled stages to a terminal outcome. */
   readonly runStages: typeof runPipelineStages;
 
-  /** Runs harness-owned evidence commands. */
-  readonly runEvidence: typeof runHarnessEvidence;
-
-  /** Persists the harness evidence report. */
-  readonly saveEvidence: typeof saveHarnessEvidence;
-
-  /** Opens the story pull request. */
-  readonly openPullRequest: typeof openStoryPullRequest;
-
-  /** Generates the sanitized pipeline audit report. */
-  readonly generateAuditReport: typeof generatePipelineAuditReport;
-
   /** Creates the unique runner invocation id for the dispatch lock. */
   readonly createRunId: () => string;
 }
@@ -121,9 +107,6 @@ export interface RunPipelineActionRequest {
 
   /** Project root directory. */
   readonly projectRoot: string;
-
-  /** Explicit PR policy (D3): true opens a PR after evidence passes. */
-  readonly openPr: boolean;
 
   /** Optional explicit model name (highest-precedence source). */
   readonly model?: string;
@@ -187,17 +170,13 @@ export const defaultRunPipelineActionDeps: RunPipelineActionDeps = Object.freeze
   createExecutor: (options: CreateStageExecutorOptions): WorkflowExecutor =>
     new PiCliWorkflowExecutor(options),
   runStages: runPipelineStages,
-  runEvidence: runHarnessEvidence,
-  saveEvidence: saveHarnessEvidence,
-  openPullRequest: openStoryPullRequest,
-  generateAuditReport: generatePipelineAuditReport,
   createRunId: (): string => randomUUID(),
 } satisfies RunPipelineActionDeps);
 
 /**
  * Runs one durable pipeline action end to end and returns the outcome as data.
  *
- * @param request - Story, RunDef, PR policy, and injected effects.
+ * @param request - Story, RunDef, and injected effects.
  *
  * @returns Frozen terminal {@link RunResult}; run failures are data, never throws.
  *
@@ -210,8 +189,7 @@ export const defaultRunPipelineActionDeps: RunPipelineActionDeps = Object.freeze
  *   storyId: "SH-1",
  *   specFile: "docs/stories/sh-1.md",
  *   projectRoot: process.cwd(),
- *   openPr: false,
- * });
+ * * });
  * ```
  */
 export async function runPipelineAction(request: RunPipelineActionRequest): Promise<RunResult> {
@@ -273,8 +251,7 @@ const runLockedPipeline = async (context: PipelineActionContext): Promise<RunRes
   });
   const prepared = await preparePipeline(context);
   const fsm = await executeStages(context, prepared);
-  const settled =
-    fsm.status === "done" ? await settleDone(context, prepared, fsm) : settleFsmFailure(fsm);
+  const settled = fsm.status === "done" ? settleDone(fsm) : settleFsmFailure(fsm);
   return finishAction(context, prepared, settled);
 };
 

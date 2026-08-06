@@ -213,13 +213,6 @@ describe("createPipelineEventEmitter", () => {
       withinBudget: false,
       reason: "stage budget exceeded",
     });
-    emitter.emit("evidence.finished", { passed: true, failedCommands: [] });
-    emitter.emit("pr.opened", {
-      prUrl: "https://github.com/acme/repo/pull/7",
-      prNumber: 7,
-      branch: "story/STORY-9",
-    });
-    emitter.emit("merge.decision", { decision: "merge-allowed", blockers: [] });
     emitter.emit("progress", { message: "compiling rundef" });
     emitter.emit("result", {
       status: "passed",
@@ -235,9 +228,6 @@ describe("createPipelineEventEmitter", () => {
       "stage.finished",
       "gate.decision",
       "budget.decision",
-      "evidence.finished",
-      "pr.opened",
-      "merge.decision",
       "progress",
       "result",
       "error",
