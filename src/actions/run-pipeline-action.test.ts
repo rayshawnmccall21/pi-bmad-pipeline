@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -300,6 +304,46 @@ describe("runPipelineAction", () => {
     });
     await runPipelineAction(harness.request);
     expect(harness.saves.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("resumes durable state when the worktree path uses a filesystem alias", async () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), "pipeline-worktree-alias-"));
+    const canonicalWorktreePath = join(temporaryRoot, "canonical-worktree");
+    const aliasWorktreePath = join(temporaryRoot, "worktree-alias");
+    try {
+      mkdirSync(canonicalWorktreePath);
+      symlinkSync(canonicalWorktreePath, aliasWorktreePath, "dir");
+      const boundState = createInitialPipelineState({
+        storyId: "SH-1",
+        runDefId: "sdlc",
+        runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
+        specFile: "spec.md",
+        worktreePath: realpathSync(canonicalWorktreePath),
+        branch: "bmad/SH-1",
+        stages,
+        model: "gpt-5.5-pro",
+        thinking: "medium",
+      });
+      const runStages = vi.fn(doneFsm);
+      const harness = createHarness({
+        loaded: boundState,
+        deps: {
+          ensureWorktree: async () => ({
+            storyId: "SH-1",
+            branch: "bmad/SH-1",
+            path: aliasWorktreePath,
+          }),
+          runStages,
+        },
+      });
+
+      await expect(runPipelineAction(harness.request)).resolves.toMatchObject({ status: "passed" });
+      expect(runStages).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreeCwd: realpathSync(canonicalWorktreePath) }),
+      );
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   it("fails closed when YAML changes but reuses the same stage ids", async () => {

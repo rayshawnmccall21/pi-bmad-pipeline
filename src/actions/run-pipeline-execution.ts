@@ -26,7 +26,7 @@ import type {
 } from "../core/index.js";
 import type { PipelineEventEmitter } from "../events/index.js";
 import type { WorkflowExecutor } from "../executors/index.js";
-import type { StoryWorktree } from "../git/index.js";
+import { canonicalizeWorktreePath, type StoryWorktree } from "../git/index.js";
 import type {
   ModelConfigCandidate,
   ResolveModelConfigRequest,
@@ -79,9 +79,13 @@ export const preparePipeline = async (
     registry: payloadGateRegistry,
   });
   const model = deps.resolveModel(buildModelRequest(request));
-  const worktree = await deps.ensureWorktree({
+  const ensuredWorktree = await deps.ensureWorktree({
     projectRoot: request.projectRoot,
     storyId: request.storyId,
+  });
+  const worktree = Object.freeze({
+    ...ensuredWorktree,
+    path: canonicalizeWorktreePath(ensuredWorktree.path),
   });
   const state = await resolveStartingState(context, {
     loaded,

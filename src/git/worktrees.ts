@@ -221,13 +221,14 @@ export async function ensureStoryWorktree(
   const branch = request.branch ?? getStoryBranchName(request.storyId);
   const baseRef = request.baseRef ?? "HEAD";
   const options = gitOptions(request);
+  const canonicalizePath = request.canonicalizePath ?? canonicalizeWorktreePath;
 
   await runGitCommand({ ...options, args: ["worktree", "prune"] });
   const listing = await runGitCommand({ ...options, args: ["worktree", "list", "--porcelain"] });
   const state = classifyWorktreeRegistration(parseWorktreePorcelain(listing.stdout), {
     path,
     branchRef: `refs/heads/${branch}`,
-    canonicalizePath: request.canonicalizePath ?? canonicalizeExistingPath,
+    canonicalizePath,
   });
   if (state === "conflict") {
     throw new GitWorktreeError({
@@ -240,7 +241,7 @@ export async function ensureStoryWorktree(
   if (state === "absent") {
     await runGitCommand({ ...options, args: ["worktree", "add", "-B", branch, path, baseRef] });
   }
-  return Object.freeze({ storyId: request.storyId, branch, path });
+  return Object.freeze({ storyId: request.storyId, branch, path: canonicalizePath(path) });
 }
 
 /** Removes an isolated story worktree. */
@@ -256,7 +257,8 @@ export async function removeStoryWorktree(request: RemoveStoryWorktreeRequest): 
   }
 }
 
-const canonicalizeExistingPath = (path: string): string => {
+/** Resolves a worktree path to one stable filesystem identity. */
+export const canonicalizeWorktreePath = (path: string): string => {
   try {
     return realpathSync.native(path);
   } catch {

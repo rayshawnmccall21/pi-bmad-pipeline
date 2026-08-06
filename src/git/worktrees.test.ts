@@ -280,7 +280,7 @@ describe("git worktrees", () => {
 
     await expect(promise).resolves.toMatchObject({
       branch: "bmad/STORY-123",
-      path: "/tmp/project/.pi/pipeline/worktrees/STORY-123",
+      path: "/private/tmp/project/.pi/pipeline/worktrees/STORY-123",
     });
     expect(fake.calls).toHaveLength(2);
   });

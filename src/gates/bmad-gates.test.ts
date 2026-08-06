@@ -71,6 +71,34 @@ describe("e2e-verify payload gate (canonical contract)", () => {
     expect(result).toMatchObject({ passed: false, reason: expect.stringContaining("contradict") });
   });
 
+  it.each([
+    ["storyId", undefined],
+    ["storyId", 1],
+    ["scenariosPassed", undefined],
+    ["scenariosPassed", "2"],
+    ["scenariosFailed", undefined],
+    ["scenariosFailed", "0"],
+    ["failedScenarioIds", undefined],
+    ["failedScenarioIds", [1]],
+    ["partialScenarioIds", undefined],
+    ["partialScenarioIds", [1]],
+  ] as const)("fails closed when pass field %s has malformed value %j", (field, value) => {
+    const payload: Record<string, unknown> = {
+      storyId: "s-1",
+      scenariosPassed: 2,
+      scenariosFailed: 0,
+      failedScenarioIds: [],
+      partialScenarioIds: [],
+      verdict: "pass",
+      [field]: value,
+    };
+
+    expect(e2eVerifyPayloadGate(payload)).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
+
   it("fails closed when the payload belongs to another story", () => {
     const result = e2eVerifyPayloadGate(
       {
@@ -136,6 +164,48 @@ describe("code-review payload gate (canonical contract)", () => {
     expect(result.passed).toBe(false);
     expect(result.reason).toBe("Code review verdict: needs-verify.");
   });
+
+  it.each([
+    ["storyId", undefined],
+    ["storyId", 1],
+    ["autoFixed", undefined],
+    ["autoFixed", "false"],
+    ["findingsBySeverity", undefined],
+    ["findingsBySeverity", []],
+  ] as const)("fails closed when approval field %s has malformed value %j", (field, value) => {
+    const payload: Record<string, unknown> = {
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+      [field]: value,
+    };
+
+    expect(codeReviewPayloadGate(payload)).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
+
+  it.each(CODE_REVIEW_SEVERITIES)(
+    "fails closed when approval severity %s is missing or the wrong type",
+    (severity) => {
+      const missingCounts = Object.fromEntries(
+        CODE_REVIEW_SEVERITIES.filter((candidateSeverity) => candidateSeverity !== severity).map(
+          (candidateSeverity) => [candidateSeverity, 0],
+        ),
+      );
+      const wrongTypeCounts = { ...missingCounts, [severity]: "0" };
+      const basePayload = { storyId: "s-1", verdict: "approved", autoFixed: false };
+
+      expect(
+        codeReviewPayloadGate({ ...basePayload, findingsBySeverity: missingCounts }),
+      ).toMatchObject({ passed: false, reason: expect.stringContaining("malformed") });
+      expect(
+        codeReviewPayloadGate({ ...basePayload, findingsBySeverity: wrongTypeCounts }),
+      ).toMatchObject({ passed: false, reason: expect.stringContaining("malformed") });
+    },
+  );
 
   it("fails closed when approval contradicts nonzero findings", () => {
     const result = codeReviewPayloadGate({

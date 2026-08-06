@@ -131,6 +131,9 @@ const storyIdentityFailure = (
     : undefined;
 
 const e2ePassResult = (payload: Record<string, unknown>): PayloadGateResult => {
+  if (!isValidE2ePassPayload(payload)) {
+    return failedResult("E2E pass payload is malformed; failing closed.", []);
+  }
   const contradictory =
     countOf(payload, "scenariosFailed") !== 0 ||
     stringList(payload, "failedScenarioIds").length !== 0 ||
@@ -141,6 +144,9 @@ const e2ePassResult = (payload: Record<string, unknown>): PayloadGateResult => {
 };
 
 const codeReviewApprovalResult = (payload: Record<string, unknown>): PayloadGateResult => {
+  if (!isValidCodeReviewApprovalPayload(payload)) {
+    return failedResult("Code review approval payload is malformed; failing closed.", []);
+  }
   const counts = payload["findingsBySeverity"];
   const contradictory =
     !isRecord(counts) || CODE_REVIEW_SEVERITIES.some((severity) => countOf(counts, severity) !== 0);
@@ -159,6 +165,32 @@ const failClosed = (gate: string, verdict: unknown): PayloadGateResult =>
     passed: false,
     reason: `Unrecognized ${gate} verdict ${JSON.stringify(verdict ?? null)}; failing closed.`,
   });
+
+const isValidE2ePassPayload = (payload: Record<string, unknown>): boolean =>
+  isNonEmptyString(payload["storyId"]) &&
+  isNonNegativeInteger(payload["scenariosPassed"]) &&
+  isNonNegativeInteger(payload["scenariosFailed"]) &&
+  isStringList(payload["failedScenarioIds"]) &&
+  isStringList(payload["partialScenarioIds"]);
+
+const isValidCodeReviewApprovalPayload = (payload: Record<string, unknown>): boolean => {
+  const counts = payload["findingsBySeverity"];
+  return (
+    isNonEmptyString(payload["storyId"]) &&
+    typeof payload["autoFixed"] === "boolean" &&
+    isRecord(counts) &&
+    CODE_REVIEW_SEVERITIES.every((severity) => isNonNegativeInteger(counts[severity]))
+  );
+};
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0;
+
+const isNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0;
+
+const isStringList = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
 
 const countOf = (payload: Record<string, unknown>, field: string): number => {
   const value = payload[field];
