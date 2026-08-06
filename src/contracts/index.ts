@@ -2,10 +2,17 @@
 export {
   BmadWorkflowContractProvider,
   BmadWorkflowContractProviderError,
-  bmadWorkflowContractProvider,
 } from "./bmad-contract-provider.js";
 
-export type { BmadWorkflowContractProviderDependencies } from "./bmad-contract-provider.js";
+export type {
+  BmadExpectedContractMismatchCode,
+  BmadHeadlessOutputValidationIssue,
+  BmadHeadlessOutputValidationResult,
+  BmadHeadlessValidationIssueCode,
+  BmadWorkflowContractProviderDependencies,
+  BmadWorkflowContractProviderErrorCode,
+  BmadWorkflowContractProviderOptions,
+} from "./bmad-contract-provider.js";
 
 export type {
   HeadlessWorkflowOutputValidationIssue,
