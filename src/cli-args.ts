@@ -1,305 +1,177 @@
 /**
- * Pure argv parsing for the bmad-pipeline CLI.
- *
- * Owns the command grammar as data (one spec table), a generic token scanner,
- * and per-command builders. Everything here is pure and effect-free: every
- * failure is returned as a structured {@link CliParseError} with a stable
- * machine-readable code, never thrown.
+ * Parses arguments for the run/help/version CLI.
  *
  * @packageDocumentation
  */
 
-/** Usage text, one line per entry, written via a line sink. */
+import type { CliCommand, CliParseError, CliParseErrorCode, CliRunCommand } from "./cli-command.js";
+
+/** Usage text written one line at a time by the CLI shell. */
 export const CLI_USAGE_LINES: readonly string[] = Object.freeze([
   "Usage: bmad-pipeline [command] [options]",
   "Commands:",
-  "  run [rundef-id] --story-id ID --spec-file PATH [--project-root DIR]",
-  "      [--model NAME] [--thinking EFFORT] [--max-regressions N] [--no-pr] [--jsonl]",
-  "  audit --story-id ID [--project-root DIR] [--rundef ID]",
-  "  iso   --story-id ID --spec-file PATH [--project-root DIR]",
-  "  merge --story-id ID [--project-root DIR]",
+  "  run <rundef-id> --story-id ID --spec-file PATH [--project-root DIR]",
+  "      [--model NAME] [--thinking EFFORT] [--max-regressions N] [--jsonl]",
   "  help | version",
 ]);
 
-import type {
-  CliCommand,
-  CliHelpCommand,
-  CliIsoCommand,
-  CliParseError,
-  CliParseErrorCode,
-  CliRunCommand,
-  CliVersionCommand,
-} from "./cli-command.js";
+const valueOptions = new Set([
+  "--story-id",
+  "--spec-file",
+  "--project-root",
+  "--model",
+  "--thinking",
+  "--max-regressions",
+]);
+const flagOptions = new Set(["--jsonl"]);
+const helpWords = new Set(["help", "--help", "-h"]);
+const versionWords = new Set(["version", "--version"]);
+const optionTokenWidth = 2;
 
-const STORY_ID_OPTION = "--story-id";
-const SPEC_FILE_OPTION = "--spec-file";
-const PROJECT_ROOT_OPTION = "--project-root";
-const RUNDEF_OPTION = "--rundef";
-const MODEL_OPTION = "--model";
-const THINKING_OPTION = "--thinking";
-const MAX_REGRESSIONS_OPTION = "--max-regressions";
-const NO_PR_FLAG = "--no-pr";
-const JSONL_FLAG = "--jsonl";
+const parseError = (code: CliParseErrorCode, message: string): CliParseError =>
+  Object.freeze({ kind: "parse-error", code, message });
 
-type CliCommandKind = "run" | "audit" | "iso" | "merge";
-
-interface CliCommandSpec {
-  readonly positional: string | undefined;
-  readonly values: readonly string[];
-  readonly flags: readonly string[];
-}
-
-const commandSpecs: Readonly<Record<CliCommandKind, CliCommandSpec>> = Object.freeze({
-  run: {
-    positional: "rundef-id",
-    values: [
-      STORY_ID_OPTION,
-      SPEC_FILE_OPTION,
-      PROJECT_ROOT_OPTION,
-      MODEL_OPTION,
-      THINKING_OPTION,
-      MAX_REGRESSIONS_OPTION,
-    ],
-    flags: [NO_PR_FLAG, JSONL_FLAG],
-  },
-  audit: {
-    positional: undefined,
-    values: [STORY_ID_OPTION, PROJECT_ROOT_OPTION, RUNDEF_OPTION],
-    flags: [],
-  },
-  iso: {
-    positional: undefined,
-    values: [STORY_ID_OPTION, SPEC_FILE_OPTION, PROJECT_ROOT_OPTION],
-    flags: [],
-  },
-  merge: { positional: undefined, values: [STORY_ID_OPTION, PROJECT_ROOT_OPTION], flags: [] },
-});
-
-const commandKindList: readonly string[] = Object.freeze(["run", "audit", "iso", "merge"]);
-
-const isCliCommandKind = (value: string): value is CliCommandKind =>
-  commandKindList.includes(value);
-
-interface ScannedArgs {
-  readonly kind: "args";
+interface ScannedRunArgs {
   readonly positionals: readonly string[];
   readonly values: ReadonlyMap<string, string>;
   readonly flags: ReadonlySet<string>;
 }
 
-interface MutableScan {
+interface MutableRunArgs {
   readonly positionals: string[];
   readonly values: Map<string, string>;
   readonly flags: Set<string>;
 }
 
-const parseError = (code: CliParseErrorCode, message: string): CliParseError =>
-  Object.freeze({ kind: "parse-error", code, message });
+const isOptionValue = (optionValue: string | undefined): optionValue is string =>
+  optionValue !== undefined && !optionValue.startsWith("--");
 
-const missingValueError = (option: string): CliParseError =>
-  parseError("missing-option-value", `Option "${option}" requires a value.`);
-
-const missingOptionError = (option: string): CliParseError =>
-  parseError("missing-required-option", `Missing required option "${option}".`);
-
-interface ScanContext {
-  readonly spec: CliCommandSpec;
-  readonly scan: MutableScan;
-}
-
-const collectToken = (token: string, context: ScanContext): CliParseError | string | undefined => {
-  if (!token.startsWith("--")) {
-    context.scan.positionals.push(token);
-    return undefined;
-  }
-  if (context.spec.flags.includes(token)) {
-    context.scan.flags.add(token);
-    return undefined;
-  }
-  return context.spec.values.includes(token)
-    ? token
-    : parseError("unknown-option", `Unknown option "${token}".`);
-};
-
-const isScanFailure = (value: CliParseError | string | undefined): value is CliParseError =>
-  typeof value === "object";
-
-const scanStep = (
-  pending: string | undefined,
+const collectRunToken = (
   token: string,
-  context: ScanContext,
-): CliParseError | string | undefined => {
-  if (pending === undefined) {
-    return collectToken(token, context);
+  optionValue: string | undefined,
+  scanned: MutableRunArgs,
+): number | CliParseError => {
+  if (!token.startsWith("--")) {
+    scanned.positionals.push(token);
+    return 1;
   }
-  if (token.startsWith("--")) {
-    return missingValueError(pending);
+  if (flagOptions.has(token)) {
+    scanned.flags.add(token);
+    return 1;
   }
-  context.scan.values.set(pending, token);
-  return undefined;
+  if (!valueOptions.has(token)) {
+    return parseError("unknown-option", `Unknown option "${token}".`);
+  }
+  if (!isOptionValue(optionValue)) {
+    return parseError("missing-option-value", `Option "${token}" requires a value.`);
+  }
+  scanned.values.set(token, optionValue);
+  return optionTokenWidth;
 };
 
-const scanArgs = (tokens: readonly string[], spec: CliCommandSpec): ScannedArgs | CliParseError => {
-  const context: ScanContext = {
-    spec,
-    scan: { positionals: [], values: new Map(), flags: new Set() },
-  };
-  let pending: string | undefined;
-  for (const token of tokens) {
-    const outcome = scanStep(pending, token, context);
-    if (isScanFailure(outcome)) {
+const scanRunArgs = (tokens: readonly string[]): ScannedRunArgs | CliParseError => {
+  const scanned: MutableRunArgs = { positionals: [], values: new Map(), flags: new Set() };
+  for (let index = 0; index < tokens.length;) {
+    const outcome = collectRunToken(tokens[index] ?? "", tokens[index + 1], scanned);
+    if (typeof outcome !== "number") {
       return outcome;
     }
-    pending = outcome;
+    index += outcome;
   }
-  return pending === undefined
-    ? Object.freeze({ kind: "args", ...context.scan })
-    : missingValueError(pending);
+  return Object.freeze(scanned);
 };
 
-const unexpectedPositional = (
-  scanned: ScannedArgs,
-  spec: CliCommandSpec,
-): CliParseError | undefined => {
-  const allowed = spec.positional === undefined ? 0 : 1;
-  const extra = scanned.positionals[allowed];
-  return extra === undefined
-    ? undefined
-    : parseError("unexpected-positional", `Unexpected argument "${extra}".`);
+interface RequiredRunFields {
+  readonly rundefId: string;
+  readonly storyId: string;
+  readonly specFile: string;
+}
+
+const positionalFields = (
+  scanned: ScannedRunArgs,
+): { readonly rundefId: string } | CliParseError => {
+  const extra = scanned.positionals[1];
+  if (extra !== undefined) {
+    return parseError("unexpected-positional", `Unexpected argument "${extra}".`);
+  }
+  const rundefId = scanned.positionals[0];
+  return rundefId === undefined
+    ? parseError("missing-positional", 'Missing required "rundef-id" argument.')
+    : { rundefId };
 };
 
-const projectRootOf = (scanned: ScannedArgs): { readonly projectRoot?: string } => {
-  const projectRoot = scanned.values.get(PROJECT_ROOT_OPTION);
-  return projectRoot === undefined ? {} : { projectRoot };
+const requiredOptionFields = (
+  scanned: ScannedRunArgs,
+): Omit<RequiredRunFields, "rundefId"> | CliParseError => {
+  const storyId = scanned.values.get("--story-id");
+  if (storyId === undefined) {
+    return parseError("missing-required-option", 'Missing required option "--story-id".');
+  }
+  const specFile = scanned.values.get("--spec-file");
+  return specFile === undefined
+    ? parseError("missing-required-option", 'Missing required option "--spec-file".')
+    : { storyId, specFile };
 };
 
-const maxRegressionsPattern = /^\d+$/;
+const regressionError = (scanned: ScannedRunArgs): CliParseError | undefined => {
+  const regressions = scanned.values.get("--max-regressions");
+  return regressions !== undefined && !/^\d+$/u.test(regressions)
+    ? parseError("invalid-number", 'Option "--max-regressions" requires a non-negative integer.')
+    : undefined;
+};
 
-type RunOptionFields = Pick<CliRunCommand, "projectRoot" | "model" | "thinking" | "maxRegressions">;
-
-const runOptionFields = (scanned: ScannedArgs): RunOptionFields => {
-  const model = scanned.values.get(MODEL_OPTION);
-  const thinking = scanned.values.get(THINKING_OPTION);
-  const maxRegressions = scanned.values.get(MAX_REGRESSIONS_OPTION);
+const optionalFields = (scanned: ScannedRunArgs): Partial<CliRunCommand> => {
+  const projectRoot = scanned.values.get("--project-root");
+  const model = scanned.values.get("--model");
+  const thinking = scanned.values.get("--thinking");
+  const regressions = scanned.values.get("--max-regressions");
   return {
-    ...projectRootOf(scanned),
+    ...(projectRoot === undefined ? {} : { projectRoot }),
     ...(model === undefined ? {} : { model }),
     ...(thinking === undefined ? {} : { thinking }),
-    ...(maxRegressions === undefined ? {} : { maxRegressions: Number(maxRegressions) }),
+    ...(regressions === undefined ? {} : { maxRegressions: Number(regressions) }),
   };
 };
 
-type StorySpecFields = Pick<CliIsoCommand, "storyId" | "specFile">;
-
-const requiredStorySpec = (scanned: ScannedArgs): StorySpecFields | CliParseError => {
-  const storyId = scanned.values.get(STORY_ID_OPTION);
-  if (storyId === undefined) {
-    return missingOptionError(STORY_ID_OPTION);
+const requiredRunFields = (scanned: ScannedRunArgs): RequiredRunFields | CliParseError => {
+  const positional = positionalFields(scanned);
+  if ("kind" in positional) {
+    return positional;
   }
-  const specFile = scanned.values.get(SPEC_FILE_OPTION);
-  if (specFile === undefined) {
-    return missingOptionError(SPEC_FILE_OPTION);
-  }
-  return { storyId, specFile };
+  const required = requiredOptionFields(scanned);
+  return "kind" in required ? required : { ...positional, ...required };
 };
 
-const buildRunCommand = (scanned: ScannedArgs): CliCommand | CliParseError => {
-  const required = requiredStorySpec(scanned);
-  if ("kind" in required) {
-    return required;
-  }
-  const rundefId = scanned.positionals[0];
-  if (rundefId === undefined) {
-    return parseError("missing-positional", 'Missing required "rundef-id" argument.');
-  }
-  const maxRegressions = scanned.values.get(MAX_REGRESSIONS_OPTION);
-  if (maxRegressions !== undefined && !maxRegressionsPattern.test(maxRegressions)) {
-    return parseError(
-      "invalid-number",
-      `Option "${MAX_REGRESSIONS_OPTION}" requires a non-negative integer.`,
-    );
-  }
-  return Object.freeze({
+const buildRunCommand = (scanned: ScannedRunArgs, required: RequiredRunFields): CliRunCommand =>
+  Object.freeze({
     kind: "run",
-    rundefId,
     ...required,
-    ...runOptionFields(scanned),
-    openPr: !scanned.flags.has(NO_PR_FLAG),
-    jsonl: scanned.flags.has(JSONL_FLAG),
+    ...optionalFields(scanned),
+    jsonl: scanned.flags.has("--jsonl"),
   });
-};
 
-const buildAuditCommand = (scanned: ScannedArgs): CliCommand | CliParseError => {
-  const storyId = scanned.values.get(STORY_ID_OPTION);
-  const rundefId = scanned.values.get(RUNDEF_OPTION);
-  return storyId === undefined
-    ? missingOptionError(STORY_ID_OPTION)
-    : Object.freeze({
-        kind: "audit",
-        storyId,
-        ...projectRootOf(scanned),
-        ...(rundefId === undefined ? {} : { rundefId }),
-      });
-};
-
-const buildIsoCommand = (scanned: ScannedArgs): CliCommand | CliParseError => {
-  const required = requiredStorySpec(scanned);
-  if ("kind" in required) {
-    return required;
-  }
-  return Object.freeze({ kind: "iso", ...required, ...projectRootOf(scanned) });
-};
-
-const buildMergeCommand = (scanned: ScannedArgs): CliCommand | CliParseError => {
-  const storyId = scanned.values.get(STORY_ID_OPTION);
-  return storyId === undefined
-    ? missingOptionError(STORY_ID_OPTION)
-    : Object.freeze({ kind: "merge", storyId, ...projectRootOf(scanned) });
-};
-
-const commandBuilders: Readonly<
-  Record<CliCommandKind, (scanned: ScannedArgs) => CliCommand | CliParseError>
-> = Object.freeze({
-  run: buildRunCommand,
-  audit: buildAuditCommand,
-  iso: buildIsoCommand,
-  merge: buildMergeCommand,
-});
-
-const builtinCommandOf = (word: string): CliHelpCommand | CliVersionCommand | undefined => {
-  if (word === "help" || word === "--help" || word === "-h") {
-    return Object.freeze({ kind: "help" });
-  }
-  if (word === "version" || word === "--version") {
-    return Object.freeze({ kind: "version" });
-  }
-  return undefined;
-};
-
-const parseCommandArgs = (
-  kind: CliCommandKind,
-  rest: readonly string[],
-): CliCommand | CliParseError => {
-  const scanned = scanArgs(rest, commandSpecs[kind]);
-  if (scanned.kind === "parse-error") {
+const buildRun = (tokens: readonly string[]): CliCommand | CliParseError => {
+  const scanned = scanRunArgs(tokens);
+  if ("kind" in scanned) {
     return scanned;
   }
-  return unexpectedPositional(scanned, commandSpecs[kind]) ?? commandBuilders[kind](scanned);
+  const required = requiredRunFields(scanned);
+  if ("kind" in required) {
+    return required;
+  }
+  return regressionError(scanned) ?? buildRunCommand(scanned, required);
 };
 
 /**
- * Parses CLI argv (without the node and script entries) into a typed command.
+ * Parses argv without node/script entries into a command or typed error.
  *
- * Pure and effect-free: every failure is returned as a {@link CliParseError}
- * with a stable code, never thrown.
+ * @param argv - Raw command arguments.
  *
- * @param argv - Raw argument vector starting at the command word.
- *
- * @returns Frozen parsed command, or a frozen parse error.
+ * @returns A frozen command or typed parse error.
  *
  * @example
  * ```ts
- * const parsed = parseCliArgs(["run", "sdlc", "--story-id", "S-1", "--spec-file", "s.md"]);
+ * parseCliArgs(["help"]);
  * ```
  */
 export function parseCliArgs(argv: readonly string[]): CliCommand | CliParseError {
@@ -307,12 +179,13 @@ export function parseCliArgs(argv: readonly string[]): CliCommand | CliParseErro
   if (command === undefined) {
     return parseError("missing-command", "No command given.");
   }
-  const builtin = builtinCommandOf(command);
-  if (builtin !== undefined) {
-    return builtin;
+  if (helpWords.has(command)) {
+    return Object.freeze({ kind: "help" });
   }
-  if (!isCliCommandKind(command)) {
-    return parseError("unknown-command", `Unknown command "${command}".`);
+  if (versionWords.has(command)) {
+    return Object.freeze({ kind: "version" });
   }
-  return parseCommandArgs(command, rest);
+  return command === "run"
+    ? buildRun(rest)
+    : parseError("unknown-command", `Unknown command "${command}".`);
 }

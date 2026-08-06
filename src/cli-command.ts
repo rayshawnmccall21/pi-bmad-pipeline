@@ -1,13 +1,10 @@
 /**
- * Command and parse-error shapes for the bmad-pipeline CLI.
- *
- * Pure type contract shared by the argv parser and the command executors —
- * no runtime code lives here.
+ * Defines pure command and parse-error contracts for the core CLI.
  *
  * @packageDocumentation
  */
 
-/** Stable machine-readable argv parse error codes. */
+/** Stable argv parse error codes. */
 export type CliParseErrorCode =
   | "missing-command"
   | "unknown-command"
@@ -18,15 +15,13 @@ export type CliParseErrorCode =
   | "unexpected-positional"
   | "invalid-number";
 
-/** Structured argv parse failure returned as data, never thrown. */
+/** Structured argv parse failure returned as data. */
 export interface CliParseError {
   /** Result discriminator. */
   readonly kind: "parse-error";
-
-  /** Stable machine-readable parse error code. */
+  /** Stable machine-readable error code. */
   readonly code: CliParseErrorCode;
-
-  /** Human-readable parse failure message. */
+  /** Human-readable failure message. */
   readonly message: string;
 }
 
@@ -34,75 +29,22 @@ export interface CliParseError {
 export interface CliRunCommand {
   /** Command discriminator. */
   readonly kind: "run";
-
-  /** RunDef id to select and compile. */
+  /** RunDef identifier selected from YAML. */
   readonly rundefId: string;
-
-  /** Story id being supervised. */
+  /** Story identifier being supervised. */
   readonly storyId: string;
-
-  /** Story or spec file path provided to the run. */
+  /** Story specification path. */
   readonly specFile: string;
-
-  /** Optional explicit project root; defaults to the working directory. */
+  /** Optional project root. */
   readonly projectRoot?: string;
-
-  /** Optional explicit model name. */
+  /** Optional explicit model. */
   readonly model?: string;
-
   /** Optional explicit thinking effort. */
   readonly thinking?: string;
-
   /** Optional regression ceiling. */
   readonly maxRegressions?: number;
-
-  /** Explicit PR policy: false when the no-pr flag was given. */
-  readonly openPr: boolean;
-
-  /** True when raw JSONL event lines were requested. */
+  /** Whether raw JSONL output was requested. */
   readonly jsonl: boolean;
-}
-
-/** Parsed audit command. */
-export interface CliAuditCommand {
-  /** Command discriminator. */
-  readonly kind: "audit";
-
-  /** Story id whose durable run is audited. */
-  readonly storyId: string;
-
-  /** Optional explicit project root; defaults to the working directory. */
-  readonly projectRoot?: string;
-
-  /** Optional rundef id used to resolve stage definitions; defaults to sdlc. */
-  readonly rundefId?: string;
-}
-
-/** Parsed iso (worktree isolation) command. */
-export interface CliIsoCommand {
-  /** Command discriminator. */
-  readonly kind: "iso";
-
-  /** Story id whose worktree is ensured. */
-  readonly storyId: string;
-
-  /** Story or spec file path recorded with the worktree output. */
-  readonly specFile: string;
-
-  /** Optional explicit project root; defaults to the working directory. */
-  readonly projectRoot?: string;
-}
-
-/** Parsed merge command. */
-export interface CliMergeCommand {
-  /** Command discriminator. */
-  readonly kind: "merge";
-
-  /** Story id whose merge eligibility is evaluated. */
-  readonly storyId: string;
-
-  /** Optional explicit project root; defaults to the working directory. */
-  readonly projectRoot?: string;
 }
 
 /** Parsed help request. */
@@ -117,11 +59,5 @@ export interface CliVersionCommand {
   readonly kind: "version";
 }
 
-/** Discriminated union of all parsed CLI commands. */
-export type CliCommand =
-  | CliRunCommand
-  | CliAuditCommand
-  | CliIsoCommand
-  | CliMergeCommand
-  | CliHelpCommand
-  | CliVersionCommand;
+/** Every supported CLI command. */
+export type CliCommand = CliRunCommand | CliHelpCommand | CliVersionCommand;
