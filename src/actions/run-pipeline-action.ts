@@ -123,7 +123,7 @@ export interface RunPipelineActionRequest {
   /** Optional aggregate run budget forwarded to the FSM. */
   readonly runBudget?: RunBudget;
 
-  /** Optional abort signal forwarded to stage and evidence execution. */
+  /** Optional abort signal forwarded to stage execution. */
   readonly signal?: AbortSignal;
 
   /** Optional event sink receiving serialized PipelineCliEvent lines. */

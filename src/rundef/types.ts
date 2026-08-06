@@ -23,7 +23,7 @@ export interface StageBudget {
   readonly maxDollars?: number;
 }
 
-/** Represents one raw stage entry loaded from a RunDef YAML file or built-in definition. */
+/** Represents one raw stage entry loaded from a discovered RunDef YAML file. */
 export interface RunDefStage {
   /** Stable stage identifier used for sequencing, state keys, and fail routing. */
   readonly id: string;
@@ -113,8 +113,17 @@ export interface PayloadGateResult {
   readonly findings?: readonly string[];
 }
 
+/** Active run identity supplied to payload gates. */
+export interface PayloadGateContext {
+  /** Story id being supervised by the active run. */
+  readonly storyId: string;
+}
+
 /** Evaluates a validated headless workflow output payload and returns a gate result. */
-export type PayloadGate = (payload: Record<string, unknown>) => PayloadGateResult;
+export type PayloadGate = (
+  payload: Record<string, unknown>,
+  context?: PayloadGateContext,
+) => PayloadGateResult;
 
 /** Resolves payload gate functions by their configured name from a RunDef stage. */
 export interface PayloadGateRegistry {

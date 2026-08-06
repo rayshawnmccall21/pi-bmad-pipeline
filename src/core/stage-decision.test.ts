@@ -92,13 +92,17 @@ describe("stage gate decision", () => {
     });
   });
 
-  it("passes the output payload to the payload gate", () => {
+  it("passes the output payload and active story identity to the payload gate", () => {
     const gate = vi.fn<PayloadGate>(() => ({ passed: true }));
     const output = { payload: { ok: true, value: 1 } };
 
-    checkStageDecision({ stage: stage({ payloadGate: gate }), result: result({ output }) });
+    checkStageDecision({
+      stage: stage({ payloadGate: gate }),
+      storyId: "story-1",
+      result: result({ output }),
+    });
 
-    expect(gate).toHaveBeenCalledWith(output.payload);
+    expect(gate).toHaveBeenCalledWith(output.payload, { storyId: "story-1" });
   });
 
   it("uses a passing payload gate reason", () => {

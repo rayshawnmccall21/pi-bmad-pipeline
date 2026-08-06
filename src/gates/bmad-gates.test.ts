@@ -58,6 +58,35 @@ describe("e2e-verify payload gate (canonical contract)", () => {
     expect(result.findings).toEqual(["Failed scenario: AC-3", "Partial scenario: AC-4"]);
   });
 
+  it("fails closed when a pass verdict contradicts scenario failures", () => {
+    const result = e2eVerifyPayloadGate({
+      storyId: "s-1",
+      scenariosPassed: 2,
+      scenariosFailed: 1,
+      failedScenarioIds: ["AC-3"],
+      partialScenarioIds: [],
+      verdict: "pass",
+    });
+
+    expect(result).toMatchObject({ passed: false, reason: expect.stringContaining("contradict") });
+  });
+
+  it("fails closed when the payload belongs to another story", () => {
+    const result = e2eVerifyPayloadGate(
+      {
+        storyId: "other-story",
+        scenariosPassed: 2,
+        scenariosFailed: 0,
+        failedScenarioIds: [],
+        partialScenarioIds: [],
+        verdict: "pass",
+      },
+      { storyId: "s-1" },
+    );
+
+    expect(result).toMatchObject({ passed: false, reason: expect.stringContaining("story") });
+  });
+
   it.each([{}, { verdict: "passed" }, { verdict: true }, { verdict: "ok" }])(
     "fails closed on non-contract payload %j",
     (payload) => {
@@ -77,11 +106,13 @@ describe("e2e-verify payload gate (canonical contract)", () => {
 });
 
 describe("code-review payload gate (canonical contract)", () => {
-  it("passes the canonical success fixture", () => {
-    expect(codeReviewPayloadGate(fixturePayload("code-review", "success"))).toMatchObject({
-      passed: true,
-      reason: "Code review approved.",
-    });
+  it("passes an approved canonical payload with zero findings", () => {
+    expect(
+      codeReviewPayloadGate({
+        ...fixturePayload("code-review", "success"),
+        findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      }),
+    ).toMatchObject({ passed: true, reason: "Code review approved." });
   });
 
   it("fails a schema-conformant needs-dev verdict with a severity summary finding", () => {
@@ -104,6 +135,17 @@ describe("code-review payload gate (canonical contract)", () => {
 
     expect(result.passed).toBe(false);
     expect(result.reason).toBe("Code review verdict: needs-verify.");
+  });
+
+  it("fails closed when approval contradicts nonzero findings", () => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+    });
+
+    expect(result).toMatchObject({ passed: false, reason: expect.stringContaining("contradict") });
   });
 
   it("orders the severity summary worst-first per the canonical vocabulary", () => {

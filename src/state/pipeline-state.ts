@@ -19,18 +19,10 @@ export const RUNNER_FEATURE_VERSION = 1 as const;
 
 /** Durable pipeline state statuses persisted across crashes. */
 export type PipelineStatus =
-  | "pending"
-  | "running"
-  | "done"
-  | "failed"
-  | "needs-approval"
-  | "paused"
-  | "pr-opened"
-  | "needs-attention";
+  "pending" | "running" | "done" | "failed" | "needs-approval" | "paused" | "needs-attention";
 
 /** Public action result statuses returned by the pipeline action layer. */
-export type RunResultStatus =
-  "passed" | "failed" | "needs-approval" | "paused" | "pr-opened" | "needs-attention";
+export type RunResultStatus = "passed" | "failed" | "needs-approval" | "paused" | "needs-attention";
 
 /** Durable per-stage lifecycle status. */
 export type StageStatus = "pending" | "running" | "passed" | "failed" | "skipped" | "blocked";
@@ -122,6 +114,12 @@ export interface PipelineState {
   /** Story id being supervised. */
   readonly storyId: string;
 
+  /** Selected discovered RunDef id. */
+  readonly runDefId: string;
+
+  /** Stable digest of the selected RunDef content. */
+  readonly runDefDigest: string;
+
   /** Story or spec file path provided to the run. */
   readonly specFile: string;
 
@@ -170,7 +168,7 @@ export interface RunResult {
   /** Story or spec file path provided to the run. */
   readonly specFile: string;
 
-  /** Action name, for example "run", "iso", "merge", or "audit". */
+  /** Action name, currently "run". */
   readonly action: string;
 
   /** Public terminal status. */
@@ -194,12 +192,6 @@ export interface RunResult {
   /** Optional branch used by the run. */
   readonly branch?: string;
 
-  /** Optional pull request URL opened by the run. */
-  readonly prUrl?: string;
-
-  /** Optional pull request number opened by the run. */
-  readonly prNumber?: number;
-
   /** Optional aggregated economics. */
   readonly economics?: RunEconomicsSummary;
 }
@@ -208,6 +200,12 @@ export interface RunResult {
 export interface CreateInitialPipelineStateRequest {
   /** Story id being supervised. */
   readonly storyId: string;
+
+  /** Selected discovered RunDef id, or a fail-closed legacy marker when omitted. */
+  readonly runDefId?: string;
+
+  /** Stable digest of the selected RunDef content, or a fail-closed legacy marker when omitted. */
+  readonly runDefDigest?: string;
 
   /** Story or spec file path provided to the run. */
   readonly specFile: string;
@@ -237,7 +235,6 @@ const TERMINAL_PIPELINE_STATUSES: ReadonlySet<PipelineStatus> = new Set([
   "failed",
   "needs-approval",
   "paused",
-  "pr-opened",
   "needs-attention",
 ]);
 
@@ -308,6 +305,8 @@ export function createInitialPipelineState(
 
   return Object.freeze({
     storyId: request.storyId,
+    runDefId: request.runDefId ?? "legacy-unbound",
+    runDefDigest: request.runDefDigest ?? "legacy-unbound",
     specFile: request.specFile,
     worktreePath: request.worktreePath,
     branch: request.branch,
@@ -329,7 +328,6 @@ const PIPELINE_TO_RESULT_MAP: Readonly<Record<string, RunResultStatus>> = {
   failed: "failed",
   "needs-approval": "needs-approval",
   paused: "paused",
-  "pr-opened": "pr-opened",
   "needs-attention": "needs-attention",
 };
 

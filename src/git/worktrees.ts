@@ -5,6 +5,7 @@ import {
   type ChildProcess,
   type SpawnOptionsWithoutStdio,
 } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { isPipelineStateStoryId } from "../state/index.js";
@@ -97,6 +98,9 @@ export interface EnsureStoryWorktreeRequest {
 
   /** Optional monotonic clock in milliseconds. */
   readonly now?: () => number;
+
+  /** Optional filesystem path canonicalizer used for registration identity. */
+  readonly canonicalizePath?: (path: string) => string;
 }
 
 /** Request for removing a story worktree. */
@@ -220,11 +224,11 @@ export async function ensureStoryWorktree(
 
   await runGitCommand({ ...options, args: ["worktree", "prune"] });
   const listing = await runGitCommand({ ...options, args: ["worktree", "list", "--porcelain"] });
-  const state = classifyWorktreeRegistration(
-    parseWorktreePorcelain(listing.stdout),
+  const state = classifyWorktreeRegistration(parseWorktreePorcelain(listing.stdout), {
     path,
-    `refs/heads/${branch}`,
-  );
+    branchRef: `refs/heads/${branch}`,
+    canonicalizePath: request.canonicalizePath ?? canonicalizeExistingPath,
+  });
   if (state === "conflict") {
     throw new GitWorktreeError({
       code: "worktree-conflict",
@@ -251,6 +255,14 @@ export async function removeStoryWorktree(request: RemoveStoryWorktreeRequest): 
     throw error;
   }
 }
+
+const canonicalizeExistingPath = (path: string): string => {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
+};
 
 const gitOptions = (
   request: EnsureStoryWorktreeRequest | RemoveStoryWorktreeRequest,

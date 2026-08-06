@@ -300,6 +300,7 @@ const buildResult = (context: CloseContext, exitCode: number | null): StageExecu
   const extraction = extractGatedHeadlessOutput(snapshot.records, {
     emissionKey: context.emissionKey,
     rootDir: context.schemaRootDir,
+    expectedWorkflow: context.request.stage.workflow,
   });
   const gateContext: EnvelopeGateLogContext = {
     request: context.request,

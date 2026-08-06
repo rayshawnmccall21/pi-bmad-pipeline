@@ -8,7 +8,12 @@
  *
  * @packageDocumentation
  */
-import { registerPayloadGate, type PayloadGate, type PayloadGateResult } from "../rundef/index.js";
+import {
+  registerPayloadGate,
+  type PayloadGate,
+  type PayloadGateContext,
+  type PayloadGateResult,
+} from "../rundef/index.js";
 
 /** Built-in payload gate name for E2E verification. */
 export const E2E_VERIFY_PAYLOAD_GATE_NAME = "e2e-verify" as const;
@@ -39,6 +44,7 @@ export const CODE_REVIEW_SEVERITIES = Object.freeze([
  * Evaluates the canonical e2e-verify result payload.
  *
  * @param payload - Validated e2e-verify workflow payload.
+ * @param context - Optional active story identity.
  *
  * @returns Pass only for verdict "pass"; "fail" carries failed/partial scenario
  * ids as findings; any other shape fails closed.
@@ -48,10 +54,14 @@ export const CODE_REVIEW_SEVERITIES = Object.freeze([
  * const result = e2eVerifyPayloadGate({ verdict: "pass" });
  * ```
  */
-export const e2eVerifyPayloadGate: PayloadGate = (payload) => {
+export const e2eVerifyPayloadGate: PayloadGate = (payload, context) => {
+  const identityFailure = storyIdentityFailure(payload, context);
+  if (identityFailure !== undefined) {
+    return identityFailure;
+  }
   const verdict = payload["verdict"];
   if (verdict === "pass") {
-    return Object.freeze({ passed: true, reason: "E2E verification passed." });
+    return e2ePassResult(payload);
   }
   if (verdict === "fail") {
     return failedResult(
@@ -66,6 +76,7 @@ export const e2eVerifyPayloadGate: PayloadGate = (payload) => {
  * Evaluates the canonical code-review result payload.
  *
  * @param payload - Validated code-review workflow payload.
+ * @param context - Optional active story identity.
  *
  * @returns Pass only for verdict "approved"; "needs-dev" and "needs-verify"
  * carry a severity summary as findings; any other shape fails closed.
@@ -75,10 +86,14 @@ export const e2eVerifyPayloadGate: PayloadGate = (payload) => {
  * const result = codeReviewPayloadGate({ verdict: "approved" });
  * ```
  */
-export const codeReviewPayloadGate: PayloadGate = (payload) => {
+export const codeReviewPayloadGate: PayloadGate = (payload, context) => {
+  const identityFailure = storyIdentityFailure(payload, context);
+  if (identityFailure !== undefined) {
+    return identityFailure;
+  }
   const verdict = payload["verdict"];
   if (verdict === "approved") {
-    return Object.freeze({ passed: true, reason: "Code review approved." });
+    return codeReviewApprovalResult(payload);
   }
   if (verdict === "needs-dev" || verdict === "needs-verify") {
     return failedResult(`Code review verdict: ${verdict}.`, severityFindings(payload));
@@ -103,6 +118,36 @@ export function registerBmadPayloadGates(): RegisterBmadPayloadGatesResult {
     registered: Object.freeze([E2E_VERIFY_PAYLOAD_GATE_NAME, CODE_REVIEW_PAYLOAD_GATE_NAME]),
   });
 }
+
+const storyIdentityFailure = (
+  payload: Record<string, unknown>,
+  context: PayloadGateContext | undefined,
+): PayloadGateResult | undefined =>
+  context !== undefined && payload["storyId"] !== context.storyId
+    ? failedResult(
+        `Payload story identity ${JSON.stringify(payload["storyId"] ?? null)} does not match active story ${JSON.stringify(context.storyId)}.`,
+        [],
+      )
+    : undefined;
+
+const e2ePassResult = (payload: Record<string, unknown>): PayloadGateResult => {
+  const contradictory =
+    countOf(payload, "scenariosFailed") !== 0 ||
+    stringList(payload, "failedScenarioIds").length !== 0 ||
+    stringList(payload, "partialScenarioIds").length !== 0;
+  return contradictory
+    ? failedResult("E2E pass verdict contradicts reported failed or partial scenarios.", [])
+    : Object.freeze({ passed: true, reason: "E2E verification passed." });
+};
+
+const codeReviewApprovalResult = (payload: Record<string, unknown>): PayloadGateResult => {
+  const counts = payload["findingsBySeverity"];
+  const contradictory =
+    !isRecord(counts) || CODE_REVIEW_SEVERITIES.some((severity) => countOf(counts, severity) !== 0);
+  return contradictory
+    ? failedResult("Code review approval contradicts reported findings.", severityFindings(payload))
+    : Object.freeze({ passed: true, reason: "Code review approved." });
+};
 
 const failedResult = (reason: string, findings: readonly string[]): PayloadGateResult =>
   findings.length === 0

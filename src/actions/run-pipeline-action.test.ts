@@ -19,6 +19,7 @@ import { registerBmadPayloadGates } from "../gates/index.js";
 import { ensureStoryWorktree } from "../git/index.js";
 import { resolveModelConfig } from "../model/index.js";
 import {
+  computeRunDefDigest,
   payloadGateRegistry,
   selectAndCompileRunDef,
   type CompiledStageDef,
@@ -218,6 +219,44 @@ describe("runPipelineAction", () => {
     );
   });
 
+  it("settles a non-done FSM outcome without policy effects", async () => {
+    const harness = createHarness({
+      deps: {
+        runStages: async (request) => ({
+          state: { ...request.state, status: "failed" },
+          status: "failed",
+          stagesRun: ["dev"],
+          regressions: 0,
+          failure: { code: "stage-failed", stageId: "dev", reason: "stage failed" },
+        }),
+      },
+    });
+
+    await expect(runPipelineAction(harness.request)).resolves.toMatchObject({
+      status: "failed",
+      error: "stage failed",
+    });
+    expect(harness.events.filter((event) => event["event"] === "result")).toHaveLength(1);
+    expect(harness.calls.at(-1)).toBe("release");
+  });
+
+  it("uses environment-only model and thinking candidates", async () => {
+    const createExecutor = vi.fn((): WorkflowExecutor => ({
+      id: "env-executor",
+      execute: () => Promise.reject(new Error("unused")),
+    }));
+    const harness = createHarness({
+      request: {
+        env: { BMAD_PIPELINE_MODEL: "env-model", BMAD_PIPELINE_THINKING: "high" },
+      },
+      deps: { createExecutor },
+    });
+
+    await runPipelineAction(harness.request);
+
+    expect(createExecutor).toHaveBeenCalledWith({ model: "env-model", thinking: "high" });
+  });
+
   it("resolves explicit model over environment and forwards budgets and signal", async () => {
     const signal = new AbortController().signal;
     const runStages = vi.fn(doneFsm);
@@ -241,11 +280,13 @@ describe("runPipelineAction", () => {
   it("reconciles loaded state and saves only changed repairs", async () => {
     const initial = createInitialPipelineState({
       storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
       specFile: "spec.md",
       worktreePath: "/wt",
       branch: "bmad/SH-1",
       stages,
-      model: "m",
+      model: "gpt-5.5-pro",
       thinking: "medium",
       startedAt: timestamp,
     });
@@ -261,9 +302,68 @@ describe("runPipelineAction", () => {
     expect(harness.saves.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("rejects invalid programmer inputs before locking", async () => {
-    const harness = createHarness({ request: { storyId: "../bad" } });
+  it("fails closed when YAML changes but reuses the same stage ids", async () => {
+    const changedRunDefState = createInitialPipelineState({
+      storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest({
+        id: "sdlc",
+        stages: [{ id: "dev", kind: "agent", workflow: "older-workflow", agent: "dev" }],
+      }),
+      specFile: "spec.md",
+      worktreePath: "/wt",
+      branch: "bmad/SH-1",
+      stages,
+      model: "gpt-5.5-pro",
+      thinking: "medium",
+      startedAt: timestamp,
+    });
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({ loaded: changedRunDefState, deps: { runStages } });
+
+    const actionResult = await runPipelineAction(harness.request);
+
+    expect(actionResult).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringContaining("RunDef identity"),
+    });
+    expect(runStages).not.toHaveBeenCalled();
+  });
+
+  it("does not save clean loaded state before the FSM", async () => {
+    const boundState = createInitialPipelineState({
+      storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
+      specFile: "spec.md",
+      worktreePath: "/wt",
+      branch: "bmad/SH-1",
+      stages,
+      model: "gpt-5.5-pro",
+      thinking: "medium",
+    });
+    const harness = createHarness({ loaded: boundState });
+
+    await runPipelineAction(harness.request);
+
+    expect(harness.calls.filter((callName) => callName === "save")).toHaveLength(1);
+  });
+
+  it.each([
+    ["storyId", "../bad"],
+    ["rundefId", " "],
+    ["specFile", " "],
+    ["projectRoot", " "],
+  ] as const)("rejects invalid %s before locking", async (field, invalidValue) => {
+    const harness = createHarness({ request: { [field]: invalidValue } });
     await expect(runPipelineAction(harness.request)).rejects.toBeInstanceOf(RangeError);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("creates unique default run ids", () => {
+    expect(defaultRunPipelineActionDeps.createRunId()).not.toBe(
+      defaultRunPipelineActionDeps.createRunId(),
+    );
   });
 
   it("wires real core defaults and creates a Pi executor", () => {

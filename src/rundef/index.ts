@@ -3,6 +3,7 @@
 export type {
   CompiledStageDef,
   PayloadGate,
+  PayloadGateContext,
   PayloadGateRegistry,
   PayloadGateResult,
   RunDef,
@@ -30,6 +31,7 @@ export {
   parseRunDef,
   validateRunDef,
 } from "./schema.js";
+export { computeRunDefDigest } from "./identity.js";
 export type {
   RunDefSchemaValue,
   RunDefStageSchemaValue,

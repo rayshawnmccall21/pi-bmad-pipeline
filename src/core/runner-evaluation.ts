@@ -51,6 +51,9 @@ export interface PipelineRunFailure {
 
 /** Request for evaluating one raw stage execution. */
 export interface EvaluateStageExecutionRequest {
+  /** Story id being supervised by the active run. */
+  readonly storyId?: string;
+
   /** Compiled stages in execution order. */
   readonly stages: readonly CompiledStageDef[];
 
@@ -110,6 +113,7 @@ export interface StageFailureOutcome {
 export const evaluateStageExecution = (request: EvaluateStageExecutionRequest): StageEvaluation => {
   const decision = checkStageDecision({
     stage: request.stage,
+    ...(request.storyId === undefined ? {} : { storyId: request.storyId }),
     result: toDecisionResult(request.execution),
   });
   const route = routeStageDecision({

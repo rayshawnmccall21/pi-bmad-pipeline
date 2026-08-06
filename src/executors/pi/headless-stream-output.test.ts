@@ -11,9 +11,9 @@ import type { HeadlessJsonlRecord } from "./headless-jsonl-parser.js";
 
 const piBmadRootDir = resolve(dirname(resolvePiBmadExtensionPath()), "..");
 
-const loadFixtureEnvelope = (): Record<string, unknown> => {
+const loadFixtureEnvelope = (workflow = "dev-story"): Record<string, unknown> => {
   const line = readFileSync(
-    join(piBmadRootDir, "contracts", "fixtures", "dev-story", "success.jsonl"),
+    join(piBmadRootDir, "contracts", "fixtures", workflow, "success.jsonl"),
     "utf8",
   ).trim();
   const parsed = JSON.parse(line) as {
@@ -25,8 +25,9 @@ const loadFixtureEnvelope = (): Record<string, unknown> => {
 const stampedEnvelope = (
   emissionKey: string,
   overrides: Record<string, unknown> = {},
+  workflow = "dev-story",
 ): Record<string, unknown> => {
-  const envelope = { ...loadFixtureEnvelope(), ...overrides };
+  const envelope = { ...loadFixtureEnvelope(workflow), ...overrides };
   return { ...envelope, emissionProvenance: buildEmissionProvenance(emissionKey, envelope) };
 };
 
@@ -119,6 +120,16 @@ describe("extract gated headless output", () => {
 
     expect(extraction.output).toBeNull();
     expect(extraction.failure).toMatch(/provenance/u);
+  });
+
+  it("rejects a verified envelope emitted for a different workflow", () => {
+    const extraction = extractGatedHeadlessOutput(
+      [toolEndRecord(1, stampedEnvelope("key-1", {}, "code-review"))],
+      { ...gateContext, expectedWorkflow: "dev-story" },
+    );
+
+    expect(extraction.output).toBeNull();
+    expect(extraction.failure).toMatch(/workflow/u);
   });
 
   it("rejects a structurally invalid envelope at the structure gate", () => {
