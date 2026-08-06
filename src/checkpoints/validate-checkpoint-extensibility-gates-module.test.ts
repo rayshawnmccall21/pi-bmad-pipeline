@@ -177,7 +177,7 @@ describe("pipeline--e2e-module-gate checkpoint module", () => {
 
   it("fails closed when the state names a different checkpoint", async () => {
     const result = await runGate({
-      [statePath]: stateDoc({ checkpoint: "pipeline--merge-gate-green" }),
+      [statePath]: stateDoc({ checkpoint: "pipeline--different-checkpoint" }),
     });
 
     expect(result.pass).toBe(false);

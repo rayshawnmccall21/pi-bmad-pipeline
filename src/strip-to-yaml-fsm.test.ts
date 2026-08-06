@@ -20,7 +20,6 @@ const removedSourcePaths = [
   "contracts",
   "audit",
   "git/story-pull-request.ts",
-  "git/merge-gate.ts",
   "git/secret-scan.ts",
   "security/harness-evidence.ts",
   "security/harness-evidence-command.ts",
