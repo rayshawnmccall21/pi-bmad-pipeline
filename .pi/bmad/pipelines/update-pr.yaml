@@ -1,0 +1,8 @@
+id: update-pr
+stages:
+  - id: update-pr
+    kind: agent
+    workflow: create-pr
+    agent: dev
+    thinking: medium
+    timeout: 7200
