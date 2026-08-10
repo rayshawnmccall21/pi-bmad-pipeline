@@ -32,13 +32,15 @@
     "test:watch": "vitest",
     "pretest:coverage": "npm run build",
     "test:coverage": "vitest run --coverage",
+    "pretest:e2e": "npm run build",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "precrap": "npm run build",
     "crap": "vitest run --coverage && node scripts/crap-report.mjs",
     "crap:ratchet": "node scripts/crap-ratchet.mjs",
     "crap:update-baseline": "node scripts/crap-ratchet.mjs --update-baseline",
     "knip": "knip",
     "conformance": "vitest run --config vitest.conformance.config.ts",
-    "check": "npm run typecheck && npm run format:check && npm run lint && npm run test:coverage && npm run crap && npm run conformance && npm run knip"
+    "check": "npm run typecheck && npm run format:check && npm run lint && npm run test:coverage && npm run crap && npm run conformance && npm run test:e2e && npm run knip"
   },
   "keywords": [
     "bmad",

@@ -38,6 +38,9 @@ export const BMAD_PIPELINE_MODEL_ENV_VAR = "BMAD_PIPELINE_MODEL" as const;
 /** Env var supplying the environment-sourced thinking candidate (D7). */
 export const BMAD_PIPELINE_THINKING_ENV_VAR = "BMAD_PIPELINE_THINKING" as const;
 
+/** Env var overriding the Pi executable spawned for child stages. */
+export const BMAD_PIPELINE_PI_BIN_ENV_VAR = "BMAD_PIPELINE_PI_BIN" as const;
+
 /** Everything prepared before the FSM runs. */
 export interface PreparedPipeline {
   /** Compiled stages in execution order. */
@@ -82,7 +85,11 @@ export const preparePipeline = async (
     runDefId: selection.id,
     runDefDigest: computeRunDefDigest(selection.runDef),
   });
-  const executor = deps.createExecutor({ model: model.model, thinking: model.thinking });
+  const executor = deps.createExecutor({
+    model: model.model,
+    thinking: model.thinking,
+    ...envPiBin(request.env),
+  });
   return Object.freeze({ stages: selection.stages, model, state, executor });
 };
 
@@ -137,6 +144,13 @@ const candidateOf = (
   ...(model === undefined ? {} : { model }),
   ...(thinking === undefined ? {} : { thinking }),
 });
+
+const envPiBin = (
+  env: Readonly<Record<string, string | undefined>> | undefined,
+): { readonly piBin?: string } => {
+  const value = env?.[BMAD_PIPELINE_PI_BIN_ENV_VAR];
+  return value !== undefined && value.trim().length > 0 ? { piBin: value } : {};
+};
 
 interface StartingStateInput {
   readonly loaded: PipelineState | undefined;

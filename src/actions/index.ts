@@ -16,6 +16,7 @@ export type {
 
 export {
   BMAD_PIPELINE_MODEL_ENV_VAR,
+  BMAD_PIPELINE_PI_BIN_ENV_VAR,
   BMAD_PIPELINE_THINKING_ENV_VAR,
 } from "./run-pipeline-execution.js";
 

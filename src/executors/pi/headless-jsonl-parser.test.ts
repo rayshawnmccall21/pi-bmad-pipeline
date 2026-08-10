@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HeadlessJsonlParser, parseHeadlessJsonl } from "./index.js";
+import { createHeadlessJsonlParser, parseHeadlessJsonl } from "./index.js";
 
 const parse = (input: string | Uint8Array) => parseHeadlessJsonl(input);
 const bytes = (input: string): Uint8Array => new TextEncoder().encode(input);
@@ -30,7 +30,7 @@ describe("headless JSONL parser", () => {
   });
 
   it("handles a line split across chunks", () => {
-    const parser = new HeadlessJsonlParser();
+    const parser = createHeadlessJsonlParser();
 
     parser.push('{"ok"');
     const snapshot = parser.push(":true}\n");
@@ -39,7 +39,7 @@ describe("headless JSONL parser", () => {
   });
 
   it("handles multiple lines in one chunk", () => {
-    const parser = new HeadlessJsonlParser();
+    const parser = createHeadlessJsonlParser();
 
     const snapshot = parser.push('{"a":1}\n{"b":2}\n');
 
@@ -51,7 +51,7 @@ describe("headless JSONL parser", () => {
   });
 
   it("preserves UTF-8 multibyte characters split across chunks", () => {
-    const parser = new HeadlessJsonlParser();
+    const parser = createHeadlessJsonlParser();
     const encoded = bytes('{"emoji":"🙂"}\n');
 
     parser.push(encoded.slice(0, 13));
@@ -78,7 +78,7 @@ describe("headless JSONL parser", () => {
   });
 
   it("snapshot reflects current parsed state before finish", () => {
-    const parser = new HeadlessJsonlParser();
+    const parser = createHeadlessJsonlParser();
 
     parser.push('{"ok":true}\n{"pending"');
     const snapshot = parser.snapshot();
@@ -88,7 +88,7 @@ describe("headless JSONL parser", () => {
   });
 
   it("finish is idempotent", () => {
-    const parser = new HeadlessJsonlParser();
+    const parser = createHeadlessJsonlParser();
 
     parser.push('{"ok":true}');
     const first = parser.finish();
@@ -98,7 +98,7 @@ describe("headless JSONL parser", () => {
   });
 
   it("throws when pushing after finish", () => {
-    const parser = new HeadlessJsonlParser();
+    const parser = createHeadlessJsonlParser();
 
     parser.finish();
 
@@ -117,7 +117,7 @@ describe("headless JSONL parser", () => {
 
   it("parseHeadlessJsonl matches incremental parse for complete input", () => {
     const input = '{"a":1}\n{"b":2}\n';
-    const parser = new HeadlessJsonlParser();
+    const parser = createHeadlessJsonlParser();
 
     parser.push(input.slice(0, 5));
     parser.push(input.slice(5));

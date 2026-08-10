@@ -35,19 +35,7 @@ export interface HeadlessJsonlParserSnapshot {
 }
 
 /** Incremental UTF-8 JSONL parser for child stdout. */
-export class HeadlessJsonlParser {
-  private readonly decoder = new TextDecoder("utf-8");
-
-  private readonly records: HeadlessJsonlRecord[] = [];
-
-  private readonly issues: HeadlessJsonlParseIssue[] = [];
-
-  private buffer = "";
-
-  private line = 1;
-
-  private complete = false;
-
+export interface HeadlessJsonlParser {
   /**
    * Pushes one text or byte chunk into the parser.
    *
@@ -59,17 +47,10 @@ export class HeadlessJsonlParser {
    *
    * @example
    * ```ts
-   * parser.push('{"ok":true}\n');
+   * createHeadlessJsonlParser().push('{"ok":true}\n');
    * ```
    */
-  public push(chunk: string | Uint8Array): HeadlessJsonlParserSnapshot {
-    if (this.complete) {
-      throw new RangeError("Cannot push after parser is finished.");
-    }
-    this.buffer += decodeChunk(this.decoder, chunk, false);
-    this.consumeCompleteLines();
-    return this.snapshot();
-  }
+  push(chunk: string | Uint8Array): HeadlessJsonlParserSnapshot;
 
   /**
    * Finishes parsing, including a final unterminated line.
@@ -78,17 +59,10 @@ export class HeadlessJsonlParser {
    *
    * @example
    * ```ts
-   * const final = parser.finish();
+   * const final = createHeadlessJsonlParser().finish();
    * ```
    */
-  public finish(): HeadlessJsonlParserSnapshot {
-    if (!this.complete) {
-      this.buffer += this.decoder.decode();
-      this.consumeFinalLine();
-      this.complete = true;
-    }
-    return this.snapshot();
-  }
+  finish(): HeadlessJsonlParserSnapshot;
 
   /**
    * Returns the current parser snapshot.
@@ -97,52 +71,118 @@ export class HeadlessJsonlParser {
    *
    * @example
    * ```ts
-   * const current = parser.snapshot();
+   * createHeadlessJsonlParser().snapshot();
    * ```
    */
-  public snapshot(): HeadlessJsonlParserSnapshot {
-    return freezeSnapshot({
-      records: this.records,
-      issues: this.issues,
-      output: this.records.at(-1)?.value ?? null,
-      complete: this.complete,
-    });
-  }
+  snapshot(): HeadlessJsonlParserSnapshot;
+}
 
-  private consumeCompleteLines(): void {
-    let newlineIndex = this.buffer.indexOf("\n");
-    while (newlineIndex >= 0) {
-      this.consumeLine(this.buffer.slice(0, newlineIndex));
-      this.buffer = this.buffer.slice(newlineIndex + 1);
-      newlineIndex = this.buffer.indexOf("\n");
-    }
-  }
+/** Mutable per-parser state held by the factory closure. */
+interface HeadlessJsonlParserState {
+  readonly decoder: TextDecoder;
+  readonly records: HeadlessJsonlRecord[];
+  readonly issues: HeadlessJsonlParseIssue[];
+  buffer: string;
+  line: number;
+  complete: boolean;
+}
 
-  private consumeFinalLine(): void {
-    if (this.buffer.length > 0) {
-      this.consumeLine(this.buffer);
-      this.buffer = "";
-    }
+const pushChunk = (state: HeadlessJsonlParserState, chunk: string | Uint8Array): void => {
+  if (state.complete) {
+    throw new RangeError("Cannot push after parser is finished.");
   }
+  state.buffer += decodeChunk(state.decoder, chunk, false);
+  consumeCompleteLines(state);
+};
 
-  private consumeLine(rawLine: string): void {
-    const text = stripCarriageReturn(rawLine);
-    const line = this.line;
-    this.line += 1;
-    if (text.trim().length === 0) {
-      return;
-    }
-    this.parseLine(line, text);
+const finishParsing = (state: HeadlessJsonlParserState): void => {
+  if (!state.complete) {
+    state.buffer += state.decoder.decode();
+    consumeFinalLine(state);
+    state.complete = true;
   }
+};
 
-  private parseLine(line: number, text: string): void {
-    try {
-      const value: unknown = JSON.parse(text);
-      this.records.push(Object.freeze({ line, value }));
-    } catch (error) {
-      this.issues.push(Object.freeze({ line, message: parseMessage(error), text }));
-    }
+const consumeCompleteLines = (state: HeadlessJsonlParserState): void => {
+  let newlineIndex = state.buffer.indexOf("\n");
+  while (newlineIndex >= 0) {
+    consumeLine(state, state.buffer.slice(0, newlineIndex));
+    state.buffer = state.buffer.slice(newlineIndex + 1);
+    newlineIndex = state.buffer.indexOf("\n");
   }
+};
+
+const consumeFinalLine = (state: HeadlessJsonlParserState): void => {
+  if (state.buffer.length > 0) {
+    consumeLine(state, state.buffer);
+    state.buffer = "";
+  }
+};
+
+const consumeLine = (state: HeadlessJsonlParserState, rawLine: string): void => {
+  const text = stripCarriageReturn(rawLine);
+  const currentLine = state.line;
+  state.line += 1;
+  if (text.trim().length === 0) {
+    return;
+  }
+  parseLine(state, currentLine, text);
+};
+
+const parseLine = (state: HeadlessJsonlParserState, recordLine: number, text: string): void => {
+  try {
+    const value: unknown = JSON.parse(text);
+    state.records.push(Object.freeze({ line: recordLine, value }));
+  } catch (error) {
+    state.issues.push(Object.freeze({ line: recordLine, message: parseMessage(error), text }));
+  }
+};
+
+const snapshotOf = (state: HeadlessJsonlParserState): HeadlessJsonlParserSnapshot =>
+  freezeSnapshot({
+    records: state.records,
+    issues: state.issues,
+    output: state.records.at(-1)?.value ?? null,
+    complete: state.complete,
+  });
+
+/**
+ * Creates an incremental UTF-8 JSONL parser for child stdout.
+ *
+ * Parser state lives in an explicit state object so each stream keeps an
+ * independent decoder, record buffer, and line counter. The returned methods
+ * are thin closures over the module-level parse helpers.
+ *
+ * @returns A parser with push/finish/snapshot methods.
+ *
+ * @example
+ * ```ts
+ * const parser = createHeadlessJsonlParser();
+ * parser.push('{"ok":true}\n');
+ * ```
+ */
+export function createHeadlessJsonlParser(): HeadlessJsonlParser {
+  const state: HeadlessJsonlParserState = {
+    decoder: new TextDecoder("utf-8"),
+    records: [],
+    issues: [],
+    buffer: "",
+    line: 1,
+    complete: false,
+  };
+  return Object.freeze({
+    push(chunk: string | Uint8Array): HeadlessJsonlParserSnapshot {
+      pushChunk(state, chunk);
+      return snapshotOf(state);
+    },
+    finish(): HeadlessJsonlParserSnapshot {
+      finishParsing(state);
+      return snapshotOf(state);
+    },
+    snapshot(): HeadlessJsonlParserSnapshot {
+      return snapshotOf(state);
+    },
+  });
 }
 
 /**
@@ -158,7 +198,7 @@ export class HeadlessJsonlParser {
  * ```
  */
 export function parseHeadlessJsonl(input: string | Uint8Array): HeadlessJsonlParserSnapshot {
-  const parser = new HeadlessJsonlParser();
+  const parser = createHeadlessJsonlParser();
   parser.push(input);
   return parser.finish();
 }

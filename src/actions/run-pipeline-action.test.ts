@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   BMAD_PIPELINE_MODEL_ENV_VAR,
+  BMAD_PIPELINE_PI_BIN_ENV_VAR,
+  BMAD_PIPELINE_THINKING_ENV_VAR,
   INTERNAL_ERROR_CODE,
   LOCK_HELD_ERROR_CODE,
   defaultRunPipelineActionDeps,
@@ -250,6 +252,49 @@ describe("runPipelineAction", () => {
     await runPipelineAction(harness.request);
 
     expect(createExecutor).toHaveBeenCalledWith({ model: "env-model", thinking: "high" });
+  });
+
+  it("forwards the environment pi bin override to executor construction", async () => {
+    const createExecutor = vi.fn((): WorkflowExecutor => ({
+      id: "env-executor",
+      execute: () => Promise.reject(new Error("unused")),
+    }));
+    const harness = createHarness({
+      request: {
+        env: {
+          [BMAD_PIPELINE_MODEL_ENV_VAR]: "env-model",
+          [BMAD_PIPELINE_THINKING_ENV_VAR]: "high",
+          [BMAD_PIPELINE_PI_BIN_ENV_VAR]: "/stub/pi",
+        },
+      },
+      deps: { createExecutor },
+    });
+
+    await runPipelineAction(harness.request);
+
+    expect(createExecutor).toHaveBeenCalledWith({
+      model: "env-model",
+      thinking: "high",
+      piBin: "/stub/pi",
+    });
+  });
+
+  it("omits the pi bin override when the environment value is blank", async () => {
+    const createExecutor = vi.fn((): WorkflowExecutor => ({
+      id: "env-executor",
+      execute: () => Promise.reject(new Error("unused")),
+    }));
+    const harness = createHarness({
+      request: { env: { [BMAD_PIPELINE_PI_BIN_ENV_VAR]: "   " } },
+      deps: { createExecutor },
+    });
+
+    await runPipelineAction(harness.request);
+
+    expect(createExecutor).toHaveBeenCalledWith({
+      model: expect.any(String),
+      thinking: expect.any(String),
+    });
   });
 
   it("resolves explicit model over environment and forwards budgets and signal", async () => {

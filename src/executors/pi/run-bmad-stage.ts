@@ -8,7 +8,7 @@ import {
   type BuildStageArgsRequest,
   type BuiltStageArgs,
 } from "./build-stage-args.js";
-import { HeadlessJsonlParser } from "./headless-jsonl-parser.js";
+import { createHeadlessJsonlParser, type HeadlessJsonlParser } from "./headless-jsonl-parser.js";
 import {
   extractGatedHeadlessOutput,
   extractStageUsage,
@@ -120,7 +120,7 @@ export function runBmadStage(request: RunBmadStageRequest): Promise<StageExecuti
   const invocation = buildStageArgs(argsRequest);
   const now = request.now ?? Date.now;
   const startMs = now();
-  const parser = new HeadlessJsonlParser();
+  const parser = createHeadlessJsonlParser();
   const stderr = createStderrCapture();
   const state = createRunState(resolveKillEscalationMs(request));
   const spawn = request.spawn ?? nodeStageSpawn;

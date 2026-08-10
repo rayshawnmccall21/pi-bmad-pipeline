@@ -55,6 +55,9 @@ export interface CreateStageExecutorOptions {
 
   /** Resolved thinking effort for child stage execution. */
   readonly thinking: ModelThinking;
+
+  /** Optional Pi executable override from the environment seam. */
+  readonly piBin?: string;
 }
 
 /** Injected effects used by {@link runPipelineAction}; defaults are real. */

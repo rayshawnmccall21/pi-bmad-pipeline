@@ -7,7 +7,7 @@ export {
   buildStageArgs,
 } from "./build-stage-args.js";
 
-export { HeadlessJsonlParser, parseHeadlessJsonl } from "./headless-jsonl-parser.js";
+export { createHeadlessJsonlParser, parseHeadlessJsonl } from "./headless-jsonl-parser.js";
 
 export { extractGatedHeadlessOutput, extractStageUsage } from "./headless-stream-output.js";
 
