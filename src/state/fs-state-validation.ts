@@ -26,8 +26,6 @@ const requiredStrings = [
   "runDefId",
   "runDefDigest",
   "specFile",
-  "worktreePath",
-  "branch",
   "model",
   "thinking",
 ] as const;
@@ -155,6 +153,11 @@ const rootEconomicsReason = (candidate: Record<string, unknown>): string | undef
     ? undefined
     : 'Field "economics" is not a valid RunEconomicsSummary.';
 
+const rootOptionalOldFields = (candidate: Record<string, unknown>): string | undefined =>
+  hasOptionalString(candidate, "worktreePath") && hasOptionalString(candidate, "branch")
+    ? undefined
+    : 'Optional fields "worktreePath" or "branch" must be strings when present.';
+
 const rootReasonChecks = [
   rootStringReason,
   rootVersionReason,
@@ -165,6 +168,7 @@ const rootReasonChecks = [
   rootStartedAtReason,
   rootFinishedAtReason,
   rootEconomicsReason,
+  rootOptionalOldFields,
 ] as const;
 
 /**

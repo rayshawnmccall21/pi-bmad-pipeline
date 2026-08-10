@@ -26,7 +26,6 @@ import type {
 } from "../core/index.js";
 import type { PipelineEventEmitter } from "../events/index.js";
 import type { WorkflowExecutor } from "../executors/index.js";
-import { canonicalizeWorktreePath, type StoryWorktree } from "../git/index.js";
 import type {
   ModelConfigCandidate,
   ResolveModelConfigRequest,
@@ -44,9 +43,6 @@ export interface PreparedPipeline {
   /** Compiled stages in execution order. */
   readonly stages: readonly CompiledStageDef[];
 
-  /** Isolated story worktree metadata. */
-  readonly worktree: StoryWorktree;
-
   /** Resolved model configuration. */
   readonly model: ResolvedModelConfig;
 
@@ -58,7 +54,7 @@ export interface PreparedPipeline {
 }
 
 /**
- * Prepares everything the FSM needs: gates, stages, model, worktree, state.
+ * Prepares everything the FSM needs: gates, stages, model, state.
  *
  * @param context - Action context with injected dependencies.
  *
@@ -79,31 +75,22 @@ export const preparePipeline = async (
     registry: payloadGateRegistry,
   });
   const model = deps.resolveModel(buildModelRequest(request));
-  const ensuredWorktree = await deps.ensureWorktree({
-    projectRoot: request.projectRoot,
-    storyId: request.storyId,
-  });
-  const worktree = Object.freeze({
-    ...ensuredWorktree,
-    path: canonicalizeWorktreePath(ensuredWorktree.path),
-  });
   const state = await resolveStartingState(context, {
     loaded,
     stages: selection.stages,
-    worktree,
     model,
     runDefId: selection.id,
     runDefDigest: computeRunDefDigest(selection.runDef),
   });
   const executor = deps.createExecutor({ model: model.model, thinking: model.thinking });
-  return Object.freeze({ stages: selection.stages, worktree, model, state, executor });
+  return Object.freeze({ stages: selection.stages, model, state, executor });
 };
 
 /**
  * Runs the pipeline FSM with persistence and event observation wired in.
  *
  * @param context - Action context with injected dependencies.
- * @param prepared - Prepared stages, state, worktree, and executor.
+ * @param prepared - Prepared stages, state, and executor.
  *
  * @returns Terminal FSM result.
  *
@@ -123,7 +110,6 @@ export const executeStages = (
     storyId: request.storyId,
     specFile: request.specFile,
     projectRoot: request.projectRoot,
-    worktreeCwd: prepared.worktree.path,
     executor: prepared.executor,
     saveState: async (state) => {
       await deps.saveState(request.projectRoot, state);
@@ -155,7 +141,6 @@ const candidateOf = (
 interface StartingStateInput {
   readonly loaded: PipelineState | undefined;
   readonly stages: readonly CompiledStageDef[];
-  readonly worktree: StoryWorktree;
   readonly model: ResolvedModelConfig;
   readonly runDefId: string;
   readonly runDefDigest: string;
@@ -172,8 +157,6 @@ const resolveStartingState = async (
       runDefId: input.runDefId,
       runDefDigest: input.runDefDigest,
       specFile: request.specFile,
-      worktreePath: input.worktree.path,
-      branch: input.worktree.branch,
       stages: input.stages,
       model: input.model.model,
       thinking: input.model.thinking,
@@ -204,8 +187,6 @@ const assertResumeIdentity = (
     loaded.runDefId === input.runDefId,
     loaded.runDefDigest === input.runDefDigest,
     loaded.specFile === request.specFile,
-    loaded.worktreePath === input.worktree.path,
-    loaded.branch === input.worktree.branch,
     loaded.model === input.model.model,
     loaded.thinking === input.model.thinking,
   ].every(Boolean);

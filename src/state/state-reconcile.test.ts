@@ -27,8 +27,6 @@ const createState = (): PipelineState =>
   createInitialPipelineState({
     storyId: "STORY-123",
     specFile: "./specs/story-123.md",
-    worktreePath: "/tmp/worktree",
-    branch: "bmad/story-123",
     stages: compiledStages(),
     model: "gpt-5.5-pro",
     thinking: "high",

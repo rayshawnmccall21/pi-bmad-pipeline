@@ -94,8 +94,6 @@ const harness = (
   const state = createInitialPipelineState({
     storyId: "SH-1",
     specFile: "spec.md",
-    worktreePath: "/wt",
-    branch: "bmad/sh-1",
     stages,
     model: "test-model",
     thinking: "medium",
@@ -109,7 +107,6 @@ const harness = (
       storyId: "SH-1",
       specFile: "spec.md",
       projectRoot: "/root",
-      worktreeCwd: "/wt",
       executor,
       saveState: async (next) => {
         saves.push(next);
@@ -154,7 +151,6 @@ describe("runPipelineStages", () => {
       storyId: "SH-1",
       specFile: "spec.md",
       projectRoot: "/root",
-      worktreeCwd: "/wt",
       attempt: 1,
     });
     expect(executor.requests[0]?.priorFindings).toBeUndefined();
@@ -243,8 +239,6 @@ describe("runPipelineStages", () => {
     const state = createInitialPipelineState({
       storyId: "SH-1",
       specFile: "spec.md",
-      worktreePath: "/wt",
-      branch: "bmad/sh-1",
       stages: [stage("a", 0)],
       model: "test-model",
       thinking: "medium",

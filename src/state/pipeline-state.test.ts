@@ -60,8 +60,6 @@ describe("pipeline state contracts", () => {
     const state = createInitialPipelineState({
       storyId: "STORY-123",
       specFile: "./specs/story-123.md",
-      worktreePath: "/tmp/worktree",
-      branch: "bmad/story-123",
       stages: twoStages(),
       model: "gpt-5.5-pro",
       thinking: "high",
@@ -73,8 +71,6 @@ describe("pipeline state contracts", () => {
       runDefId: "legacy-unbound",
       runDefDigest: "legacy-unbound",
       specFile: "./specs/story-123.md",
-      worktreePath: "/tmp/worktree",
-      branch: "bmad/story-123",
       runnerFeatureVersion: RUNNER_FEATURE_VERSION,
       status: "pending",
       currentStage: null,
@@ -109,8 +105,6 @@ describe("pipeline state contracts", () => {
     const state = createInitialPipelineState({
       storyId: "STORY-123",
       specFile: "./specs/story-123.md",
-      worktreePath: "/tmp/worktree",
-      branch: "bmad/story-123",
       stages: twoStages(),
       model: "gpt-5.5-pro",
       thinking: "medium",
@@ -123,8 +117,6 @@ describe("pipeline state contracts", () => {
     const state = createInitialPipelineState({
       storyId: "STORY-123",
       specFile: "./specs/story-123.md",
-      worktreePath: "/tmp/worktree",
-      branch: "bmad/story-123",
       stages: twoStages(),
       model: "gpt-5.5-pro",
       thinking: "medium",
@@ -144,8 +136,6 @@ describe("pipeline state contracts", () => {
     const state = createInitialPipelineState({
       storyId: "STORY-123",
       specFile: "./specs/story-123.md",
-      worktreePath: "/tmp/worktree",
-      branch: "bmad/story-123",
       stages: twoStages(),
       model: "gpt-5.5-pro",
       thinking: "medium",
@@ -161,8 +151,6 @@ describe("pipeline state contracts", () => {
     createInitialPipelineState({
       storyId: "STORY-123",
       specFile: "./specs/story-123.md",
-      worktreePath: "/tmp/worktree",
-      branch: "bmad/story-123",
       stages: compiledStages,
       model: "gpt-5.5-pro",
       thinking: "medium",

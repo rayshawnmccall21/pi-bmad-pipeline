@@ -127,7 +127,7 @@ export function runBmadStage(request: RunBmadStageRequest): Promise<StageExecuti
   logStageSpawn(request, invocation, timeoutMs);
 
   return new Promise((resolve, reject) => {
-    const child = spawnChild({ spawn, invocation, cwd: request.worktreeCwd, reject });
+    const child = spawnChild({ spawn, invocation, cwd: request.projectRoot, reject });
     if (child === undefined) {
       return;
     }
@@ -177,7 +177,6 @@ export function toBuildStageArgsRequest(request: RunBmadStageRequest): BuildStag
     storyId: request.storyId,
     specFile: request.specFile,
     projectRoot: request.projectRoot,
-    worktreeCwd: request.worktreeCwd,
     attempt: request.attempt,
     model: request.model,
     thinking: request.thinking,

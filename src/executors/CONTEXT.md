@@ -16,7 +16,7 @@
 
 ## Gotchas
 
-- `projectRoot` is identity/config context while `worktreeCwd` is the child command cwd; do not collapse them.
+- `projectRoot` is the child command cwd and project root; passed through from the supervisor.
 - The emission key is per process and secret-like: pass it through the child environment but never emit it in events/debug logs.
 - Stage-extension argv plumbing was deliberately removed. Reintroducing another `-e` slot violates the single-extension boundary.
 

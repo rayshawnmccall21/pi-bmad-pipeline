@@ -65,14 +65,14 @@ export const settleFsmFailure = (fsm: RunPipelineStagesResult): SettledOutcome =
  * Builds the immutable result and emits exactly one terminal result event.
  *
  * @param context - Active action context.
- * @param prepared - Prepared pipeline mechanism.
+ * @param _prepared - Prepared pipeline mechanism.
  * @param settled - Terminal FSM outcome.
  *
  * @returns Frozen public run result.
  */
 export const finishAction = (
   context: PipelineActionContext,
-  prepared: PreparedPipeline,
+  _prepared: PreparedPipeline,
   settled: SettledOutcome,
 ): RunResult => {
   const result: RunResult = Object.freeze({
@@ -84,8 +84,6 @@ export const finishAction = (
     regressions: settled.regressions,
     durationMs: elapsedMs(context),
     ...(settled.error === undefined ? {} : { error: settled.error }),
-    worktreePath: prepared.worktree.path,
-    branch: prepared.worktree.branch,
     economics: settled.state.economics,
   });
   emitResult(context, result);

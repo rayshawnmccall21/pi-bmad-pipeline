@@ -136,7 +136,6 @@ describe("YAML-only pipeline surface", () => {
       storyId: "strip-1",
       specFile: "spec.md",
       projectRoot,
-      worktreeCwd: projectRoot,
       attempt: 1,
       model: "test-model",
       thinking: "medium" as const,

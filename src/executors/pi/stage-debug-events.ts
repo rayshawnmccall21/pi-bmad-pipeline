@@ -57,7 +57,7 @@ export function logStageSpawn(
     attempt: request.attempt,
     bin: invocation.bin,
     args: invocation.args,
-    cwd: request.worktreeCwd,
+    cwd: request.projectRoot,
     runId: invocation.env[PI_BMAD_RUN_ID_ENV_VAR],
     timeoutMs,
   });
