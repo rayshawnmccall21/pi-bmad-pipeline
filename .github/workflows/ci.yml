@@ -23,12 +23,14 @@ jobs:
           ref: 0e98488146a9f569a4f411c4b306b021a80edfb9
           path: pi-bmad
           # pi-bmad is a private repo, so GITHUB_TOKEN (scoped to this repo)
-          # cannot reach it. Create a fine-grained PAT with read access to
-          # rayshawnmccall21/pi-bmad and store it as PI_BMAD_READ_TOKEN.
+          # cannot reach it. PI_BMAD_READ_TOKEN is a PAT with repo scope.
           token: ${{ secrets.PI_BMAD_READ_TOKEN }}
 
       - name: "Place pi-bmad at the file: dependency location"
         run: mv "$GITHUB_WORKSPACE/pi-bmad" "$GITHUB_WORKSPACE/../pi-bmad"
+
+      - name: Install pi-bmad dependency tree
+        run: cd "$GITHUB_WORKSPACE/../pi-bmad" && npm ci
 
       - name: Set up Node
         uses: actions/setup-node@v4
