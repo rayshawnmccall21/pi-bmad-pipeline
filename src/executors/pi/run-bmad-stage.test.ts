@@ -72,7 +72,6 @@ const request = (overrides: Partial<RunBmadStageRequest> = {}): RunBmadStageRequ
   storyId: "STORY-123",
   specFile: "./specs/story-123.md",
   projectRoot: "/repo",
-  worktreeCwd: "/repo/.worktrees/story-123",
   attempt: 1,
   model: "gpt-5.5-pro",
   thinking: "medium",
@@ -120,7 +119,6 @@ describe("run BMAD stage", () => {
       storyId: "STORY-123",
       specFile: "./specs/story-123.md",
       projectRoot: "/repo",
-      worktreeCwd: "/repo/.worktrees/story-123",
       attempt: 1,
       model: "gpt-5.5-pro",
       thinking: "medium",
@@ -170,7 +168,7 @@ describe("run BMAD stage", () => {
       "pix",
       expect.arrayContaining(["--bmad-workflow", "dev-story", "--bmad-story", "STORY-123"]),
       expect.objectContaining({
-        cwd: "/repo/.worktrees/story-123",
+        cwd: "/repo",
         env: expect.objectContaining({
           PI_BMAD_RUN_ID: "STORY-123.dev-story.1",
           PI_BMAD_EMISSION_KEY: "key-1",
@@ -538,7 +536,7 @@ describe("run BMAD stage debug logging", () => {
       workflow: "dev-story",
       attempt: 1,
       bin: "pi",
-      cwd: "/repo/.worktrees/story-123",
+      cwd: "/repo",
       runId: "run-9",
       timeoutMs: 1_800_000,
     });

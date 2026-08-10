@@ -97,11 +97,8 @@ export interface RunPipelineStagesRequest {
   /** Story or spec file path provided to the run. */
   readonly specFile: string;
 
-  /** Project root directory. */
+  /** Project root directory for child execution. */
   readonly projectRoot: string;
-
-  /** Worktree working directory for child execution. */
-  readonly worktreeCwd: string;
 
   /** Executor used to run each stage. */
   readonly executor: WorkflowExecutor;
@@ -177,7 +174,7 @@ type ExecutionAttempt =
  * @example
  * ```ts
  * const result = await runPipelineStages({ stages, state, storyId, specFile,
- *   projectRoot, worktreeCwd, executor, saveState });
+ *   projectRoot, executor, saveState });
  * ```
  */
 export async function runPipelineStages(
@@ -242,14 +239,13 @@ const executeStage = async (
   attempt: number,
 ): Promise<ExecutionAttempt> => {
   const findings = stageStateOf(context.state, stage.id).findings;
-  const { storyId, specFile, projectRoot, worktreeCwd } = context.request;
+  const { storyId, specFile, projectRoot } = context.request;
   try {
     const result = await context.request.executor.execute({
       stage,
       storyId,
       specFile,
       projectRoot,
-      worktreeCwd,
       attempt,
       ...(findings === undefined ? {} : { priorFindings: [...findings] }),
       signal: context.signal,

@@ -13,7 +13,6 @@ export * from "./core/index.js";
 export * from "./events/index.js";
 export * from "./executors/index.js";
 export * from "./gates/index.js";
-export * from "./git/index.js";
 export * from "./model/index.js";
 export * from "./rundef/index.js";
 export * from "./security/index.js";

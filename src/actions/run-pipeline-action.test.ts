@@ -1,7 +1,3 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -20,7 +16,6 @@ import {
 } from "../core/index.js";
 import { PiCliWorkflowExecutor, type WorkflowExecutor } from "../executors/index.js";
 import { registerBmadPayloadGates } from "../gates/index.js";
-import { ensureStoryWorktree } from "../git/index.js";
 import { resolveModelConfig } from "../model/index.js";
 import {
   computeRunDefDigest,
@@ -104,10 +99,7 @@ const createHarness = (
       return "/state.json";
     },
     reconcileState: (request) => reconcilePipelineState(request),
-    ensureWorktree: async () => {
-      calls.push("worktree");
-      return { storyId: "SH-1", branch: "bmad/SH-1", path: "/wt" };
-    },
+
     registerGates: () => {
       calls.push("gates");
       return { registered: ["e2e-verify", "code-review"] };
@@ -154,14 +146,13 @@ describe("runPipelineAction", () => {
   it("runs lock through durable FSM result with no policy effects", async () => {
     const harness = createHarness();
     const result = await runPipelineAction(harness.request);
-    expect(result).toMatchObject({ status: "passed", stagesRun: ["dev"], worktreePath: "/wt" });
+    expect(result).toMatchObject({ status: "passed", stagesRun: ["dev"] });
     expect(harness.calls).toEqual([
       "lock",
       "load",
       "gates",
       "select:true",
       "model",
-      "worktree",
       "save",
       "executor",
       "fsm",
@@ -287,8 +278,6 @@ describe("runPipelineAction", () => {
       runDefId: "sdlc",
       runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
       specFile: "spec.md",
-      worktreePath: "/wt",
-      branch: "bmad/SH-1",
       stages,
       model: "gpt-5.5-pro",
       thinking: "medium",
@@ -306,44 +295,24 @@ describe("runPipelineAction", () => {
     expect(harness.saves.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("resumes durable state when the worktree path uses a filesystem alias", async () => {
-    const temporaryRoot = mkdtempSync(join(tmpdir(), "pipeline-worktree-alias-"));
-    const canonicalWorktreePath = join(temporaryRoot, "canonical-worktree");
-    const aliasWorktreePath = join(temporaryRoot, "worktree-alias");
-    try {
-      mkdirSync(canonicalWorktreePath);
-      symlinkSync(canonicalWorktreePath, aliasWorktreePath, "dir");
-      const boundState = createInitialPipelineState({
-        storyId: "SH-1",
-        runDefId: "sdlc",
-        runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
-        specFile: "spec.md",
-        worktreePath: realpathSync(canonicalWorktreePath),
-        branch: "bmad/SH-1",
-        stages,
-        model: "gpt-5.5-pro",
-        thinking: "medium",
-      });
-      const runStages = vi.fn(doneFsm);
-      const harness = createHarness({
-        loaded: boundState,
-        deps: {
-          ensureWorktree: async () => ({
-            storyId: "SH-1",
-            branch: "bmad/SH-1",
-            path: aliasWorktreePath,
-          }),
-          runStages,
-        },
-      });
+  it("resumes durable state when loaded state matches cleanly", async () => {
+    const boundState = createInitialPipelineState({
+      storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
+      specFile: "spec.md",
+      stages,
+      model: "gpt-5.5-pro",
+      thinking: "medium",
+    });
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({
+      loaded: boundState,
+      deps: { runStages },
+    });
 
-      await expect(runPipelineAction(harness.request)).resolves.toMatchObject({ status: "passed" });
-      expect(runStages).toHaveBeenCalledWith(
-        expect.objectContaining({ worktreeCwd: realpathSync(canonicalWorktreePath) }),
-      );
-    } finally {
-      rmSync(temporaryRoot, { recursive: true, force: true });
-    }
+    await expect(runPipelineAction(harness.request)).resolves.toMatchObject({ status: "passed" });
+    expect(runStages).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: "/root" }));
   });
 
   it("fails closed when YAML changes but reuses the same stage ids", async () => {
@@ -355,8 +324,6 @@ describe("runPipelineAction", () => {
         stages: [{ id: "dev", kind: "agent", workflow: "older-workflow", agent: "dev" }],
       }),
       specFile: "spec.md",
-      worktreePath: "/wt",
-      branch: "bmad/SH-1",
       stages,
       model: "gpt-5.5-pro",
       thinking: "medium",
@@ -380,8 +347,6 @@ describe("runPipelineAction", () => {
       runDefId: "sdlc",
       runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
       specFile: "spec.md",
-      worktreePath: "/wt",
-      branch: "bmad/SH-1",
       stages,
       model: "gpt-5.5-pro",
       thinking: "medium",
@@ -414,7 +379,6 @@ describe("runPipelineAction", () => {
     expect(defaultRunPipelineActionDeps.acquireLock).toBe(acquireDispatchLock);
     expect(defaultRunPipelineActionDeps.loadState).toBe(loadPipelineState);
     expect(defaultRunPipelineActionDeps.saveState).toBe(savePipelineState);
-    expect(defaultRunPipelineActionDeps.ensureWorktree).toBe(ensureStoryWorktree);
     expect(defaultRunPipelineActionDeps.registerGates).toBe(registerBmadPayloadGates);
     expect(defaultRunPipelineActionDeps.selectAndCompile).toBe(selectAndCompileRunDef);
     expect(defaultRunPipelineActionDeps.runStages).toBe(runPipelineStages);

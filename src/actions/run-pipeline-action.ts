@@ -31,7 +31,6 @@ import {
 } from "../events/index.js";
 import { PiCliWorkflowExecutor, type WorkflowExecutor } from "../executors/index.js";
 import { registerBmadPayloadGates } from "../gates/index.js";
-import { ensureStoryWorktree } from "../git/index.js";
 import { resolveModelConfig, type ModelThinking } from "../model/index.js";
 import { selectAndCompileRunDef } from "../rundef/index.js";
 import {
@@ -71,9 +70,6 @@ export interface RunPipelineActionDeps {
 
   /** Repairs contradictory loaded state. */
   readonly reconcileState: typeof reconcilePipelineState;
-
-  /** Ensures the isolated story worktree exists. */
-  readonly ensureWorktree: typeof ensureStoryWorktree;
 
   /** Registers built-in BMAD payload gates before compilation (D6). */
   readonly registerGates: typeof registerBmadPayloadGates;
@@ -163,7 +159,6 @@ export const defaultRunPipelineActionDeps: RunPipelineActionDeps = Object.freeze
   loadState: loadPipelineState,
   saveState: savePipelineState,
   reconcileState: reconcilePipelineState,
-  ensureWorktree: ensureStoryWorktree,
   registerGates: registerBmadPayloadGates,
   selectAndCompile: selectAndCompileRunDef,
   resolveModel: resolveModelConfig,

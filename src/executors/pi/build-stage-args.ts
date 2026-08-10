@@ -9,7 +9,7 @@
  * emission, and forces pi offline (pi hangs on startup network operations
  * without PI_OFFLINE=1). Pipeline-only metadata (spec file, stage id,
  * attempt, prior findings) is folded into the prompt because pi exposes no
- * flags for it; timeouts and the worktree cwd stay supervisor-owned.
+ * flags for it; timeouts stay supervisor-owned.
  *
  * @packageDocumentation
  */
@@ -43,11 +43,8 @@ export interface BuildStageArgsRequest {
   /** Story/spec file path referenced in the stage prompt. */
   readonly specFile: string;
 
-  /** Project root supervised by the pipeline. */
+  /** Project root directory for child execution. */
   readonly projectRoot: string;
-
-  /** Isolated worktree cwd used by the spawned process. */
-  readonly worktreeCwd: string;
 
   /** One-based attempt number. */
   readonly attempt: number;
@@ -185,7 +182,6 @@ const validateRequiredStrings = (request: BuildStageArgsRequest): void => {
     ["storyId", request.storyId],
     ["specFile", request.specFile],
     ["projectRoot", request.projectRoot],
-    ["worktreeCwd", request.worktreeCwd],
     ["model", request.model],
     ["piBmadExtensionPath", request.piBmadExtensionPath],
     ["emissionKey", request.emissionKey],

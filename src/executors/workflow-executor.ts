@@ -23,11 +23,8 @@ export interface StageExecutionRequest {
   /** Story/spec file path provided to the run. */
   readonly specFile: string;
 
-  /** Project root directory. */
+  /** Project root directory for child execution. */
   readonly projectRoot: string;
-
-  /** Worktree current working directory for child execution. */
-  readonly worktreeCwd: string;
 
   /** One-based stage attempt number. */
   readonly attempt: number;

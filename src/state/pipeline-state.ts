@@ -123,12 +123,6 @@ export interface PipelineState {
   /** Story or spec file path provided to the run. */
   readonly specFile: string;
 
-  /** Git worktree path for the isolated run. */
-  readonly worktreePath: string;
-
-  /** Git branch used for the isolated run. */
-  readonly branch: string;
-
   /** Feature version of the runner that wrote this state. */
   readonly runnerFeatureVersion: number;
 
@@ -186,12 +180,6 @@ export interface RunResult {
   /** Optional terminal error message. */
   readonly error?: string;
 
-  /** Optional worktree path used by the run. */
-  readonly worktreePath?: string;
-
-  /** Optional branch used by the run. */
-  readonly branch?: string;
-
   /** Optional aggregated economics. */
   readonly economics?: RunEconomicsSummary;
 }
@@ -209,12 +197,6 @@ export interface CreateInitialPipelineStateRequest {
 
   /** Story or spec file path provided to the run. */
   readonly specFile: string;
-
-  /** Git worktree path for the isolated run. */
-  readonly worktreePath: string;
-
-  /** Git branch used for the isolated run. */
-  readonly branch: string;
 
   /** Compiled stages to initialize as pending. */
   readonly stages: readonly CompiledStageDef[];
@@ -289,7 +271,7 @@ export function createInitialStageState(stage: Pick<CompiledStageDef, "id">): St
  * @returns A frozen initial pipeline state.
  *
  * @example
- * Calling `createInitialPipelineState({ storyId: "SH-1", specFile: "spec.md", worktreePath: "/wt", branch: "bmad/sh-1", stages: [], model: "gpt-5", thinking: "high" })`
+ * Calling `createInitialPipelineState({ storyId: "SH-1", specFile: "spec.md", stages: [], model: "gpt-5", thinking: "high" })`
  * returns a frozen pipeline state with status "pending".
  */
 export function createInitialPipelineState(
@@ -308,8 +290,6 @@ export function createInitialPipelineState(
     runDefId: request.runDefId ?? "legacy-unbound",
     runDefDigest: request.runDefDigest ?? "legacy-unbound",
     specFile: request.specFile,
-    worktreePath: request.worktreePath,
-    branch: request.branch,
     runnerFeatureVersion: RUNNER_FEATURE_VERSION,
     status: "pending",
     currentStage: null,
