@@ -51,6 +51,9 @@ export interface RunDefStage {
 
   /** Optional per-stage economic ceiling override. */
   readonly budget?: StageBudget;
+
+  /** Optional extra pi extension file paths loaded via repeated -e flags. */
+  readonly extensions?: readonly string[];
 }
 
 /** Represents a raw pipeline definition before validation and compilation. */
@@ -96,6 +99,9 @@ export interface StageDef {
 
   /** Optional per-stage economic ceiling override. */
   readonly budget?: StageBudget;
+
+  /** Optional extra pi extension file paths loaded via repeated -e flags. */
+  readonly extensions?: readonly string[];
 }
 
 /** Alias for the normalized stage shape produced by RunDef compilation. */

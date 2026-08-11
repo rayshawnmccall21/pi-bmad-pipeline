@@ -213,6 +213,10 @@ function buildOptionalFields(
     fields["budget"] = copyBudget(stage.budget);
   }
 
+  if (stage.extensions !== undefined) {
+    fields["extensions"] = Object.freeze([...stage.extensions]);
+  }
+
   return fields;
 }
 

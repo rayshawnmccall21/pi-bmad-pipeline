@@ -112,11 +112,32 @@ describe("Pi stage argv builder", () => {
     expect(prompt).toContain("- finding-a");
   });
 
-  it("appends the stage extension as an additional -e only when provided", () => {
+  it("emits only the pi-bmad extension when no stage extensions are provided", () => {
     const countExtensionFlags = (args: readonly string[]): number =>
       args.filter((arg) => arg === "-e").length;
 
     expect(countExtensionFlags(buildStageArgs(request()).args)).toBe(1);
+  });
+
+  it("appends each stage extension as an additional -e after the pi-bmad extension", () => {
+    const args = buildStageArgs(
+      request({ stage: stage({ extensions: ["/ext/obs.ts", "/ext/subagents.ts"] }) }),
+    ).args;
+
+    const flags = args.filter((arg) => arg === "-e");
+    expect(flags).toHaveLength(3);
+    expect(args[args.indexOf("-e") + 1]).toBe("/deps/pi-bmad/extensions/pi-bmad.ts");
+    const afterFirst = args.slice(args.indexOf("-e") + 2);
+    expect(afterFirst[afterFirst.indexOf("-e") + 1]).toBe("/ext/obs.ts");
+    const afterSecond = afterFirst.slice(afterFirst.indexOf("-e") + 2);
+    expect(afterSecond[afterSecond.indexOf("-e") + 1]).toBe("/ext/subagents.ts");
+  });
+
+  it("emits no extra -e flags when extensions is an empty array", () => {
+    const countExtensionFlags = (args: readonly string[]): number =>
+      args.filter((arg) => arg === "-e").length;
+
+    expect(countExtensionFlags(buildStageArgs(request({ stage: stage({ extensions: [] }) })).args)).toBe(1);
   });
 
   it("emits the run id and emission key env contract", () => {

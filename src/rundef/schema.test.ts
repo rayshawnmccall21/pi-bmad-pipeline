@@ -149,6 +149,36 @@ describe("RunDef schema validation - properties and kinds", () => {
     expect(validateRunDef(candidate).ok).toBe(false);
   });
 
+  it("accepts stage extensions as an array of non-empty paths", () => {
+    const stage = validRunDef().stages[0]!;
+    const candidate = {
+      id: "sdlc",
+      stages: [{ ...stage, extensions: ["/ext/obs.ts", "/ext/subagents.ts"] }],
+    };
+
+    expect(validateRunDef(candidate).ok).toBe(true);
+  });
+
+  it("rejects stage extensions with empty strings", () => {
+    const stage = validRunDef().stages[0]!;
+    const candidate = {
+      id: "sdlc",
+      stages: [{ ...stage, extensions: ["/ext/obs.ts", ""] }],
+    };
+
+    expect(validateRunDef(candidate).ok).toBe(false);
+  });
+
+  it("rejects duplicate stage extensions", () => {
+    const stage = validRunDef().stages[0]!;
+    const candidate = {
+      id: "sdlc",
+      stages: [{ ...stage, extensions: ["/ext/obs.ts", "/ext/obs.ts"] }],
+    };
+
+    expect(validateRunDef(candidate).ok).toBe(false);
+  });
+
   it("rejects stage kinds other than agent", () => {
     const stage = validRunDef().stages[0]!;
     const candidate = { id: "sdlc", stages: [{ ...stage, kind: "shell" }] };

@@ -196,7 +196,26 @@ describe("RunDef compilation", () => {
       expect("onFail" in stage).toBe(false);
       expect("thinking" in stage).toBe(false);
       expect("budget" in stage).toBe(false);
+      expect("extensions" in stage).toBe(false);
     }
+  });
+
+  it("copies and freezes compiled extensions", () => {
+    const runDef = minimalRunDef();
+    const sources = ["/ext/obs.ts", "/ext/subagents.ts"];
+    const stages = compileRunDef({
+      ...runDef,
+      stages: [
+        {
+          ...runDef.stages[0]!,
+          extensions: sources,
+        },
+      ],
+    });
+
+    expect(stages[0]?.extensions).toEqual(["/ext/obs.ts", "/ext/subagents.ts"]);
+    expect(stages[0]?.extensions).not.toBe(sources);
+    expect(Object.isFrozen(stages[0]?.extensions)).toBe(true);
   });
 
   it("does not mutate the input RunDef", () => {
