@@ -46,6 +46,9 @@ export const RunDefStageSchema = Type.Object(
     extensions: Type.Optional(
       Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true }),
     ),
+    oPool: Type.Optional(Type.String({ minLength: 1 })),
+    oName: Type.Optional(Type.String({ minLength: 1 })),
+    oTag: Type.Optional(Type.String({ minLength: 1 })),
   },
   { additionalProperties: false },
 );

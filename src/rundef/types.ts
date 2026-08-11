@@ -54,6 +54,15 @@ export interface RunDefStage {
 
   /** Optional extra pi extension file paths loaded via repeated -e flags. */
   readonly extensions?: readonly string[];
+
+  /** Optional observability pool name passed via --o-pool. */
+  readonly oPool?: string;
+
+  /** Optional observability session name passed via --o-name. */
+  readonly oName?: string;
+
+  /** Optional observability tag passed via --o-tag. */
+  readonly oTag?: string;
 }
 
 /** Represents a raw pipeline definition before validation and compilation. */
@@ -102,6 +111,15 @@ export interface StageDef {
 
   /** Optional extra pi extension file paths loaded via repeated -e flags. */
   readonly extensions?: readonly string[];
+
+  /** Optional observability pool name passed via --o-pool. */
+  readonly oPool?: string;
+
+  /** Optional observability session name passed via --o-name. */
+  readonly oName?: string;
+
+  /** Optional observability tag passed via --o-tag. */
+  readonly oTag?: string;
 }
 
 /** Alias for the normalized stage shape produced by RunDef compilation. */

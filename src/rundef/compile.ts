@@ -217,6 +217,18 @@ function buildOptionalFields(
     fields["extensions"] = Object.freeze([...stage.extensions]);
   }
 
+  if (stage.oPool !== undefined) {
+    fields["oPool"] = stage.oPool;
+  }
+
+  if (stage.oName !== undefined) {
+    fields["oName"] = stage.oName;
+  }
+
+  if (stage.oTag !== undefined) {
+    fields["oTag"] = stage.oTag;
+  }
+
   return fields;
 }
 

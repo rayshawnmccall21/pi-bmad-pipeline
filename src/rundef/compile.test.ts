@@ -197,6 +197,9 @@ describe("RunDef compilation", () => {
       expect("thinking" in stage).toBe(false);
       expect("budget" in stage).toBe(false);
       expect("extensions" in stage).toBe(false);
+      expect("oPool" in stage).toBe(false);
+      expect("oName" in stage).toBe(false);
+      expect("oTag" in stage).toBe(false);
     }
   });
 

@@ -140,6 +140,24 @@ describe("Pi stage argv builder", () => {
     expect(countExtensionFlags(buildStageArgs(request({ stage: stage({ extensions: [] }) })).args)).toBe(1);
   });
 
+  it("emits --o-pool, --o-name, --o-tag when stage declares them", () => {
+    const args = buildStageArgs(
+      request({ stage: stage({ oPool: "STY-91", oName: "dev-story", oTag: "dev-story" }) }),
+    ).args;
+
+    expect(argAfter(args, "--o-pool")).toBe("STY-91");
+    expect(argAfter(args, "--o-name")).toBe("dev-story");
+    expect(argAfter(args, "--o-tag")).toBe("dev-story");
+  });
+
+  it("omits observability flags when stage does not declare them", () => {
+    const args = buildStageArgs(request()).args;
+
+    expect(args).not.toContain("--o-pool");
+    expect(args).not.toContain("--o-name");
+    expect(args).not.toContain("--o-tag");
+  });
+
   it("emits the run id and emission key env contract", () => {
     const invocation = buildStageArgs(request());
 

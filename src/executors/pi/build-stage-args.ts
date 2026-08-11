@@ -30,7 +30,7 @@ export const PI_BMAD_EMISSION_KEY_ENV_VAR = "PI_BMAD_EMISSION_KEY" as const;
 export const PI_OFFLINE_ENV_VAR = "PI_OFFLINE" as const;
 
 /** Minimal stage shape required to construct Pi stage argv. */
-export type StageArgsStage = Pick<CompiledStageDef, "id" | "workflow" | "thinking" | "extensions">;
+export type StageArgsStage = Pick<CompiledStageDef, "id" | "workflow" | "thinking" | "extensions" | "oPool" | "oName" | "oTag">;
 
 /** Request for building Pi CLI argv for one stage. */
 export interface BuildStageArgsRequest {
@@ -155,7 +155,22 @@ const bmadArgs = (request: BuildStageArgsRequest, thinking: ModelThinking): read
   request.model,
   "--thinking",
   thinking,
+  ...observabilityArgs(request),
 ];
+
+const observabilityArgs = (request: BuildStageArgsRequest): readonly string[] => {
+  const args: string[] = [];
+  if (request.stage.oPool !== undefined) {
+    args.push("--o-pool", request.stage.oPool);
+  }
+  if (request.stage.oName !== undefined) {
+    args.push("--o-name", request.stage.oName);
+  }
+  if (request.stage.oTag !== undefined) {
+    args.push("--o-tag", request.stage.oTag);
+  }
+  return args;
+};
 
 const buildStagePrompt = (request: BuildStageArgsRequest): string =>
   [
