@@ -34,6 +34,7 @@ export const RunDefStageSchema = Type.Object(
   {
     id: Type.String({ pattern: RUNDEF_IDENTIFIER_PATTERN }),
     kind: Type.Literal("agent"),
+    description: Type.Optional(Type.String()),
     workflow: Type.String({ pattern: RUNDEF_IDENTIFIER_PATTERN }),
     agent: Type.String({ pattern: RUNDEF_IDENTIFIER_PATTERN }),
     gate: Type.Optional(Type.String({ pattern: RUNDEF_IDENTIFIER_PATTERN })),
@@ -58,6 +59,7 @@ export const RunDefStageSchema = Type.Object(
 export const RunDefSchema = Type.Object(
   {
     id: Type.String({ pattern: RUNDEF_IDENTIFIER_PATTERN }),
+    description: Type.Optional(Type.String()),
     stages: Type.Array(RunDefStageSchema, { minItems: 1 }),
   },
   { additionalProperties: false },

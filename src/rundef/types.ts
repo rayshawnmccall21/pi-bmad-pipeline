@@ -28,6 +28,9 @@ export interface RunDefStage {
   /** Stable stage identifier used for sequencing, state keys, and fail routing. */
   readonly id: string;
 
+  /** Optional human-readable stage description. */
+  readonly description?: string;
+
   /** Stage execution kind, always "agent" in the initial model. */
   readonly kind: StageKind;
 
@@ -69,6 +72,9 @@ export interface RunDefStage {
 export interface RunDef {
   /** Stable pipeline identifier, for example "sdlc". */
   readonly id: string;
+
+  /** Optional human-readable pipeline description. */
+  readonly description?: string;
 
   /** Ordered stage list defining the pipeline execution sequence. */
   readonly stages: readonly RunDefStage[];
