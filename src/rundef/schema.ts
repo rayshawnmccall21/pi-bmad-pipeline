@@ -50,6 +50,7 @@ export const RunDefStageSchema = Type.Object(
     oPool: Type.Optional(Type.String({ minLength: 1 })),
     oName: Type.Optional(Type.String({ minLength: 1 })),
     oTag: Type.Optional(Type.String({ minLength: 1 })),
+    maxRetries: Type.Optional(Type.Integer({ minimum: 0 })),
   },
   { additionalProperties: false },
 );
