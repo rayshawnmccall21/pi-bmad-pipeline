@@ -16,11 +16,13 @@ jobs:
       - name: Check out pipeline repository
         uses: actions/checkout@v4
 
-      - name: Check out pinned pi-bmad sibling
+      - name: Check out pi-bmad sibling (main)
         uses: actions/checkout@v4
         with:
           repository: rayshawnmccall21/pi-bmad
-          ref: 0e98488146a9f569a4f411c4b306b021a80edfb9
+          # Float to main so CI always tests against the latest pi-bmad; the
+          # strict quality gate surfaces any breaking change as red CI.
+          ref: main
           path: pi-bmad
           # pi-bmad is a private repo, so GITHUB_TOKEN (scoped to this repo)
           # cannot reach it. PI_BMAD_READ_TOKEN is a PAT with repo scope.
