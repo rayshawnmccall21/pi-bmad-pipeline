@@ -14,6 +14,7 @@ import {
   type PayloadGateContext,
   type PayloadGateResult,
 } from "../rundef/index.js";
+import { codeReviewLenientGate } from "./code-review-lenient.js";
 
 /** Built-in payload gate name for E2E verification. */
 export const E2E_VERIFY_PAYLOAD_GATE_NAME = "e2e-verify" as const;
@@ -114,6 +115,10 @@ export const codeReviewPayloadGate: PayloadGate = (payload, context) => {
 export function registerBmadPayloadGates(): RegisterBmadPayloadGatesResult {
   registerPayloadGate(E2E_VERIFY_PAYLOAD_GATE_NAME, e2eVerifyPayloadGate);
   registerPayloadGate(CODE_REVIEW_PAYLOAD_GATE_NAME, codeReviewPayloadGate);
+
+  // Register lenient code-review gate — passes on 0 critical + 0 high
+  // Use gate: code-review-lenient in pipeline YAML to use this instead of the strict gate
+  registerPayloadGate("code-review-lenient", codeReviewLenientGate);
   return Object.freeze({
     registered: Object.freeze([E2E_VERIFY_PAYLOAD_GATE_NAME, CODE_REVIEW_PAYLOAD_GATE_NAME]),
   });
