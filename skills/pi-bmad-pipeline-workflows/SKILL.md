@@ -1,6 +1,6 @@
 ---
 name: pi-bmad-pipeline-workflows
-description: Create or revise pi-bmad-pipeline RunDef YAML for ordered pi-bmad workflows. Use for .pi/bmad/pipelines, stage composition, payload gates, regression routing, budgets, extensions, observability, or pipeline discovery failures.
+description: Author pi-bmad-pipeline RunDefs and thin pipeline runner scripts. Use when a repository needs .pi/bmad/pipelines YAML, stage or gate routing changes, pipeline validation, or a reusable bmad-pipeline command.
 license: MIT
 compatibility: Requires Node.js 20+, pi-bmad-pipeline, and pi-bmad workflows available to child Pi processes.
 metadata:
@@ -9,35 +9,40 @@ metadata:
 
 # Author Pi-BMAD Pipelines
 
-A RunDef is orchestration data: it orders small pi-bmad workflows and routes typed results. Keep workflow behavior in workflows; keep process supervision in the pipeline.
+A RunDef is orchestration data: it orders small pi-bmad workflows and routes typed results. Workflow behavior stays in workflows; process supervision stays in the pipeline.
 
-## Create
+## Author
 
-1. Inspect `bmad-pipeline help`, existing `.pi/bmad/pipelines/*.yaml`, and the workflows each stage will invoke. This step is complete when every workflow id exists and every gated workflow's return payload matches its gate.
-2. Read the shipped [RunDef schema](../../src/rundef/schema.ts). Write one `.pi/bmad/pipelines/<id>.yaml`; the file is discoverable only at that path. Use stable lowercase hyphenated ids and one operation per stage.
-3. Compose stages in execution order. Pair every `gate` with `onFail`, and route `onFail` to an earlier stage. Resolve gate names from the shipped [gate registry](../../src/gates/index.ts). This step is complete when all ids are unique and every regression target and gate resolves.
-4. Run the skill-relative validator before dispatch:
+1. Inspect `bmad-pipeline help`, every visible `.pi/bmad/pipelines/*.yaml`, and the workflows each stage invokes. Manually confirm workflow and agent ids on the installed pi-bmad surface and compare each gated result schema with its gate; the RunDef validator cannot prove either. Complete this step when every stage has an available producer and every gate has a compatible payload.
+2. Read the shipped [RunDef schema](../../src/rundef/schema.ts). Write direct, visible `.yaml` files under `.pi/bmad/pipelines/`; document `id` controls selection. Nested files, dotfiles, and `.yml` are outside discovery. One invalid sibling or duplicate document id fails the catalog.
+3. Compose stages in execution order. Pair each `gate` with `onFail`, route `onFail` to an earlier stage, and resolve gate names from the [gate registry](../../src/gates/index.ts). Complete this step when ids are unique and every regression target and gate resolves.
+4. Validate the runtime-visible catalog before dispatch. Installed packages ship `dist`; in a source checkout run `npm run build` first.
 
 ```bash
-node <skill-directory>/scripts/validate-rundef.mjs .pi/bmad/pipelines/<id>.yaml
+node <skill-directory>/scripts/validate-rundef.mjs --project-root .
 ```
 
-The validator parses and compiles without starting a child. This step is complete when it prints the RunDef id and path with exit code 0.
+This proves YAML structure, cross-field routing, duplicate-id absence, and gate registration without starting a child. Complete this step when every discovered RunDef prints its id and path with exit code 0.
 
 5. Run only when execution is intended:
 
 ```bash
-bmad-pipeline run <id> [--story-id <story>] [--spec-file <path>] \
-  [--model <model>] [--max-regressions <n>] --jsonl
+bmad-pipeline run <id> [--project-root <dir>] [--story-id <story>] \
+  [--spec-file <path>] [--model <model>] [--thinking <effort>] \
+  [--max-regressions <n>] --jsonl
 ```
 
-This step is complete when the terminal event and `.pi/pipeline/state/` agree. Report failed stages, gate findings, usage, and residual work.
+Complete this step when the terminal event and `.pi/pipeline/state/<story-id>.json` agree. Report failed stages, gate findings, usage, and residual work.
+
+## Runner-script branch
+
+A checked command is the default. Read [runner-scripts.md](references/runner-scripts.md) only when a stable repository entry point or JSONL adapter is an explicit deliverable.
 
 ## Rules
 
-- **Compose:** one stage invokes one workflow. Prefer another stage over a wrapper that mixes responsibilities.
-- **Regressions:** `onFail` carries gate findings back to its target; `--max-regressions` is the run-wide bound. Omit `maxRetries`: the schema accepts it, but the runtime does not consume it.
+- **Compose:** one stage invokes one workflow. Add another stage when responsibilities differ.
+- **Regressions:** `onFail` carries gate findings backward; `--max-regressions` is the run-wide bound. Omit `maxRetries`: the schema accepts it, but compilation discards it.
 - **Agents:** set required `agent` to the workflow owner; the workflow's effective agent controls the child run.
-- **Gates:** use gates only for matching typed payloads. Executor errors, timeouts, malformed output, and missing output halt before payload gates.
-- **Artifacts:** workflow files remain the artifact source of truth; pipeline state records attempts, findings, usage, exit, and duration rather than copying payloads or artifacts.
-- **Source of truth:** prefer the schema, `bmad-pipeline help`, and current gate registry over copied field tables.
+- **Gates:** use a gate only for its typed payload. Executor errors, timeouts, malformed output, and missing output halt before payload gates.
+- **Artifacts:** workflows own artifacts; pipeline state records attempts, findings, usage, exit, and duration.
+- **Source of truth:** prefer the schema, `bmad-pipeline help`, and gate registry over copied field tables.
