@@ -28,7 +28,7 @@ Definitions are validated and compiled before any child starts. Missing definiti
 ## CLI
 
 ```text
-bmad-pipeline run <rundef-id> --story-id ID --spec-file PATH [--project-root DIR]
+bmad-pipeline run <rundef-id> [--story-id ID] [--spec-file PATH] [--project-root DIR]
     [--model NAME] [--thinking EFFORT] [--max-regressions N] [--jsonl]
 bmad-pipeline help
 bmad-pipeline version

@@ -66,7 +66,7 @@ The durable state JSON is the historical record. Operators can inspect it with s
 ## CLI
 
 ```text
-bmad-pipeline run <rundef-id> --story-id ID --spec-file PATH [options]
+bmad-pipeline run <rundef-id> [--story-id ID] [--spec-file PATH] [options]
 bmad-pipeline help
 bmad-pipeline version
 ```

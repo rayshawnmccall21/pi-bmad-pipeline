@@ -178,6 +178,52 @@ function resolveStageGate(gateName: string, ctx: StageCompileContext): PayloadGa
 }
 
 /**
+ * Adds present observability fields to a compiled-stage field map.
+ *
+ * @param fields - Compiled-stage field map.
+ * @param stage - Raw RunDef stage.
+ *
+ * @example
+ * ```ts
+ * addObservabilityFields(fields, stage);
+ * ```
+ */
+function addObservabilityFields(
+  fields: Record<string, unknown>,
+  stage: RunDef["stages"][number],
+): void {
+  if (stage.oPool !== undefined) {
+    fields["oPool"] = stage.oPool;
+  }
+  if (stage.oName !== undefined) {
+    fields["oName"] = stage.oName;
+  }
+  if (stage.oTag !== undefined) {
+    fields["oTag"] = stage.oTag;
+  }
+}
+
+/**
+ * Adds present copied collection fields to a compiled-stage field map.
+ *
+ * @param fields - Compiled-stage field map.
+ * @param stage - Raw RunDef stage.
+ *
+ * @example
+ * ```ts
+ * addCopiedFields(fields, stage);
+ * ```
+ */
+function addCopiedFields(fields: Record<string, unknown>, stage: RunDef["stages"][number]): void {
+  if (stage.budget !== undefined) {
+    fields["budget"] = copyBudget(stage.budget);
+  }
+  if (stage.extensions !== undefined) {
+    fields["extensions"] = Object.freeze([...stage.extensions]);
+  }
+}
+
+/**
  * Builds the optional compiled stage fields from a raw stage.
  *
  * @param stage - Raw RunDef stage.
@@ -200,35 +246,14 @@ function buildOptionalFields(
     fields["payloadGateName"] = stage.gate;
     fields["payloadGate"] = resolveStageGate(stage.gate, ctx);
   }
-
   if (stage.onFail !== undefined) {
     fields["onFail"] = stage.onFail;
   }
-
   if (stage.thinking !== undefined) {
     fields["thinking"] = stage.thinking;
   }
-
-  if (stage.budget !== undefined) {
-    fields["budget"] = copyBudget(stage.budget);
-  }
-
-  if (stage.extensions !== undefined) {
-    fields["extensions"] = Object.freeze([...stage.extensions]);
-  }
-
-  if (stage.oPool !== undefined) {
-    fields["oPool"] = stage.oPool;
-  }
-
-  if (stage.oName !== undefined) {
-    fields["oName"] = stage.oName;
-  }
-
-  if (stage.oTag !== undefined) {
-    fields["oTag"] = stage.oTag;
-  }
-
+  addCopiedFields(fields, stage);
+  addObservabilityFields(fields, stage);
   return fields;
 }
 

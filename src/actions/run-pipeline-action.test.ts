@@ -173,6 +173,14 @@ describe("runPipelineAction", () => {
     );
   });
 
+  it("accepts an empty specFile and records it in the first saved state", async () => {
+    const harness = createHarness({ request: { specFile: "" } });
+    const result = await runPipelineAction(harness.request);
+    expect(result).toMatchObject({ status: "passed", stagesRun: ["dev"] });
+    expect(harness.calls[0]).toBe("lock");
+    expect(harness.saves[0]?.specFile).toBe("");
+  });
+
   it("fails closed on lock contention without preparing state", async () => {
     const harness = createHarness({ lockHeld: true });
     expect(await runPipelineAction(harness.request)).toMatchObject({
@@ -406,7 +414,6 @@ describe("runPipelineAction", () => {
   it.each([
     ["storyId", "../bad"],
     ["rundefId", " "],
-    ["specFile", " "],
     ["projectRoot", " "],
   ] as const)("rejects invalid %s before locking", async (field, invalidValue) => {
     const harness = createHarness({ request: { [field]: invalidValue } });

@@ -31,9 +31,9 @@ export interface CliRunCommand {
   readonly kind: "run";
   /** RunDef identifier selected from YAML. */
   readonly rundefId: string;
-  /** Story identifier being supervised. */
+  /** Story identifier being supervised; defaults to the rundef-id when --story-id is omitted. */
   readonly storyId: string;
-  /** Story specification path. */
+  /** Story specification path; empty string when --spec-file is omitted. */
   readonly specFile: string;
   /** Optional project root. */
   readonly projectRoot?: string;

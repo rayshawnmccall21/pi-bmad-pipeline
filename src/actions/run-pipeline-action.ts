@@ -216,7 +216,6 @@ const validateActionRequest = (request: RunPipelineActionRequest): void => {
   }
   for (const [field, value] of [
     ["rundefId", request.rundefId],
-    ["specFile", request.specFile],
     ["projectRoot", request.projectRoot],
   ] as const) {
     if (value.trim().length === 0) {

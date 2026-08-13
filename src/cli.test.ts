@@ -73,6 +73,15 @@ describe("runCli", () => {
     );
   });
 
+  it("defaults storyId to the rundef-id and specFile to empty when omitted", async () => {
+    const runPipeline = vi.fn(async () => result());
+
+    expect(await runCli(["run", "custom"], { runPipeline })).toBe(0);
+    expect(runPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ rundefId: "custom", storyId: "custom", specFile: "" }),
+    );
+  });
+
   it("forwards the exact run mechanism request", async () => {
     const stdout = sink();
     const runPipeline = vi.fn(async (request: Parameters<typeof runPipelineAction>[0]) => {

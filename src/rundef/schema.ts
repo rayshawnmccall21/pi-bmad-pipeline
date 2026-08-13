@@ -44,9 +44,7 @@ export const RunDefStageSchema = Type.Object(
       Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
     ),
     budget: Type.Optional(StageBudgetSchema),
-    extensions: Type.Optional(
-      Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true }),
-    ),
+    extensions: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true })),
     oPool: Type.Optional(Type.String({ minLength: 1 })),
     oName: Type.Optional(Type.String({ minLength: 1 })),
     oTag: Type.Optional(Type.String({ minLength: 1 })),

@@ -100,6 +100,15 @@ describe("Pi stage argv builder", () => {
     expect(prompt).toContain("attempt 1");
   });
 
+  it("omits the Spec file line from the prompt when specFile is blank", () => {
+    const prompt = buildStageArgs(request({ specFile: "" })).args.at(-1);
+
+    expect(prompt).toContain("dev-story");
+    expect(prompt).toContain("STORY-123");
+    expect(prompt).toContain("attempt 1");
+    expect(prompt).not.toContain("Spec file:");
+  });
+
   it("folds prior findings into the prompt only when provided", () => {
     expect(buildStageArgs(request()).args.at(-1)).not.toContain("Prior findings");
 
@@ -137,7 +146,9 @@ describe("Pi stage argv builder", () => {
     const countExtensionFlags = (args: readonly string[]): number =>
       args.filter((arg) => arg === "-e").length;
 
-    expect(countExtensionFlags(buildStageArgs(request({ stage: stage({ extensions: [] }) })).args)).toBe(1);
+    expect(
+      countExtensionFlags(buildStageArgs(request({ stage: stage({ extensions: [] }) })).args),
+    ).toBe(1);
   });
 
   it("emits --o-pool, --o-name, --o-tag when stage declares them", () => {
@@ -223,7 +234,6 @@ describe("Pi stage argv builder", () => {
     ["stage.id", { stage: stage({ id: " " }) }],
     ["stage.workflow", { stage: stage({ workflow: " " }) }],
     ["storyId", { storyId: " " }],
-    ["specFile", { specFile: " " }],
     ["projectRoot", { projectRoot: " " }],
     ["projectRoot", { projectRoot: " " }],
     ["model", { model: " " }],

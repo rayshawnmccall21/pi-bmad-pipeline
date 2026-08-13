@@ -30,7 +30,10 @@ export const PI_BMAD_EMISSION_KEY_ENV_VAR = "PI_BMAD_EMISSION_KEY" as const;
 export const PI_OFFLINE_ENV_VAR = "PI_OFFLINE" as const;
 
 /** Minimal stage shape required to construct Pi stage argv. */
-export type StageArgsStage = Pick<CompiledStageDef, "id" | "workflow" | "thinking" | "extensions" | "oPool" | "oName" | "oTag">;
+export type StageArgsStage = Pick<
+  CompiledStageDef,
+  "id" | "workflow" | "thinking" | "extensions" | "oPool" | "oName" | "oTag"
+>;
 
 /** Request for building Pi CLI argv for one stage. */
 export interface BuildStageArgsRequest {
@@ -139,11 +142,7 @@ const headlessPrefixArgs = (): readonly string[] => [
 
 const extensionArgs = (request: BuildStageArgsRequest): readonly string[] => {
   const extra = request.stage.extensions ?? [];
-  return [
-    "-e",
-    request.piBmadExtensionPath,
-    ...extra.flatMap((ext) => ["-e", ext]),
-  ];
+  return ["-e", request.piBmadExtensionPath, ...extra.flatMap((ext) => ["-e", ext])];
 };
 
 const bmadArgs = (request: BuildStageArgsRequest, thinking: ModelThinking): readonly string[] => [
@@ -175,7 +174,7 @@ const observabilityArgs = (request: BuildStageArgsRequest): readonly string[] =>
 const buildStagePrompt = (request: BuildStageArgsRequest): string =>
   [
     `Run the ${request.stage.workflow} BMAD workflow for story ${request.storyId}.`,
-    `Spec file: ${request.specFile}`,
+    ...(request.specFile.trim().length === 0 ? [] : [`Spec file: ${request.specFile}`]),
     `Pipeline stage: ${request.stage.id} (attempt ${String(request.attempt)})`,
     ...priorFindingsLines(request.priorFindings),
   ].join("\n");
@@ -199,7 +198,6 @@ const validateRequiredStrings = (request: BuildStageArgsRequest): void => {
     ["stage.id", request.stage.id],
     ["stage.workflow", request.stage.workflow],
     ["storyId", request.storyId],
-    ["specFile", request.specFile],
     ["projectRoot", request.projectRoot],
     ["model", request.model],
     ["piBmadExtensionPath", request.piBmadExtensionPath],
