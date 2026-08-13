@@ -10,7 +10,7 @@ import type { CliCommand, CliParseError, CliParseErrorCode, CliRunCommand } from
 export const CLI_USAGE_LINES: readonly string[] = Object.freeze([
   "Usage: bmad-pipeline [command] [options]",
   "Commands:",
-  "  run <rundef-id> --story-id ID --spec-file PATH [--project-root DIR]",
+  "  run <rundef-id> [--story-id ID] [--spec-file PATH] [--project-root DIR]",
   "      [--model NAME] [--thinking EFFORT] [--max-regressions N] [--jsonl]",
   "  help | version",
 ]);
@@ -86,7 +86,6 @@ interface RequiredRunFields {
   readonly storyId: string;
   readonly specFile: string;
 }
-
 const positionalFields = (
   scanned: ScannedRunArgs,
 ): { readonly rundefId: string } | CliParseError => {
@@ -100,17 +99,19 @@ const positionalFields = (
     : { rundefId };
 };
 
-const requiredOptionFields = (
+const runOptionFields = (
   scanned: ScannedRunArgs,
-): Omit<RequiredRunFields, "rundefId"> | CliParseError => {
-  const storyId = scanned.values.get("--story-id");
-  if (storyId === undefined) {
-    return parseError("missing-required-option", 'Missing required option "--story-id".');
-  }
-  const specFile = scanned.values.get("--spec-file");
-  return specFile === undefined
-    ? parseError("missing-required-option", 'Missing required option "--spec-file".')
-    : { storyId, specFile };
+  rundefId: string,
+): Omit<RequiredRunFields, "rundefId"> => ({
+  storyId: scanned.values.get("--story-id") ?? rundefId,
+  specFile: scanned.values.get("--spec-file") ?? "",
+});
+
+const requiredRunFields = (scanned: ScannedRunArgs): RequiredRunFields | CliParseError => {
+  const positional = positionalFields(scanned);
+  return "kind" in positional
+    ? positional
+    : { ...positional, ...runOptionFields(scanned, positional.rundefId) };
 };
 
 const regressionError = (scanned: ScannedRunArgs): CliParseError | undefined => {
@@ -131,15 +132,6 @@ const optionalFields = (scanned: ScannedRunArgs): Partial<CliRunCommand> => {
     ...(thinking === undefined ? {} : { thinking }),
     ...(regressions === undefined ? {} : { maxRegressions: Number(regressions) }),
   };
-};
-
-const requiredRunFields = (scanned: ScannedRunArgs): RequiredRunFields | CliParseError => {
-  const positional = positionalFields(scanned);
-  if ("kind" in positional) {
-    return positional;
-  }
-  const required = requiredOptionFields(scanned);
-  return "kind" in required ? required : { ...positional, ...required };
 };
 
 const buildRunCommand = (scanned: ScannedRunArgs, required: RequiredRunFields): CliRunCommand =>

@@ -53,13 +53,41 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("defaults storyId to the rundef-id when --story-id is omitted", () => {
+    expect(parseCliArgs(["run", "sdlc"])).toEqual({
+      kind: "run",
+      rundefId: "sdlc",
+      storyId: "sdlc",
+      specFile: "",
+      jsonl: false,
+    });
+  });
+
+  it("defaults specFile to empty string when --spec-file is omitted", () => {
+    expect(parseCliArgs(["run", "sdlc", "--story-id", "S-1"])).toEqual({
+      kind: "run",
+      rundefId: "sdlc",
+      storyId: "S-1",
+      specFile: "",
+      jsonl: false,
+    });
+  });
+
+  it("defaults storyId to the rundef-id when only --spec-file is given", () => {
+    expect(parseCliArgs(["run", "sdlc", "--spec-file", "s.md"])).toEqual({
+      kind: "run",
+      rundefId: "sdlc",
+      storyId: "sdlc",
+      specFile: "s.md",
+      jsonl: false,
+    });
+  });
+
   it.each([
     [[], "missing-command"],
     [["unknown"], "unknown-command"],
     [["run", "sdlc", "--story-id", "S", "--spec-file", "s", "--bad"], "unknown-option"],
     [["run", "sdlc", "--story-id"], "missing-option-value"],
-    [["run", "sdlc", "--spec-file", "s"], "missing-required-option"],
-    [["run", "sdlc", "--story-id", "S"], "missing-required-option"],
     [["run", "--story-id", "S", "--spec-file", "s"], "missing-positional"],
     [["run", "one", "two", "--story-id", "S", "--spec-file", "s"], "unexpected-positional"],
     [

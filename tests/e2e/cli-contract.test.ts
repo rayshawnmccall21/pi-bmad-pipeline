@@ -57,9 +57,13 @@ describe("CLI contract", () => {
   });
 
   it("maps parse errors, unknown commands, and invalid story ids to exit 1", () => {
-    const missingArgs = runRaw(["run", "happy"]);
+    const missingArgs = runRaw(["run"]);
     expect(missingArgs.status).toBe(1);
     expect(missingArgs.stderr.length).toBeGreaterThan(0);
+
+    const missingOptionValue = runRaw(["run", "happy", "--story-id"]);
+    expect(missingOptionValue.status).toBe(1);
+    expect(missingOptionValue.stderr.length).toBeGreaterThan(0);
 
     const unknownCommand = runRaw(["audit"]);
     expect(unknownCommand.status).toBe(1);

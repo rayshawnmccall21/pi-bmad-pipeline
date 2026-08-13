@@ -123,7 +123,7 @@ describe("YAML-only pipeline surface", () => {
       [
         "Usage: bmad-pipeline [command] [options]",
         "Commands:",
-        "  run <rundef-id> --story-id ID --spec-file PATH [--project-root DIR]",
+        "  run <rundef-id> [--story-id ID] [--spec-file PATH] [--project-root DIR]",
         "      [--model NAME] [--thinking EFFORT] [--max-regressions N] [--jsonl]",
         "  help | version",
       ].join("\n"),

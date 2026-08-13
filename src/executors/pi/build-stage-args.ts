@@ -175,7 +175,7 @@ const observabilityArgs = (request: BuildStageArgsRequest): readonly string[] =>
 const buildStagePrompt = (request: BuildStageArgsRequest): string =>
   [
     `Run the ${request.stage.workflow} BMAD workflow for story ${request.storyId}.`,
-    `Spec file: ${request.specFile}`,
+    ...(request.specFile.trim().length === 0 ? [] : [`Spec file: ${request.specFile}`]),
     `Pipeline stage: ${request.stage.id} (attempt ${String(request.attempt)})`,
     ...priorFindingsLines(request.priorFindings),
   ].join("\n");
@@ -199,7 +199,6 @@ const validateRequiredStrings = (request: BuildStageArgsRequest): void => {
     ["stage.id", request.stage.id],
     ["stage.workflow", request.stage.workflow],
     ["storyId", request.storyId],
-    ["specFile", request.specFile],
     ["projectRoot", request.projectRoot],
     ["model", request.model],
     ["piBmadExtensionPath", request.piBmadExtensionPath],
