@@ -18,8 +18,14 @@
     "src/",
     "scripts/",
     "quality/",
+    "skills/",
     "README.md"
   ],
+  "pi": {
+    "skills": [
+      "skills"
+    ]
+  },
   "scripts": {
     "build": "tsc && bun build src/cli.ts --target=node --outfile=dist/src/cli.js",
     "typecheck": "tsc --noEmit",
@@ -44,6 +50,7 @@
     "check": "npm run check:pi-bmad && npm run typecheck && npm run format:check && npm run lint && npm run test:coverage && npm run crap && npm run conformance && npm run test:e2e && npm run knip"
   },
   "keywords": [
+    "pi-package",
     "bmad",
     "pipeline",
     "sdlc",
