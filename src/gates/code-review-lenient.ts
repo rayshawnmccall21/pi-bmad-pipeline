@@ -24,44 +24,62 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function severitySummary(payload: Record<string, unknown>): string {
   const counts = payload["findingsBySeverity"];
-  if (!isRecord(counts)) return "unknown";
-  return SEVERITIES.map(s => `${s}=${String(countOf(counts, s))}`).join(", ");
+  if (!isRecord(counts)) {
+    return "unknown";
+  }
+  return SEVERITIES.map((s) => `${s}=${String(countOf(counts, s))}`).join(", ");
+}
+
+function storyMismatch(
+  payload: Record<string, unknown>,
+  context?: PayloadGateContext,
+): PayloadGateResult | undefined {
+  if (context?.storyId === undefined || payload["storyId"] === context.storyId) {
+    return undefined;
+  }
+  return Object.freeze({
+    passed: false,
+    reason: `Story identity mismatch: ${JSON.stringify(payload["storyId"] ?? null)} vs ${JSON.stringify(context.storyId)}.`,
+  });
+}
+
+function findingsResult(
+  payload: Record<string, unknown>,
+  verdict: "needs-dev" | "needs-verify",
+): PayloadGateResult {
+  const counts = payload["findingsBySeverity"];
+  const critical = isRecord(counts) ? countOf(counts, "critical") : 0;
+  const high = isRecord(counts) ? countOf(counts, "high") : 0;
+
+  if (critical === 0 && high === 0) {
+    return Object.freeze({
+      passed: true,
+      reason: `Code review ${verdict} accepted: 0 critical, 0 high. Remaining: ${severitySummary(payload)}`,
+    });
+  }
+  return Object.freeze({
+    passed: false,
+    reason: `Code review ${verdict}: ${String(critical)} critical, ${String(high)} high.`,
+    findings: Object.freeze([`Findings: ${severitySummary(payload)}`]),
+  });
 }
 
 export const codeReviewLenientGate: PayloadGate = (
   payload: Record<string, unknown>,
   context?: PayloadGateContext,
 ): PayloadGateResult => {
-  if (context?.storyId !== undefined && payload["storyId"] !== context.storyId) {
-    return Object.freeze({
-      passed: false,
-      reason: `Story identity mismatch: ${JSON.stringify(payload["storyId"] ?? null)} vs ${JSON.stringify(context.storyId)}.`,
-    });
+  const mismatch = storyMismatch(payload, context);
+  if (mismatch !== undefined) {
+    return mismatch;
   }
 
   const verdict = payload["verdict"];
-  const counts = payload["findingsBySeverity"];
-  const critical = isRecord(counts) ? countOf(counts, "critical") : 0;
-  const high = isRecord(counts) ? countOf(counts, "high") : 0;
-
   if (verdict === "approved") {
     return Object.freeze({ passed: true, reason: "Code review approved." });
   }
-
   if (verdict === "needs-dev" || verdict === "needs-verify") {
-    if (critical === 0 && high === 0) {
-      return Object.freeze({
-        passed: true,
-        reason: `Code review ${String(verdict)} accepted: 0 critical, 0 high. Remaining: ${severitySummary(payload)}`,
-      });
-    }
-    return Object.freeze({
-      passed: false,
-      reason: `Code review ${String(verdict)}: ${String(critical)} critical, ${String(high)} high.`,
-      findings: Object.freeze([`Findings: ${severitySummary(payload)}`]),
-    });
+    return findingsResult(payload, verdict);
   }
-
   return Object.freeze({
     passed: false,
     reason: `Unrecognized code-review verdict ${JSON.stringify(verdict ?? null)}; failing closed.`,

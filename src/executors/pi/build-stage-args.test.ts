@@ -146,7 +146,9 @@ describe("Pi stage argv builder", () => {
     const countExtensionFlags = (args: readonly string[]): number =>
       args.filter((arg) => arg === "-e").length;
 
-    expect(countExtensionFlags(buildStageArgs(request({ stage: stage({ extensions: [] }) })).args)).toBe(1);
+    expect(
+      countExtensionFlags(buildStageArgs(request({ stage: stage({ extensions: [] }) })).args),
+    ).toBe(1);
   });
 
   it("emits --o-pool, --o-name, --o-tag when stage declares them", () => {

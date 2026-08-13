@@ -13,7 +13,4 @@ export type { BmadPayloadGateName, RegisterBmadPayloadGatesResult } from "./bmad
 
 export type { PayloadGate, PayloadGateRegistry, PayloadGateResult } from "./payload-gate.js";
 
-export {
-  CODE_REVIEW_LENIENT_GATE_NAME,
-  codeReviewLenientGate,
-} from "./code-review-lenient.js";
+export { CODE_REVIEW_LENIENT_GATE_NAME, codeReviewLenientGate } from "./code-review-lenient.js";
