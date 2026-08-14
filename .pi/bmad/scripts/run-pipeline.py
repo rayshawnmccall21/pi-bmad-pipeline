@@ -16,7 +16,7 @@ Usage:
     uv run .pi/bmad/scripts/run-pipeline.py STY-112 \\
         --rundef create-story-dev-story-code-review-docs \\
         --spec-file .pi/plans/code-stage-type.md
-    uv run .pi/bmad/scripts/run-pipeline.py STY-112 --model openrouter/google/gemini-3.7-flash
+    uv run .pi/bmad/scripts/run-pipeline.py STY-112 --model openai-codex/gpt-5.6-sol
     uv run .pi/bmad/scripts/run-pipeline.py STY-112 --max-regressions 5
 
 Environment:
@@ -266,8 +266,8 @@ def main() -> int:
                         help="RunDef id (default: the reusable create->dev->review<->docs pipeline)")
     parser.add_argument("--spec-file",
                         help="Story/spec file passed to every stage (default: .pi/artifacts/implementation/stories/<story>.md)")
-    parser.add_argument("--model", default="openrouter/google/gemini-3.7-flash",
-                        help="Model for pipeline stages (default: Gemini 3.7 Flash via OpenRouter)")
+    parser.add_argument("--model", default="openai-codex/gpt-5.6-sol",
+                        help="Model for pipeline stages (default: GPT-5.6 Sol via OpenAI Codex)")
     parser.add_argument("--max-regressions", type=int, default=5, help="Max dev↔review regressions before failing (default 5)")
     parser.add_argument("--dry-run", action="store_true", help="Print command without executing")
     args = parser.parse_args()
