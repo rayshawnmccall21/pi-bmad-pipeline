@@ -20,3 +20,10 @@ final-implementation-agent-plan.md
 
 # Local agent settings
 .claude/
+
+# Secrets — never commit
+.env
+.env.local
+
+# Python cache
+__pycache__/
