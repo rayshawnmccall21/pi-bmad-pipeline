@@ -3,12 +3,13 @@
 # dependencies = ["httpx>=0.28"]
 # ///
 """
-STY-112 pipeline runner with Linear ticket updates.
+pi-bmad-pipeline runner with Linear ticket updates.
 
 Self-supervises pi-bmad-pipeline: spawns the built `bmad-pipeline` supervisor
-(from the ~/pi-bmad-pipeline main checkout) against this worktree, streams
+(from the ~/pi-bmad-pipeline main checkout) against the current project, streams
 JSONL events, and mirrors each stage transition as a comment on the Linear
-ticket (plus status moves: In Progress → Done / In Review).
+ticket (plus status moves: In Progress → Done / In Review). Reusable across any
+story; pass the story id, and optionally a rundef and spec file.
 
 Usage:
     uv run .pi/bmad/scripts/run-pipeline.py STY-112
@@ -245,10 +246,11 @@ def handle_event(ev: dict, story_id: str, issue_id: str, team_id: str | None) ->
 # ---------------------------------------------------------------------------
 
 def build_pipeline_command(args: argparse.Namespace) -> list[str]:
+    spec_file = args.spec_file or f".pi/artifacts/implementation/stories/{args.story_id.lower()}.md"
     cmd = [
         "node", str(BMAD_CLI), "run", args.rundef,
         "--story-id", args.story_id,
-        "--spec-file", args.spec_file,
+        "--spec-file", spec_file,
         "--max-regressions", str(args.max_regressions),
         "--jsonl",
     ]
@@ -261,10 +263,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run a pi-bmad-pipeline RunDef with Linear updates")
     parser.add_argument("story_id", help="Linear ticket identifier (e.g. STY-112)")
     parser.add_argument("--rundef", default="create-story-dev-story-code-review-docs",
-                        help="RunDef id (default: the STY-112 create→dev→review↔→docs pipeline)")
-    parser.add_argument("--spec-file", default=".pi/plans/code-stage-type.md",
-                        help="Story/spec file passed to every stage (default: the STY-112 plan)")
-    parser.add_argument("--model", help="Override model (default: supervisor default gpt-5.5-pro)")
+                        help="RunDef id (default: the reusable create->dev->review<->docs pipeline)")
+    parser.add_argument("--spec-file",
+                        help="Story/spec file passed to every stage (default: .pi/artifacts/implementation/stories/<story>.md)")
+    parser.add_argument("--model", default="openrouter/deepseek/deepseek-v4-flash",
+                        help="Model for pipeline stages (default: an authenticated OpenRouter model)")
     parser.add_argument("--max-regressions", type=int, default=5, help="Max dev↔review regressions before failing (default 5)")
     parser.add_argument("--dry-run", action="store_true", help="Print command without executing")
     args = parser.parse_args()
