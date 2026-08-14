@@ -13,8 +13,9 @@ When writing a story file during the `create-story` workflow:
 
 1. **Copy** `.pi/templates/story-plan.md` to `.pi/artifacts/implementation/stories/<story-id>.md`.
 2. **Fill** each section following the workflow step guides — the template has HTML comments mapping sections to steps.
-3. **KEEP the `- [ ]` checkbox prefix** on every item in `## Tasks / Subtasks` and `## Definition of Done`. The `story-ready` checkpoint **rejects plain `- ` bullets** — this is the #1 cause of checkpoint failure. Never rewrite these sections from scratch; edit the existing `- [ ]` items in place.
-4. Replace `{{PLACEHOLDER}}` text with story-specific content; remove placeholders you don't need but keep all 13 section headings.
+3. **KEEP the `- [ ]` checkbox prefix** on every item in `## Tasks / Subtasks` and `## Definition of Done`. The `story-ready` checkpoint **rejects plain `- ` bullets**.
+4. **NEVER use `###` sub-headings inside `## Tasks / Subtasks` or `## Definition of Done`.** The checkpoint validator splits on ALL heading levels (h1–h6), so a `### Slice N` heading truncates the section → the validator sees zero checkboxes → REJECTED. Use **bold text** (`**Slice N — ...**`) for grouping instead.
+5. Replace `{{PLACEHOLDER}}` text with story-specific content; remove placeholders you don't need but keep all 13 section headings.
 
 ## Per-Module Context
 

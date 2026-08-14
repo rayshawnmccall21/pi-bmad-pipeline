@@ -106,19 +106,24 @@
 
 ## Tasks / Subtasks
 
-<!-- CRITICAL: Every item MUST use - [ ] checkbox syntax.
-     The story-ready checkpoint REJECTS plain - bullets.
-     Add or remove tasks as needed but ALWAYS keep the - [ ] prefix.
-     Use RED/GREEN/REFACTOR/VALIDATE task naming for TDD stories. -->
+<!-- CRITICAL RULES (the story-ready checkpoint enforces all of these):
+     1. Every item MUST use - [ ] checkbox syntax (NOT plain - bullets).
+     2. Do NOT use ### sub-headings inside this section. The validator splits
+        on ALL heading levels (h1-h6), so a ### heading would truncate the
+        section and the checkpoint sees zero checkboxes → REJECTED.
+     3. Group tasks with **bold text** instead of ### headings.
+     4. Add or remove tasks as needed but ALWAYS keep the - [ ] prefix. -->
 
-- [ ] **Task 1: RED — {{FAILING_TEST_DESCRIPTION}}**
+**Slice 1 — {{GROUP_NAME}}**
+- [ ] {{TASK_DESCRIPTION}}
   - [ ] {{SUBTASK_DETAIL}}
-- [ ] **Task 2: GREEN — {{IMPLEMENTATION_DESCRIPTION}}**
+
+**Slice 2 — {{GROUP_NAME}}**
+- [ ] {{TASK_DESCRIPTION}}
   - [ ] {{SUBTASK_DETAIL}}
-- [ ] **Task 3: REFACTOR — {{CLEANUP_DESCRIPTION}}**
-  - [ ] {{SUBTASK_DETAIL}}
-- [ ] **Task 4: VALIDATE — Run full quality gate**
-  - [ ] {{VALIDATION_COMMAND}}
+
+**Validate**
+- [ ] {{VALIDATION_COMMAND}}
 
 ---
 
