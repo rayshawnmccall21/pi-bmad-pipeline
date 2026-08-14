@@ -17,6 +17,23 @@ When writing a story file during the `create-story` workflow:
 4. **NEVER use `###` sub-headings inside `## Tasks / Subtasks` or `## Definition of Done`.** The checkpoint validator splits on ALL heading levels (h1–h6), so a `### Slice N` heading truncates the section → the validator sees zero checkboxes → REJECTED. Use **bold text** (`**Slice N — ...**`) for grouping instead.
 5. Replace `{{PLACEHOLDER}}` text with story-specific content; remove placeholders you don't need but keep all 13 section headings.
 
+## Source Intake Format
+
+When writing `.pi/artifacts/implementation/story-source-intake.md`, use the checkpoint parser's exact list syntax:
+
+```markdown
+# Story Source Intake
+
+- Issue Identifier: STY-112
+- Title: Story title
+
+## Upstream Source
+
+Source details...
+```
+
+Do not replace these list fields with bold labels such as `**Story ID:**`; `story-ready` does not parse that format and will incorrectly report a possible source mis-route.
+
 ## Per-Module Context
 
 Each top-level module under `src/` has a `CONTEXT.md` with its responsibility, public seams, invariants, dependencies, and testing guidance. Read it before changing that module.
