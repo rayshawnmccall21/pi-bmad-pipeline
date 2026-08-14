@@ -41,9 +41,24 @@ describe("repository pipeline catalog", () => {
 
     for (const entry of discovered) {
       for (const stage of entry.runDef.stages) {
-        if (stage.gate !== undefined) {
+        if ("gate" in stage && stage.gate !== undefined) {
           expect(registered).toContain(stage.gate);
         }
+      }
+    }
+  });
+
+  it("loads the quality guard in every self-supervision agent stage", async () => {
+    const discovered = await discoverRunDefs(projectRoot);
+    const pipeline = discovered.find(
+      (entry) => entry.id === "create-story-dev-story-code-review-docs",
+    );
+
+    expect(pipeline).toBeDefined();
+    for (const stage of pipeline?.runDef.stages ?? []) {
+      expect(stage.kind).toBe("agent");
+      if (stage.kind === "agent") {
+        expect(stage.extensions).toContain(".pi/extensions/quality-guard.ts");
       }
     }
   });
