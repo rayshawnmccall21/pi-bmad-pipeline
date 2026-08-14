@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -54,5 +54,14 @@ describe("narrowed mission documentation", () => {
     expect(publicDocumentation).not.toMatch(
       /one (?:fresh, hermetic |hermetic )?Pi child per stage|each stage starts a fresh Pi process|ensure isolated story worktree|locks and isolated worktrees/iu,
     );
+  });
+
+  it("ships the claimed local-code executor module context", () => {
+    const contextPath = resolve(projectRoot, "src/executors/code/CONTEXT.md");
+    const moduleContext = existsSync(contextPath) ? readFileSync(contextPath, "utf8") : "";
+
+    expect(moduleContext).toContain("Local");
+    expect(moduleContext).toContain("shell");
+    expect(moduleContext).toContain("at-least-once");
   });
 });
