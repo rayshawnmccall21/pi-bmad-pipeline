@@ -1,33 +1,40 @@
 id: create-story-dev-story-code-review-docs
 description: >
-  STY-112 (code-stage-type) implementation pipeline. create-story → dev-story →
-  code-review (regresses to dev-story on gate failure) → docs. Drops the e2e-plan
-  and e2e-verify stages because this is a pure library/mechanism change with no
-  UI or E2E surface; npm run check is the deterministic gate inside dev-story.
-  File named for its stages; the rundef id uses hyphens because the identifier
-  schema forbids underscores.
+  Reusable implementation pipeline for pure library/mechanism stories with no UI
+  or E2E surface: create-story -> dev-story -> code-review (regresses to
+  dev-story on gate failure) -> docs. Drops e2e-plan and e2e-verify; npm run
+  check is the deterministic gate inside dev-story. The rundef id uses hyphens
+  because the identifier schema forbids underscores. Each agent stage loads
+  pi-observability, pi-subagents, and pi-mcp-adapter so children have the
+  subagent + mcp tools the BMAD workflows declare (the supervisor otherwise runs
+  --no-extensions). Observability pool is a constant project label; per-story
+  pooling needs supervisor ${storyId} interpolation (not yet implemented).
 stages:
   - id: create-story
     kind: agent
     workflow: create-story
     agent: sm
     timeout: 1800
-    oPool: STY-112
+    oPool: pi-bmad-pipeline
     oName: sm
     oTag: create-story
     extensions:
-      - /Users/Apple/.pi/agent/extensions/pi-observability/upstream/extension/pi-observability.ts
+      - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
+      - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
+      - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
 
   - id: dev-story
     kind: agent
     workflow: dev-story
     agent: dev
     timeout: 7200
-    oPool: STY-112
+    oPool: pi-bmad-pipeline
     oName: dev
     oTag: dev-story
     extensions:
-      - /Users/Apple/.pi/agent/extensions/pi-observability/upstream/extension/pi-observability.ts
+      - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
+      - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
+      - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
 
   - id: code-review
     kind: agent
@@ -37,11 +44,13 @@ stages:
     onFail: dev-story
     thinking: high
     timeout: 2400
-    oPool: STY-112
+    oPool: pi-bmad-pipeline
     oName: dev
     oTag: code-review
     extensions:
-      - /Users/Apple/.pi/agent/extensions/pi-observability/upstream/extension/pi-observability.ts
+      - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
+      - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
+      - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
 
   - id: docs
     kind: agent
@@ -49,8 +58,10 @@ stages:
     agent: architect
     thinking: high
     timeout: 1800
-    oPool: STY-112
+    oPool: pi-bmad-pipeline
     oName: architect
     oTag: docs
     extensions:
-      - /Users/Apple/.pi/agent/extensions/pi-observability/upstream/extension/pi-observability.ts
+      - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
+      - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
+      - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
