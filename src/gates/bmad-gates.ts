@@ -154,7 +154,9 @@ const codeReviewApprovalResult = (payload: Record<string, unknown>): PayloadGate
   }
   const counts = payload["findingsBySeverity"];
   const contradictory =
-    !isRecord(counts) || CODE_REVIEW_SEVERITIES.some((severity) => countOf(counts, severity) !== 0);
+    !isRecord(counts) ||
+    CODE_REVIEW_SEVERITIES.some((severity) => countOf(counts, severity) !== 0) ||
+    stringList(payload, "findings").length !== 0;
   return contradictory
     ? failedResult("Code review approval contradicts reported findings.", severityFindings(payload))
     : Object.freeze({ passed: true, reason: "Code review approved." });
@@ -187,6 +189,16 @@ const CODE_REVIEW_PAYLOAD_KEYS = Object.freeze([
   "autoFixed",
 ] as const);
 
+/** Canonical version stamp of the v2 code-review payload envelope. */
+const CODE_REVIEW_PAYLOAD_VERSION_V2 = "pi-bmad.code-review.payload.v2" as const;
+
+/** V2 code-review envelope keys: the four v1 keys plus findings and payloadVersion. */
+const CODE_REVIEW_V2_PAYLOAD_KEYS = Object.freeze([
+  ...CODE_REVIEW_PAYLOAD_KEYS,
+  "findings",
+  "payloadVersion",
+] as const);
+
 const isValidE2ePassPayload = (payload: Record<string, unknown>): boolean =>
   hasExactKeys(payload, E2E_VERIFY_PAYLOAD_KEYS) &&
   isNonEmptyString(payload["storyId"]) &&
@@ -198,12 +210,31 @@ const isValidE2ePassPayload = (payload: Record<string, unknown>): boolean =>
 const isValidCodeReviewApprovalPayload = (payload: Record<string, unknown>): boolean => {
   const counts = payload["findingsBySeverity"];
   return (
-    hasExactKeys(payload, CODE_REVIEW_PAYLOAD_KEYS) &&
+    isApprovalShape(payload) &&
     isNonEmptyString(payload["storyId"]) &&
     typeof payload["autoFixed"] === "boolean" &&
     isRecord(counts) &&
     hasExactKeys(counts, CODE_REVIEW_SEVERITIES) &&
     CODE_REVIEW_SEVERITIES.every((severity) => isNonNegativeInteger(counts[severity]))
+  );
+};
+
+/**
+ * Checks the payload approval envelope shape.
+ *
+ * @param payload - Validated code-review workflow payload.
+ *
+ * @returns True for the exact v1 four-key shape or the exact v2 six-key
+ * shape with the canonical version stamp and a string-list findings field.
+ */
+const isApprovalShape = (payload: Record<string, unknown>): boolean => {
+  if (hasExactKeys(payload, CODE_REVIEW_PAYLOAD_KEYS)) {
+    return true;
+  }
+  return (
+    hasExactKeys(payload, CODE_REVIEW_V2_PAYLOAD_KEYS) &&
+    payload["payloadVersion"] === CODE_REVIEW_PAYLOAD_VERSION_V2 &&
+    isStringList(payload["findings"])
   );
 };
 
