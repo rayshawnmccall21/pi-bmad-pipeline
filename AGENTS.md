@@ -1,14 +1,20 @@
 # AGENTS.md
 
-Orientation index for agents working in this package. No analysis, planning, or architecture artifacts are currently published under `.pi/artifacts/`; use the current implementation records below.
+Orientation index for agents working in this package.
 
 ## Current Context
 
 - [Package context](CONTEXT.md) — mission, core flow, boundaries, and operational invariants
-- [Story strip-2](.pi/artifacts/implementation/stories/strip-2.md) — implementation scope and agent record
-- [Story specification](specs/strip-2-orphaned-merge-gate.md) — requirements and acceptance criteria
-- [E2E plan](.pi/artifacts/validation/strip-2/e2e-plan.json) — behavioral verification plan
-- [E2E verification](.pi/artifacts/validation/strip-2/e2e-verify.json) — verification result
+- [STY-112 plan](.pi/plans/code-stage-type.md) — approved implementation plan (6 slices, red/green TDD)
+
+## Story Template
+
+When writing a story file during the `create-story` workflow:
+
+1. **Copy** `.pi/templates/story-plan.md` to `.pi/artifacts/implementation/stories/<story-id>.md`.
+2. **Fill** each section following the workflow step guides — the template has HTML comments mapping sections to steps.
+3. **KEEP the `- [ ]` checkbox prefix** on every item in `## Tasks / Subtasks` and `## Definition of Done`. The `story-ready` checkpoint **rejects plain `- ` bullets** — this is the #1 cause of checkpoint failure. Never rewrite these sections from scratch; edit the existing `- [ ]` items in place.
+4. Replace `{{PLACEHOLDER}}` text with story-specific content; remove placeholders you don't need but keep all 13 section headings.
 
 ## Per-Module Context
 
