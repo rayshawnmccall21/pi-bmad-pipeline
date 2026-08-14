@@ -8,8 +8,8 @@
 
 ## Invariants
 
-- Persisted state records story, RunDef id/digest, spec, worktree/branch, runner feature version, model/thinking, stages, regressions, timestamps, and economics. The action/git boundary supplies the canonical worktree path.
-- State loading validates serialized shape before use; reconciliation repairs interrupted running markers and internal contradictions against compiled stages.
+- Persisted state records story, RunDef id/digest, spec, runner feature version, model/thinking, stages, regressions, timestamps, and economics.
+- State loading validates serialized shape before use; reconciliation repairs interrupted running markers and internal contradictions against compiled stage IDs without depending on stage kind.
 - Every returned state snapshot, stage history, issue list, and factory result is immutable.
 - Dispatch locks are per story, include run ownership metadata, reject live contention, and permit only defined stale-lock recovery.
 - Public `done` maps to result status `passed`; terminal/current-stage fields remain internally consistent.
@@ -23,3 +23,4 @@
 ## Learnings
 
 - 2026-08-06 — A RunDef content digest is required in durable state; matching only the YAML ID can resume into a structurally different FSM.
+- 2026-08-14 — ID-based reconciliation resets interrupted agent and code stages uniformly, preserving at-least-once recovery without fabricating attempt history.

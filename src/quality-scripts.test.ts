@@ -6,9 +6,22 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 describe("quality script entrypoints", () => {
+  it("keeps the locked dead-code configuration unchanged", () => {
+    const knipConfig = JSON.parse(
+      readFileSync(new URL("../knip.json", import.meta.url), "utf8"),
+    ) as unknown;
+
+    expect(knipConfig).toEqual({
+      $schema: "https://unpkg.com/knip@5/schema.json",
+      ignore: [".pi/**"],
+      ignoreDependencies: ["pi-bmad", "@eslint/js", "@mariozechner/pi-coding-agent"],
+    });
+  });
+
   it.each([
     new URL("../scripts/crap-report.mjs", import.meta.url),
     new URL("../scripts/crap-ratchet.mjs", import.meta.url),
+    new URL("../scripts/check-pi-bmad-freshness.mjs", import.meta.url),
   ])("keeps load-bearing quality script %s available", (scriptUrl) => {
     expect(existsSync(fileURLToPath(scriptUrl))).toBe(true);
   });
@@ -38,10 +51,15 @@ describe("quality script entrypoints", () => {
 
     const fixtureDir = mkdtempSync(join(tmpdir(), "pi-bmad-pipeline-skill-"));
     const validPath = join(fixtureDir, "valid.yaml");
+    const validCodePath = join(fixtureDir, "valid-code.yaml");
     const invalidPath = join(fixtureDir, "invalid.yaml");
     writeFileSync(
       validPath,
       "id: valid\nstages:\n  - id: docs\n    kind: agent\n    workflow: docs\n    agent: architect\n",
+    );
+    writeFileSync(
+      validCodePath,
+      'id: valid-code\nstages:\n  - id: check\n    kind: code\n    command: npm\n    args: ["run", "check"]\n',
     );
     writeFileSync(
       invalidPath,
@@ -50,11 +68,14 @@ describe("quality script entrypoints", () => {
 
     try {
       const valid = spawnSync(process.execPath, [fileURLToPath(validatorUrl), validPath]);
+      const validCode = spawnSync(process.execPath, [fileURLToPath(validatorUrl), validCodePath]);
       const invalid = spawnSync(process.execPath, [fileURLToPath(validatorUrl), invalidPath]);
       const missing = spawnSync(process.execPath, [fileURLToPath(validatorUrl)]);
 
       expect(valid.status, valid.stderr.toString()).toBe(0);
       expect(valid.stdout.toString()).toContain("valid\t");
+      expect(validCode.status, validCode.stderr.toString()).toBe(0);
+      expect(validCode.stdout.toString()).toContain("valid-code\t");
       expect(invalid.status).toBe(1);
       expect(missing.status).toBe(2);
     } finally {

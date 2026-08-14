@@ -143,8 +143,11 @@ const complete = (request: RouteStageDecisionRequest): StageRouteDecision =>
 const gateFailedRoute = (request: RouteStageDecisionRequest): StageRouteDecision =>
   missingOnFail(request) ?? invalidOnFail(request) ?? regressionLimit(request) ?? regress(request);
 
+const onFailOf = (request: RouteStageDecisionRequest): string | undefined =>
+  request.stage.kind === "agent" ? request.stage.onFail : undefined;
+
 const missingOnFail = (request: RouteStageDecisionRequest): StageRouteDecision | undefined =>
-  request.stage.onFail === undefined
+  onFailOf(request) === undefined
     ? fail(
         request,
         "gate-failed-without-on-fail",
@@ -153,7 +156,7 @@ const missingOnFail = (request: RouteStageDecisionRequest): StageRouteDecision |
     : undefined;
 
 const invalidOnFail = (request: RouteStageDecisionRequest): StageRouteDecision | undefined => {
-  const target = findStageById(request.stages, request.stage.onFail ?? "");
+  const target = findStageById(request.stages, onFailOf(request) ?? "");
   if (target === undefined) {
     return fail(
       request,
@@ -180,7 +183,7 @@ const regressionLimit = (request: RouteStageDecisionRequest): StageRouteDecision
     : undefined;
 
 const regress = (request: RouteStageDecisionRequest): StageRouteDecision => {
-  const nextStageId = request.stage.onFail;
+  const nextStageId = onFailOf(request);
   if (nextStageId === undefined) {
     return (
       missingOnFail(request) ?? fail(request, "gate-failed-without-on-fail", "Missing onFail.")

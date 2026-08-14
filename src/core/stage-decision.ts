@@ -1,4 +1,4 @@
-import type { CompiledStageDef } from "../rundef/index.js";
+import type { CompiledStageDef, PayloadGate } from "../rundef/index.js";
 import type { BudgetUsage } from "./budgets.js";
 
 /** Minimal validated child output shape needed by gate evaluation. */
@@ -21,6 +21,9 @@ export interface StageDecisionExecutionResult {
   /** Optional JSONL parse error. */
   readonly parseError?: string;
 
+  /** Bounded, already-redacted failure diagnostic from the executor. */
+  readonly diagnostic?: string;
+
   /** Optional usage reported by the child execution. */
   readonly usage?: BudgetUsage;
 
@@ -38,7 +41,10 @@ export type StageDecisionKind =
 /** Request for checking one stage execution. */
 export interface CheckStageDecisionRequest {
   /** Compiled stage definition. */
-  readonly stage: Pick<CompiledStageDef, "id" | "payloadGate" | "payloadGateName">;
+  readonly stage: Pick<CompiledStageDef, "id" | "kind"> & {
+    readonly payloadGateName?: string;
+    readonly payloadGate?: PayloadGate;
+  };
 
   /** Story id being supervised by the active run. */
   readonly storyId?: string;
@@ -86,7 +92,7 @@ export function checkStageDecision(request: CheckStageDecisionRequest): StageDec
     return failure;
   }
   if (request.result.output === null) {
-    return missingOutputDecision(request);
+    return passedWithoutGate(request);
   }
   const gate = request.stage.payloadGate;
   if (gate === undefined) {
@@ -122,7 +128,9 @@ const parseFailure = (request: CheckStageDecisionRequest): StageDecision | undef
       );
 
 const missingOutputFailure = (request: CheckStageDecisionRequest): StageDecision | undefined =>
-  request.result.output === null ? missingOutputDecision(request) : undefined;
+  request.stage.kind === "agent" && request.result.output === null
+    ? missingOutputDecision(request)
+    : undefined;
 
 const missingOutputDecision = (request: CheckStageDecisionRequest): StageDecision =>
   failure(request, "failed", `Stage "${request.stage.id}" did not produce validated output.`);
@@ -130,7 +138,11 @@ const missingOutputDecision = (request: CheckStageDecisionRequest): StageDecisio
 const exitFailure = (request: CheckStageDecisionRequest): StageDecision | undefined =>
   request.result.exitCode === 0
     ? undefined
-    : failure(request, "failed", exitReason(request.stage.id, request.result.exitCode));
+    : failure(
+        request,
+        "failed",
+        exitReason(request.stage.id, request.result.exitCode, request.result.diagnostic),
+      );
 
 const passedWithoutGate = (request: CheckStageDecisionRequest): StageDecision =>
   freezeDecision({
@@ -186,10 +198,17 @@ const failure = (
     ...usageField(request.result.usage),
   });
 
-const exitReason = (stageId: string, exitCode: number | null): string =>
-  exitCode === null
-    ? `Stage "${stageId}" exited without an exit code.`
-    : `Stage "${stageId}" exited with code ${String(exitCode)}.`;
+const exitReason = (
+  stageId: string,
+  exitCode: number | null,
+  diagnostic: string | undefined,
+): string => {
+  const reason =
+    exitCode === null
+      ? `Stage "${stageId}" exited without an exit code.`
+      : `Stage "${stageId}" exited with code ${String(exitCode)}.`;
+  return diagnostic === undefined || diagnostic.length === 0 ? reason : `${reason} ${diagnostic}`;
+};
 
 const usageField = (usage: BudgetUsage | undefined): Partial<Pick<StageDecision, "usage">> =>
   usage === undefined ? {} : { usage: copyUsage(usage) };

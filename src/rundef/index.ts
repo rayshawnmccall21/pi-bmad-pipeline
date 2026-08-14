@@ -1,6 +1,11 @@
 /** Public discovered RunDef type, registry, schema, loader, selector, and compile exports. */
 
 export type {
+  AgentRunDefStage,
+  AgentStageDef,
+  CodeRunDefStage,
+  CompiledAgentStage,
+  CompiledCodeStage,
   CompiledStageDef,
   PayloadGate,
   PayloadGateContext,
@@ -21,6 +26,8 @@ export {
   resolvePayloadGate,
 } from "./registry.js";
 export {
+  AgentRunDefStageSchema,
+  CodeRunDefStageSchema,
   RUNDEF_IDENTIFIER_PATTERN,
   RunDefSchema,
   RunDefStageSchema,
@@ -31,14 +38,16 @@ export {
   parseRunDef,
   validateRunDef,
 } from "./schema.js";
-export { computeRunDefDigest } from "./identity.js";
 export type {
+  AgentRunDefStageSchemaValue,
+  CodeRunDefStageSchemaValue,
   RunDefSchemaValue,
   RunDefStageSchemaValue,
   RunDefValidationIssue,
   RunDefValidationResult,
   StageBudgetSchemaValue,
 } from "./schema.js";
+export { computeRunDefDigest } from "./identity.js";
 export {
   DEFAULT_STAGE_TIMEOUT_SECONDS,
   RunDefCompileError,

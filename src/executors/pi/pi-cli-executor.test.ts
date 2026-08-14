@@ -85,6 +85,25 @@ describe("PiCliWorkflowExecutor", () => {
     ).toThrow(new RangeError("piBmadExtensionPath must not be blank."));
   });
 
+  it("rejects a code stage before invoking the Pi runner", () => {
+    const [runStage] = runner();
+    const input: StageExecutionRequest = {
+      ...request(),
+      stage: {
+        id: "check",
+        kind: "code",
+        command: "npm",
+        args: ["run", "check"],
+        index: 0,
+        timeoutSeconds: 1800,
+      },
+    };
+    const executor = new PiCliWorkflowExecutor({ model: "gpt-5", thinking: "medium", runStage });
+
+    expect(() => executor.execute(input)).toThrow(RangeError);
+    expect(runStage).not.toHaveBeenCalled();
+  });
+
   it("execute calls injected runStage with required request fields", async () => {
     const [runStage, calls] = runner();
     const input = request();

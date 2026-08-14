@@ -8,8 +8,8 @@
  * @packageDocumentation
  */
 
-/** Identifies the stage execution kind supported by the initial RunDef model. */
-export type StageKind = "agent";
+/** Identifies the stage execution kind supported by the RunDef model. */
+export type StageKind = "agent" | "code";
 
 /** Controls the model thinking effort for stages that override the run default. */
 export type StageThinking = "low" | "medium" | "high";
@@ -23,16 +23,16 @@ export interface StageBudget {
   readonly maxDollars?: number;
 }
 
-/** Represents one raw stage entry loaded from a discovered RunDef YAML file. */
-export interface RunDefStage {
+/** Represents one raw agent stage entry loaded from a discovered RunDef YAML file. */
+export interface AgentRunDefStage {
   /** Stable stage identifier used for sequencing, state keys, and fail routing. */
   readonly id: string;
 
   /** Optional human-readable stage description. */
   readonly description?: string;
 
-  /** Stage execution kind, always "agent" in the initial model. */
-  readonly kind: StageKind;
+  /** Agent stage discriminator. */
+  readonly kind: "agent";
 
   /** Pi-bmad workflow name to invoke inside the child process. */
   readonly workflow: string;
@@ -46,7 +46,7 @@ export interface RunDefStage {
   /** Optional target stage identifier to regress to when the payload gate fails. */
   readonly onFail?: string;
 
-  /** Optional stage timeout in seconds; zero or absent means unbounded. */
+  /** Optional stage timeout in seconds. */
   readonly timeout?: number;
 
   /** Optional stage-level thinking effort override. */
@@ -55,7 +55,7 @@ export interface RunDefStage {
   /** Optional per-stage economic ceiling override. */
   readonly budget?: StageBudget;
 
-  /** Optional extra pi extension file paths loaded via repeated -e flags. */
+  /** Optional extra Pi extension file paths loaded via repeated -e flags. */
   readonly extensions?: readonly string[];
 
   /** Optional observability pool name passed via --o-pool. */
@@ -67,6 +67,30 @@ export interface RunDefStage {
   /** Optional observability tag passed via --o-tag. */
   readonly oTag?: string;
 }
+
+/** Represents one raw code stage entry loaded from a discovered RunDef YAML file. */
+export interface CodeRunDefStage {
+  /** Stable stage identifier used for sequencing and state keys. */
+  readonly id: string;
+
+  /** Optional human-readable stage description. */
+  readonly description?: string;
+
+  /** Code stage discriminator. */
+  readonly kind: "code";
+
+  /** Local command to execute. */
+  readonly command: string;
+
+  /** Optional command arguments. */
+  readonly args?: readonly string[];
+
+  /** Optional stage timeout in seconds. */
+  readonly timeout?: number;
+}
+
+/** Represents one raw stage entry loaded from a discovered RunDef YAML file. */
+export type RunDefStage = AgentRunDefStage | CodeRunDefStage;
 
 /** Represents a raw pipeline definition before validation and compilation. */
 export interface RunDef {
@@ -80,33 +104,39 @@ export interface RunDef {
   readonly stages: readonly RunDefStage[];
 }
 
-/** Represents the normalized compiled stage consumed by the pipeline FSM. */
-export interface StageDef {
+/** Fields shared by every normalized compiled stage. */
+interface CompiledStageCommon {
   /** Stable stage identifier used for state keys and routing decisions. */
   readonly id: string;
 
-  /** Stage execution kind, always "agent" in the initial model. */
-  readonly kind: StageKind;
-
-  /** Pi-bmad workflow name to invoke inside the child process. */
-  readonly workflow: string;
-
-  /** Pi-bmad agent identifier to invoke for the workflow. */
-  readonly agent: string;
-
-  /** Zero-based stage position after compilation into the ordered stage table. */
+  /** Zero-based stage position in the ordered stage table. */
   readonly index: number;
 
   /** Effective stage timeout in seconds after applying compilation defaults. */
   readonly timeoutSeconds: number;
 
+  /** Optional human-readable stage description. */
+  readonly description?: string;
+}
+
+/** Normalized compiled agent stage consumed by the Pi executor. */
+export interface CompiledAgentStage extends CompiledStageCommon {
+  /** Agent stage discriminator. */
+  readonly kind: "agent";
+
+  /** Pi-bmad workflow name to invoke. */
+  readonly workflow: string;
+
+  /** Pi-bmad agent identifier to invoke. */
+  readonly agent: string;
+
   /** Optional payload gate name retained for state and event output. */
   readonly payloadGateName?: string;
 
-  /** Optional payload gate function resolved from the registry at compile time. */
+  /** Optional payload gate function resolved at compile time. */
   readonly payloadGate?: PayloadGate;
 
-  /** Optional target stage identifier to regress to when the payload gate fails. */
+  /** Optional target stage identifier for failed payload gates. */
   readonly onFail?: string;
 
   /** Optional stage-level thinking effort override. */
@@ -115,21 +145,39 @@ export interface StageDef {
   /** Optional per-stage economic ceiling override. */
   readonly budget?: StageBudget;
 
-  /** Optional extra pi extension file paths loaded via repeated -e flags. */
+  /** Optional extra Pi extension file paths. */
   readonly extensions?: readonly string[];
 
-  /** Optional observability pool name passed via --o-pool. */
+  /** Optional observability pool name. */
   readonly oPool?: string;
 
-  /** Optional observability session name passed via --o-name. */
+  /** Optional observability session name. */
   readonly oName?: string;
 
-  /** Optional observability tag passed via --o-tag. */
+  /** Optional observability tag. */
   readonly oTag?: string;
 }
 
-/** Alias for the normalized stage shape produced by RunDef compilation. */
-export type CompiledStageDef = StageDef;
+/** Normalized compiled code stage consumed by the local executor. */
+export interface CompiledCodeStage extends CompiledStageCommon {
+  /** Code stage discriminator. */
+  readonly kind: "code";
+
+  /** Local command to execute. */
+  readonly command: string;
+
+  /** Command arguments, normalized to an array. */
+  readonly args: readonly string[];
+}
+
+/** Closed normalized stage union consumed by the pipeline FSM. */
+export type CompiledStageDef = CompiledAgentStage | CompiledCodeStage;
+
+/** Legacy alias for CompiledStageDef. */
+export type StageDef = CompiledStageDef;
+
+/** Legacy alias for AgentRunDefStage. */
+export type AgentStageDef = AgentRunDefStage;
 
 /** Reports the outcome of evaluating a child-process payload against a gate. */
 export interface PayloadGateResult {

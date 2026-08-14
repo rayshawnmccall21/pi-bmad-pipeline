@@ -16,7 +16,7 @@ import {
   type RunPipelineStagesRequest,
   type RunPipelineStagesResult,
 } from "../core/index.js";
-import { PiCliWorkflowExecutor, type WorkflowExecutor } from "../executors/index.js";
+import { StageExecutorDispatcher, type WorkflowExecutor } from "../executors/index.js";
 import { registerBmadPayloadGates } from "../gates/index.js";
 import { resolveModelConfig } from "../model/index.js";
 import {
@@ -394,6 +394,55 @@ describe("runPipelineAction", () => {
     expect(runStages).not.toHaveBeenCalled();
   });
 
+  it("blocks code command and args changes before execution", async () => {
+    const previousRunDef = {
+      id: "sdlc",
+      stages: [{ id: "check", kind: "code" as const, command: "npm", args: ["run", "old"] }],
+    };
+    const activeRunDef = {
+      id: "sdlc",
+      stages: [{ id: "check", kind: "code" as const, command: "npm", args: ["run", "check"] }],
+    };
+    const codeStages: readonly CompiledStageDef[] = [
+      {
+        id: "check",
+        kind: "code",
+        command: "npm",
+        args: ["run", "check"],
+        index: 0,
+        timeoutSeconds: 60,
+      },
+    ];
+    const loaded = createInitialPipelineState({
+      storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest(previousRunDef),
+      specFile: "spec.md",
+      stages: codeStages,
+      model: "gpt-5.5-pro",
+      thinking: "medium",
+    });
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({
+      loaded,
+      deps: {
+        selectAndCompile: async () => ({
+          id: "sdlc",
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: activeRunDef,
+          stages: codeStages,
+        }),
+        runStages,
+      },
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result.status).toBe("needs-attention");
+    expect(runStages).not.toHaveBeenCalled();
+  });
+
   it("does not save clean loaded state before the FSM", async () => {
     const boundState = createInitialPipelineState({
       storyId: "SH-1",
@@ -427,7 +476,7 @@ describe("runPipelineAction", () => {
     );
   });
 
-  it("wires real core defaults and creates a Pi executor", () => {
+  it("wires real core defaults and creates an exhaustive stage dispatcher", () => {
     expect(defaultRunPipelineActionDeps.acquireLock).toBe(acquireDispatchLock);
     expect(defaultRunPipelineActionDeps.loadState).toBe(loadPipelineState);
     expect(defaultRunPipelineActionDeps.saveState).toBe(savePipelineState);
@@ -436,6 +485,6 @@ describe("runPipelineAction", () => {
     expect(defaultRunPipelineActionDeps.runStages).toBe(runPipelineStages);
     expect(
       defaultRunPipelineActionDeps.createExecutor({ model: "m", thinking: "medium" }),
-    ).toBeInstanceOf(PiCliWorkflowExecutor);
+    ).toBeInstanceOf(StageExecutorDispatcher);
   });
 });

@@ -136,6 +136,35 @@ describe("pipeline state reconciliation", () => {
     expect(result.state.stages["dev-story"]?.history).toEqual([]);
   });
 
+  it("resets an interrupted code stage to pending without fake history", () => {
+    const stages: readonly CompiledStageDef[] = [
+      {
+        id: "check",
+        kind: "code",
+        command: "npm",
+        args: ["run", "check"],
+        index: 0,
+        timeoutSeconds: 1800,
+      },
+    ];
+    const initial = createInitialPipelineState({
+      storyId: "STORY-123",
+      specFile: "./specs/story-123.md",
+      stages,
+      model: "gpt-5.5-pro",
+      thinking: "high",
+    });
+    const state = withStage(initial, "check", {
+      status: "running",
+      startedAt: "2026-07-01T00:00:00.000Z",
+    });
+
+    const result = reconcilePipelineState({ state, stages });
+
+    expect(result.state.stages["check"]?.status).toBe("pending");
+    expect(result.state.stages["check"]?.history).toEqual([]);
+  });
+
   it("clears currentStage for terminal pipeline states", () => {
     const state = {
       ...createState(),

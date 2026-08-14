@@ -8,4 +8,9 @@ export type {
   WorkflowExecutor,
 } from "./workflow-executor.js";
 
+export * from "./code/index.js";
 export * from "./pi/index.js";
+export {
+  STAGE_EXECUTOR_DISPATCHER_ID,
+  StageExecutorDispatcher,
+} from "./stage-executor-dispatcher.js";

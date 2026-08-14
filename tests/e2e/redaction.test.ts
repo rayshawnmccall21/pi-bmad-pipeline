@@ -44,4 +44,33 @@ describe("credential redaction at the event boundary", () => {
     const findings = state.stages["verify"]?.history[0]?.findings ?? [];
     expect(JSON.stringify(findings)).toContain(credential);
   });
+
+  it("redacts a failing code diagnostic before events and durable state", () => {
+    const root = makeProject();
+    const credential = `ghp_${"b".repeat(36)}`;
+    const script = `process.stdout.write(${JSON.stringify(credential)}); process.stderr.write(${JSON.stringify(credential)}); process.exit(7)`;
+    writePipeline(
+      root,
+      "code-secret",
+      `
+id: code-secret
+stages:
+  - id: check
+    kind: code
+    command: node
+    args: ["-e", ${JSON.stringify(script)}]
+    timeout: 60
+`,
+    );
+
+    const outcome = runCli(root, "code-secret", "D2-CODE-SECRET");
+    const durable = JSON.stringify(readState(root, "D2-CODE-SECRET"));
+
+    expect(outcome.status).toBe(2);
+    expect(singleResult(outcome)).toMatchObject({ status: "failed" });
+    expect(outcome.stdout).not.toContain(credential);
+    expect(outcome.stderr).not.toContain(credential);
+    expect(durable).not.toContain(credential);
+    expect(`${outcome.stdout}\n${durable}`).toContain("[REDACTED]");
+  });
 });

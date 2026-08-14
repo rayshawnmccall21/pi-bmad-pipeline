@@ -4,7 +4,7 @@ import { DEFAULT_MAX_REGRESSIONS, runPipelineStages } from "./index.js";
 import { createInitialPipelineState } from "../state/index.js";
 
 import type { PipelineState, StageState } from "../state/index.js";
-import type { CompiledStageDef } from "../rundef/index.js";
+import type { CompiledAgentStage, CompiledCodeStage, CompiledStageDef } from "../rundef/index.js";
 import type {
   StageExecutionRequest,
   StageExecutionResult,
@@ -17,8 +17,8 @@ const T0 = "2026-08-05T00:00:00.000Z";
 const stage = (
   id: string,
   index: number,
-  overrides: Partial<CompiledStageDef> = {},
-): CompiledStageDef => ({
+  overrides: Partial<CompiledAgentStage> = {},
+): CompiledAgentStage => ({
   id,
   kind: "agent",
   workflow: `wf-${id}`,
@@ -117,6 +117,15 @@ const harness = (
   };
 };
 
+const codeStage = (id: string, index: number): CompiledCodeStage => ({
+  id,
+  kind: "code",
+  command: "npm",
+  args: ["run", id],
+  index,
+  timeoutSeconds: 60,
+});
+
 const twoStages = (): readonly CompiledStageDef[] => [stage("a", 0), stage("b", 1)];
 
 const gatedStages = (): readonly CompiledStageDef[] => [
@@ -155,6 +164,41 @@ describe("runPipelineStages", () => {
     });
     expect(executor.requests[0]?.priorFindings).toBeUndefined();
     expect(executor.requests[0]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("runs mixed agent, code, agent stages in declared order", async () => {
+    const stages = [stage("a", 0), codeStage("check", 1), stage("b", 2)];
+    const { request, executor } = harness(stages, [
+      okResult(),
+      okResult({ output: null }),
+      okResult(),
+    ]);
+
+    const result = await runPipelineStages(request);
+
+    expect(result.status).toBe("done");
+    expect(result.stagesRun).toEqual(["a", "check", "b"]);
+    expect(executor.requests.map((executionRequest) => executionRequest.stage.kind)).toEqual([
+      "agent",
+      "code",
+      "agent",
+    ]);
+  });
+
+  it("stops terminally on a nonzero code exit without increasing regressions", async () => {
+    const stages = [stage("a", 0), codeStage("check", 1), stage("b", 2)];
+    const { request, executor } = harness(stages, [
+      okResult(),
+      okResult({ output: null, exitCode: 2, diagnostic: "check failed" }),
+    ]);
+
+    const result = await runPipelineStages(request);
+
+    expect(result.status).toBe("failed");
+    expect(result.stagesRun).toEqual(["a", "check"]);
+    expect(result.regressions).toBe(0);
+    expect(result.failure?.reason).toContain("check failed");
+    expect(executor.requests).toHaveLength(2);
   });
 
   it("freezes the result, final state, and stagesRun", async () => {

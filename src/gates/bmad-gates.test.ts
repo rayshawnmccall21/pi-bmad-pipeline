@@ -284,6 +284,115 @@ describe("code-review payload gate (canonical contract)", () => {
     expect(result.findings).toBeUndefined();
   });
 
+  it("passes a v2 approved payload (dual-read consumer of the v2 envelope)", () => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+      findings: [],
+      payloadVersion: "pi-bmad.code-review.payload.v2",
+    });
+
+    expect(result).toMatchObject({ passed: true, reason: "Code review approved." });
+  });
+
+  it("still passes a v1 approved payload with exactly the four canonical keys", () => {
+    expect(
+      codeReviewPayloadGate({
+        storyId: "s-1",
+        verdict: "approved",
+        findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+        autoFixed: false,
+      }),
+    ).toMatchObject({ passed: true, reason: "Code review approved." });
+  });
+
+  it("fails a v2 approved payload that still lists findings (contradiction)", () => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+      findings: ["lint: unused variable"],
+      payloadVersion: "pi-bmad.code-review.payload.v2",
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("contradict"),
+    });
+  });
+
+  it("fails closed when v2 findings is not a string list", () => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+      findings: [1, 2],
+      payloadVersion: "pi-bmad.code-review.payload.v2",
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
+
+  it.each(["pi-bmad.code-review.payload.v3", "pi-bmad.code-review.payload.v2.1", "", 2])(
+    "fails closed on non-canonical payloadVersion %j",
+    (payloadVersion) => {
+      const result = codeReviewPayloadGate({
+        storyId: "s-1",
+        verdict: "approved",
+        findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+        autoFixed: false,
+        findings: [],
+        payloadVersion,
+      });
+
+      expect(result).toMatchObject({
+        passed: false,
+        reason: expect.stringContaining("malformed"),
+      });
+    },
+  );
+
+  it("fails closed when a v2 approval has an unknown root property", () => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+      findings: [],
+      payloadVersion: "pi-bmad.code-review.payload.v2",
+      unexpected: true,
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("malformed"),
+    });
+  });
+
+  it("still fails a v2 needs-dev payload with a severity summary finding", () => {
+    const result = codeReviewPayloadGate({
+      storyId: "s-1",
+      verdict: "needs-dev",
+      findingsBySeverity: { critical: 0, high: 2, medium: 1, low: 0, info: 3 },
+      autoFixed: false,
+      findings: ["high: unhandled error path"],
+      payloadVersion: "pi-bmad.code-review.payload.v2",
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe("Code review verdict: needs-dev.");
+    expect(result.findings?.[0]).toBe(
+      "Findings by severity: critical=0, high=2, medium=1, low=0, info=3.",
+    );
+  });
+
   it.each([{}, { verdict: "approve" }, { verdict: "APPROVED" }, { approved: true }])(
     "fails closed on non-contract payload %j",
     (payload) => {

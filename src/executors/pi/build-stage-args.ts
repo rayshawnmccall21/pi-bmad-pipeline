@@ -15,7 +15,6 @@
  */
 
 import type { ModelThinking } from "../../model/index.js";
-import type { CompiledStageDef } from "../../rundef/index.js";
 
 /** Default Pi executable name. */
 export const DEFAULT_PI_BIN = "pi" as const;
@@ -30,10 +29,28 @@ export const PI_BMAD_EMISSION_KEY_ENV_VAR = "PI_BMAD_EMISSION_KEY" as const;
 export const PI_OFFLINE_ENV_VAR = "PI_OFFLINE" as const;
 
 /** Minimal stage shape required to construct Pi stage argv. */
-export type StageArgsStage = Pick<
-  CompiledStageDef,
-  "id" | "workflow" | "thinking" | "extensions" | "oPool" | "oName" | "oTag"
->;
+export interface StageArgsStage {
+  /** Stable stage identifier included in the prompt and default run id. */
+  readonly id: string;
+
+  /** Pi-bmad workflow name passed via --bmad-workflow. */
+  readonly workflow: string;
+
+  /** Optional stage-level thinking effort override. */
+  readonly thinking?: "low" | "medium" | "high";
+
+  /** Optional extra Pi extension file paths loaded via repeated -e flags. */
+  readonly extensions?: readonly string[];
+
+  /** Optional observability pool name passed via --o-pool. */
+  readonly oPool?: string;
+
+  /** Optional observability session name passed via --o-name. */
+  readonly oName?: string;
+
+  /** Optional observability tag passed via --o-tag. */
+  readonly oTag?: string;
+}
 
 /** Request for building Pi CLI argv for one stage. */
 export interface BuildStageArgsRequest {

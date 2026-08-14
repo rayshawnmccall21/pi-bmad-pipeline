@@ -17,9 +17,12 @@
 ## Gotchas
 
 - Resume starts at the first incomplete compiled stage; changing completion semantics affects reconciliation and routing together.
-- A payload can pass only after process/output validation and any configured gate both pass.
+- Stage decisions are kind-aware: agent stages require validated authenticated output, while code stages pass on exit `0` with `output: null` and never fabricate a payload.
+- Nonzero/null code exits are terminal failures; any attached diagnostic is already bounded and redacted by the executor before core sees it.
+- An agent payload can pass only after process/output validation and any configured gate both pass.
 - Keep event vocabulary outside core: observers carry domain information, not serialized JSONL.
 
 ## Learnings
 
 - 2026-08-06 — Resume safety requires binding state to RunDef identity and passing active story identity into payload-gate evaluation.
+- 2026-08-14 — A stage-kind-neutral FSM still needs kind-aware decision semantics because authenticated output is mandatory for agents but intentionally absent for successful code stages.

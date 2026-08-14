@@ -1,4 +1,4 @@
-import type { CompiledStageDef, StageBudget } from "../rundef/index.js";
+import type { StageBudget } from "../rundef/index.js";
 
 /** Usage shape used for budget evaluation. */
 export interface BudgetUsage {
@@ -25,7 +25,13 @@ export interface StageBudgetExceededLimit {
 }
 
 /** Minimal compiled stage shape required for budget evaluation. */
-export type BudgetedStage = Pick<CompiledStageDef, "id" | "budget">;
+export interface BudgetedStage {
+  /** Stable stage identifier included in the evaluation result. */
+  readonly id: string;
+
+  /** Optional economic ceiling configured for the stage. */
+  readonly budget?: StageBudget;
+}
 
 /** Request for evaluating one stage budget. */
 export interface EvaluateStageBudgetRequest {

@@ -2,13 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 
 import { checkStageDecision } from "./index.js";
 
-import type { CompiledStageDef, PayloadGate } from "../rundef/index.js";
+import type { PayloadGate } from "../rundef/index.js";
 import type { StageDecisionExecutionResult } from "./index.js";
 
 const stage = (
-  overrides: Partial<Pick<CompiledStageDef, "id" | "payloadGate" | "payloadGateName">> = {},
-): Pick<CompiledStageDef, "id" | "payloadGate" | "payloadGateName"> => ({
+  overrides: {
+    id?: string;
+    payloadGateName?: string;
+    payloadGate?: PayloadGate;
+    kind?: "agent" | "code";
+  } = {},
+): { id: string; kind: "agent" | "code"; payloadGateName?: string; payloadGate?: PayloadGate } => ({
   id: "e2e-verify",
+  kind: "agent",
   ...overrides,
 });
 
@@ -66,6 +72,19 @@ describe("stage gate decision", () => {
 
     expect(decision.kind).toBe("failed");
     expect(decision.reason).toBe('Stage "e2e-verify" did not produce validated output.');
+  });
+
+  it("passes code with exit 0 and no output", () => {
+    const decision = checkStageDecision({
+      stage: stage({ kind: "code" }),
+      result: result({ output: null, exitCode: 0 }),
+    });
+
+    expect(decision).toMatchObject({
+      kind: "passed",
+      passed: true,
+      reason: 'Stage "e2e-verify" passed without a payload gate.',
+    });
   });
 
   it("fails on non-zero exit code", () => {

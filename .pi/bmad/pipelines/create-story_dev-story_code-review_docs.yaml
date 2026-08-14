@@ -4,10 +4,11 @@ description: >
   or E2E surface: create-story -> dev-story -> code-review (regresses to
   dev-story on gate failure) -> docs. Drops e2e-plan and e2e-verify; npm run
   check is the deterministic gate inside dev-story. The rundef id uses hyphens
-  because the identifier schema forbids underscores. Each agent stage loads
-  pi-observability, pi-subagents, and pi-mcp-adapter so children have the
-  subagent + mcp tools the BMAD workflows declare (the supervisor otherwise runs
-  --no-extensions). Observability pool is a constant project label; per-story
+  because the identifier schema forbids underscores. Each agent stage loads the
+  project quality guard plus pi-observability, pi-subagents, and pi-mcp-adapter
+  so children retain locked-file protection and the tools the BMAD workflows
+  declare (the supervisor otherwise runs --no-extensions). Observability pool
+  is a constant project label; per-story
   pooling needs supervisor ${storyId} interpolation (not yet implemented).
 stages:
   - id: create-story
@@ -19,6 +20,7 @@ stages:
     oName: sm
     oTag: create-story
     extensions:
+      - .pi/extensions/quality-guard.ts
       - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
       - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
       - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
@@ -32,6 +34,7 @@ stages:
     oName: dev
     oTag: dev-story
     extensions:
+      - .pi/extensions/quality-guard.ts
       - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
       - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
       - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
@@ -48,6 +51,7 @@ stages:
     oName: dev
     oTag: code-review
     extensions:
+      - .pi/extensions/quality-guard.ts
       - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
       - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
       - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
@@ -62,6 +66,7 @@ stages:
     oName: architect
     oTag: docs
     extensions:
+      - .pi/extensions/quality-guard.ts
       - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
       - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
       - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts

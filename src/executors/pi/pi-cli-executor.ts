@@ -1,4 +1,5 @@
 import type { ModelThinking } from "../../model/index.js";
+import type { CompiledAgentStage } from "../../rundef/index.js";
 import type {
   StageExecutionRequest,
   StageExecutionResult,
@@ -68,13 +69,18 @@ export class PiCliWorkflowExecutor implements WorkflowExecutor {
    *
    * @returns Stage execution result.
    *
+   * @throws RangeError When the concrete executor receives a non-agent stage.
+   *
    * @example
    * ```ts
    * await executor.execute(request);
    * ```
    */
   public execute(request: StageExecutionRequest): Promise<StageExecutionResult> {
-    return this.runStage(toRunBmadStageRequest(request, this.options));
+    if (request.stage.kind !== "agent") {
+      throw new RangeError('PiCliWorkflowExecutor requires a stage with kind "agent".');
+    }
+    return this.runStage(toRunBmadStageRequest(request, request.stage, this.options));
   }
 }
 
@@ -96,9 +102,11 @@ const validateNonBlank = (field: string, value: string): void => {
 
 const toRunBmadStageRequest = (
   request: StageExecutionRequest,
+  stage: CompiledAgentStage,
   options: PiCliWorkflowExecutorOptions,
 ): RunBmadStageRequest => ({
   ...request,
+  stage,
   model: options.model,
   thinking: options.thinking,
   ...optionalCliFields(options),

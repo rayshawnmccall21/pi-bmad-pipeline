@@ -3,8 +3,8 @@
  *
  * Owns the mechanism half of the action: explicit payload-gate registration,
  * RunDef selection/compilation, model resolution from D7 candidate sources,
- * worktree creation, durable starting-state resolution, and the FSM invocation
- * with saveState persistence plus the observer-to-event adapter. All effects
+ * durable starting-state resolution, and the FSM invocation with exact project-root
+ * execution, saveState persistence, and the observer-to-event adapter. All effects
  * arrive through the injected context dependencies; this module performs no
  * direct I/O.
  *
@@ -234,7 +234,7 @@ const emitStageFinished = (emitter: PipelineEventEmitter, info: PipelineStageFin
     durationMs: info.execution.durationMs,
     reason: info.decision.reason,
   });
-  if (info.stage.payloadGateName !== undefined) {
+  if (info.stage.kind === "agent" && info.stage.payloadGateName !== undefined) {
     emitter.emit("gate.decision", {
       stageId: info.stage.id,
       gate: info.stage.payloadGateName,

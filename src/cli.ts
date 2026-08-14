@@ -48,6 +48,8 @@ export interface RunCliDeps {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** Durable pipeline action. */
   readonly runPipeline: typeof runPipelineAction;
+  /** Optional cancellation signal forwarded to the run action. */
+  readonly signal?: AbortSignal;
 }
 
 /** Real CLI dependencies. */
@@ -85,6 +87,7 @@ const executeRun = async (command: CliRunCommand, deps: RunCliDeps): Promise<num
     ...(command.model === undefined ? {} : { model: command.model }),
     ...(command.thinking === undefined ? {} : { thinking: command.thinking }),
     ...(command.maxRegressions === undefined ? {} : { maxRegressions: command.maxRegressions }),
+    ...(deps.signal === undefined ? {} : { signal: deps.signal }),
   });
   return runStatusExitCode(result.status);
 };
@@ -165,8 +168,24 @@ export function isMainModule(
 }
 
 const commandArgumentOffset = 2;
+
+const runExecutable = async (): Promise<void> => {
+  const controller = new AbortController();
+  const abort = (): void => {
+    controller.abort();
+  };
+  process.on("SIGTERM", abort);
+  process.on("SIGINT", abort);
+  try {
+    process.exitCode = await runCli(process.argv.slice(commandArgumentOffset), {
+      signal: controller.signal,
+    });
+  } finally {
+    process.off("SIGTERM", abort);
+    process.off("SIGINT", abort);
+  }
+};
+
 if (isMainModule(import.meta.url, process.argv)) {
-  void runCli(process.argv.slice(commandArgumentOffset)).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
+  void runExecutable();
 }

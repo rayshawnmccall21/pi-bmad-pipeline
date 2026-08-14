@@ -194,6 +194,106 @@ describe("RunDef schema validation - properties and kinds", () => {
   });
 });
 
+const codeForbiddenFields = [
+  ["workflow", "dev-story"],
+  ["agent", "dev"],
+  ["thinking", "high"],
+  ["budget", { maxTokens: 1 }],
+  ["gate", "code-review"],
+  ["onFail", "prepare"],
+  ["maxRetries", 1],
+  ["extensions", ["/ext/example.ts"]],
+  ["oPool", "reviewers"],
+  ["oName", "reviewer"],
+  ["oTag", "review"],
+  ["shell", true],
+  ["script", "npm run check"],
+  ["cwd", "/tmp"],
+  ["env", { NODE_ENV: "test" }],
+] as const;
+
+describe("RunDef schema validation - code stages", () => {
+  it("accepts a valid code stage", () => {
+    const candidate = {
+      id: "pipeline",
+      stages: [{ id: "check", kind: "code" as const, command: "npm", args: ["run", "check"] }],
+    };
+    expect(validateRunDef(candidate).ok).toBe(true);
+  });
+
+  it("rejects a code stage with a whitespace-only command", () => {
+    const candidate = {
+      id: "pipeline",
+      stages: [{ id: "check", kind: "code" as const, command: "   " }],
+    };
+
+    expect(validateRunDef(candidate).ok).toBe(false);
+  });
+
+  it("rejects a code stage missing command", () => {
+    const candidate = { id: "pipeline", stages: [{ id: "check", kind: "code" as const }] };
+    const result = validateRunDef(candidate);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.issues.some((i) => i.message.includes("required") && i.message.includes("command")),
+      ).toBe(true);
+    }
+  });
+  it.each(codeForbiddenFields)("rejects code field %s", (field, value) => {
+    const candidate = {
+      id: "pipeline",
+      stages: [{ id: "check", kind: "code", command: "npm", [field]: value }],
+    };
+
+    expect(validateRunDef(candidate).ok).toBe(false);
+  });
+
+  it.each([1, true, null, {}, ["nested"]])("rejects non-string code arg %j", (arg) => {
+    const candidate = {
+      id: "pipeline",
+      stages: [{ id: "check", kind: "code", command: "npm", args: [arg] }],
+    };
+
+    expect(validateRunDef(candidate).ok).toBe(false);
+  });
+
+  it("rejects inert maxRetries on an agent stage", () => {
+    const candidate = {
+      id: "pipeline",
+      stages: [
+        {
+          id: "dev-story",
+          kind: "agent",
+          workflow: "dev-story",
+          agent: "dev",
+          maxRetries: 1,
+        },
+      ],
+    };
+
+    expect(validateRunDef(candidate).ok).toBe(false);
+  });
+  it("rejects an agent stage with code-only fields", () => {
+    const candidate = {
+      id: "pipeline",
+      stages: [
+        {
+          id: "check",
+          kind: "agent" as const,
+          workflow: "dev-story",
+          agent: "dev",
+          command: "npm",
+        },
+      ],
+    };
+    const result = validateRunDef(candidate);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((i) => i.message.includes("anyOf"))).toBe(true);
+    }
+  });
+});
 describe("RunDef schema validation - numeric constraints", () => {
   it.each([0, -1, 1.5, "1800"])("rejects invalid timeout %j", (timeout) => {
     const stage = validRunDef().stages[0]!;
