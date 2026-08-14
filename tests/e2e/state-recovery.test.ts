@@ -5,7 +5,7 @@
  * lock contention and staleness, and the exactly-one-result invariant.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -24,6 +24,16 @@ import {
   statePath,
   writePipeline,
 } from "./harness.js";
+
+const waitUntil = async (predicate: () => boolean, timeoutMs = 10_000): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for built CLI state.");
+    }
+    await new Promise<void>((resolveSleep) => setTimeout(resolveSleep, 25));
+  }
+};
 
 const writeLockInfo = (root: string, storyId: string, pid: number): void => {
   const lockDir = lockDirOf(root, storyId);
@@ -133,6 +143,114 @@ describe("durable state, recovery, and concurrency", () => {
     expect(state.stages["dev"].history.at(-1)?.status).toBe("passed");
     expect(existsSync(lockDirOf(root, "C2-INTERRUPT"))).toBe(false);
   });
+
+  it.each([
+    { name: "command", changedCommand: process.execPath, changedArgs: undefined },
+    {
+      name: "args",
+      changedCommand: "node",
+      changedArgs: ["-e", "require('node:fs').writeFileSync(process.argv[1], 'changed')"],
+    },
+  ])("blocks changed code $name before a code spawn marker", ({ changedCommand, changedArgs }) => {
+    const root = makeProject();
+    const marker = spawnMarkerPath(root, "code-identity");
+    const initialArgs = [
+      "-e",
+      "require('node:fs').writeFileSync(process.argv[1], 'initial')",
+      marker,
+    ];
+    const yaml = (command: string, args: readonly string[]): string => `
+id: code-identity
+stages:
+  - id: check
+    kind: code
+    command: ${JSON.stringify(command)}
+    args: ${JSON.stringify(args)}
+    timeout: 60
+`;
+
+    writePipeline(root, "code-identity", yaml("node", initialArgs));
+    expect(runCli(root, "code-identity", "C5-CODE-IDENTITY").status).toBe(0);
+    rmSync(marker, { force: true });
+
+    const nextArgs = changedArgs === undefined ? initialArgs : [...changedArgs, marker];
+    writePipeline(root, "code-identity", yaml(changedCommand, nextArgs));
+    const outcome = runCli(root, "code-identity", "C5-CODE-IDENTITY");
+
+    expect(outcome.status).toBe(2);
+    expect(singleResult(outcome)).toMatchObject({ status: "needs-attention" });
+    expect(outcome.stdout).toContain('"code":"state-identity-mismatch"');
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "reruns an interrupted code stage without fabricating attempt history",
+    async () => {
+      const root = makeProject();
+      const marker = spawnMarkerPath(root, "code-rerun");
+      const pidFile = join(root, "code-rerun.pid");
+      const script = `
+const fs = require('node:fs');
+const marker = ${JSON.stringify(marker)};
+const count = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').length : 0;
+fs.appendFileSync(marker, 'x');
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+if (count === 0) setInterval(() => {}, 60000);
+`;
+      writePipeline(
+        root,
+        "code-rerun",
+        `
+id: code-rerun
+stages:
+  - id: check
+    kind: code
+    command: node
+    args: ["-e", ${JSON.stringify(script)}]
+    timeout: 60
+`,
+      );
+
+      const cli = spawn(
+        "node",
+        [
+          builtCliPath,
+          "run",
+          "code-rerun",
+          "--story-id",
+          "C6-CODE-RERUN",
+          "--spec-file",
+          "spec.md",
+          "--project-root",
+          root,
+          "--jsonl",
+        ],
+        { cwd: projectRoot, env: { ...process.env, ...baseEnv }, stdio: "ignore" },
+      );
+      await waitUntil(
+        () =>
+          existsSync(pidFile) &&
+          existsSync(statePath(root, "C6-CODE-RERUN")) &&
+          readState(root, "C6-CODE-RERUN").stages["check"]?.status === "running",
+      );
+
+      cli.kill("SIGKILL");
+      await new Promise<void>((resolveExit) => cli.once("close", () => resolveExit()));
+      process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
+
+      const interrupted = readState(root, "C6-CODE-RERUN").stages["check"];
+      expect(interrupted?.history).toHaveLength(0);
+      expect(interrupted?.attempts).toBe(0);
+
+      const rerun = runCli(root, "code-rerun", "C6-CODE-RERUN");
+      expect(rerun.status).toBe(0);
+      expect(readFileSync(marker, "utf8")).toBe("xx");
+      const completed = readState(root, "C6-CODE-RERUN").stages["check"];
+      expect(completed?.attempts).toBe(1);
+      expect(completed?.history).toHaveLength(1);
+      expect(completed?.history[0]?.status).toBe("passed");
+    },
+  );
 
   it("refuses a run when a live dispatch lock is held", () => {
     const root = makeProject();

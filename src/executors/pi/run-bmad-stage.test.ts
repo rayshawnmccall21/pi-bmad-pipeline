@@ -16,7 +16,7 @@ import {
 } from "./index.js";
 import { DEFAULT_KILL_ESCALATION_MS } from "./run-bmad-stage.js";
 
-import type { CompiledStageDef } from "../../rundef/index.js";
+import type { CompiledAgentStage } from "../../rundef/index.js";
 import type {
   BmadStageChildProcess,
   BmadStageSpawn,
@@ -57,7 +57,7 @@ const messageEndLine = (totalTokens: number, total: number): string =>
     message: { role: "assistant", usage: { totalTokens, cost: { total } } },
   })}\n`;
 
-const stage = (overrides: Partial<CompiledStageDef> = {}): CompiledStageDef => ({
+const stage = (overrides: Partial<CompiledAgentStage> = {}): CompiledAgentStage => ({
   id: "dev-story",
   kind: "agent",
   workflow: "dev-story",
@@ -271,6 +271,18 @@ describe("run BMAD stage", () => {
     await expect(promise).resolves.toMatchObject({ parseError: "Child stderr: boom" });
   });
 
+  it("preserves split UTF-8 in stderr diagnostics", async () => {
+    const [spawn, child] = createSpawn();
+    const encoded = Buffer.from("failure: €");
+
+    const promise = runBmadStage(request({ spawn }));
+    child.stderr.emit("data", encoded.subarray(0, encoded.length - 2));
+    child.stderr.emit("data", encoded.subarray(encoded.length - 2));
+    close(child, 1);
+
+    await expect(promise).resolves.toMatchObject({ parseError: "Child stderr: failure: €" });
+  });
+
   it("caps captured stderr", async () => {
     const [spawn, child] = createSpawn();
 
@@ -439,6 +451,27 @@ describe("run BMAD stage SIGTERM-to-SIGKILL escalation", () => {
 
     await expect(promise).resolves.toMatchObject({ timedOut: true });
     expect(killSignals(child)).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  it("preserves timeout classification and escalation when a late child error races termination", async () => {
+    vi.useFakeTimers();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, timeoutMs: 1, killEscalationMs: 5 }));
+    const settlement = promise.then(
+      (result) => ({ kind: "resolved" as const, result }),
+      (error: unknown) => ({ kind: "rejected" as const, error }),
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    child.emit("error", new Error("late process error"));
+    await vi.advanceTimersByTimeAsync(5);
+    close(child, null);
+
+    expect(killSignals(child)).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(await settlement).toMatchObject({
+      kind: "resolved",
+      result: { output: null, exitCode: null, timedOut: true },
+    });
   });
 
   it("never sends SIGKILL when the child exits within the grace period", async () => {

@@ -2,10 +2,8 @@
  * TypeBox schema validation and cross-field invariant enforcement for RunDef.
  *
  * This module is the runtime validation boundary for raw RunDef objects loaded
- * from discovered YAML. Structural validation runs first
- * via TypeBox; cross-field invariants (unique ids, gate/onFail pairing, onFail
- * target existence and ordering, budget non-emptiness) run only after structural
- * validation passes.
+ * from discovered YAML. Structural validation runs first via TypeBox;
+ * cross-field invariants run only after structural validation passes.
  *
  * @packageDocumentation
  */
@@ -15,11 +13,11 @@ import { Check, Errors } from "typebox/value";
 
 import type { RunDef } from "./types.js";
 
-/** Identifier pattern for RunDef ids, stage ids, workflow names, agent names, and gate names. */
+/** Identifier pattern shared by RunDef names and references. */
 export const RUNDEF_IDENTIFIER_PATTERN = "^[a-z][a-z0-9-]*$" as const;
 
 /** TypeBox schema for per-stage budget ceilings. */
-// eslint-disable-next-line @typescript-eslint/naming-convention -- TypeBox schema objects use PascalCase by convention
+// eslint-disable-next-line @typescript-eslint/naming-convention -- Established public TypeBox schema API name.
 export const StageBudgetSchema = Type.Object(
   {
     maxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -28,9 +26,9 @@ export const StageBudgetSchema = Type.Object(
   { additionalProperties: false },
 );
 
-/** TypeBox schema for one raw RunDef stage entry. */
-// eslint-disable-next-line @typescript-eslint/naming-convention -- TypeBox schema objects use PascalCase by convention
-export const RunDefStageSchema = Type.Object(
+/** TypeBox schema for one raw agent stage entry. */
+// eslint-disable-next-line @typescript-eslint/naming-convention -- Established public TypeBox schema API name.
+export const AgentRunDefStageSchema = Type.Object(
   {
     id: Type.String({ pattern: RUNDEF_IDENTIFIER_PATTERN }),
     kind: Type.Literal("agent"),
@@ -48,13 +46,30 @@ export const RunDefStageSchema = Type.Object(
     oPool: Type.Optional(Type.String({ minLength: 1 })),
     oName: Type.Optional(Type.String({ minLength: 1 })),
     oTag: Type.Optional(Type.String({ minLength: 1 })),
-    maxRetries: Type.Optional(Type.Integer({ minimum: 0 })),
   },
   { additionalProperties: false },
 );
 
+/** TypeBox schema for one raw code stage entry. */
+// eslint-disable-next-line @typescript-eslint/naming-convention -- Established public TypeBox schema API name.
+export const CodeRunDefStageSchema = Type.Object(
+  {
+    id: Type.String({ pattern: RUNDEF_IDENTIFIER_PATTERN }),
+    kind: Type.Literal("code"),
+    description: Type.Optional(Type.String()),
+    command: Type.String({ minLength: 1, pattern: "\\S" }),
+    args: Type.Optional(Type.Array(Type.String())),
+    timeout: Type.Optional(Type.Integer({ minimum: 1 })),
+  },
+  { additionalProperties: false },
+);
+
+/** TypeBox schema for either supported raw stage kind. */
+// eslint-disable-next-line @typescript-eslint/naming-convention -- Established public TypeBox schema API name.
+export const RunDefStageSchema = Type.Union([AgentRunDefStageSchema, CodeRunDefStageSchema]);
+
 /** TypeBox schema for a raw RunDef pipeline definition. */
-// eslint-disable-next-line @typescript-eslint/naming-convention -- TypeBox schema objects use PascalCase by convention
+// eslint-disable-next-line @typescript-eslint/naming-convention -- Established public TypeBox schema API name.
 export const RunDefSchema = Type.Object(
   {
     id: Type.String({ pattern: RUNDEF_IDENTIFIER_PATTERN }),
@@ -64,10 +79,14 @@ export const RunDefSchema = Type.Object(
   { additionalProperties: false },
 );
 
-// ponytail: typebox v1 uses Infer instead of Static, but Static is re-exported as a type
-
 /** Static type for StageBudgetSchema values. */
 export type StageBudgetSchemaValue = Static<typeof StageBudgetSchema>;
+
+/** Static type for AgentRunDefStageSchema values. */
+export type AgentRunDefStageSchemaValue = Static<typeof AgentRunDefStageSchema>;
+
+/** Static type for CodeRunDefStageSchema values. */
+export type CodeRunDefStageSchemaValue = Static<typeof CodeRunDefStageSchema>;
 
 /** Static type for RunDefStageSchema values. */
 export type RunDefStageSchemaValue = Static<typeof RunDefStageSchema>;
@@ -125,7 +144,6 @@ export class RunDefValidationError extends Error {
   }
 }
 
-// Maps TypeBox errors to validation issues.
 function collectTypeBoxIssues(
   schema: typeof RunDefSchema,
   candidate: unknown,
@@ -136,22 +154,22 @@ function collectTypeBoxIssues(
   }));
 }
 
-// Checks cross-field invariants on a structurally valid RunDef.
 function checkCrossFieldInvariants(def: RunDef): RunDefValidationIssue[] {
   const issues: RunDefValidationIssue[] = [];
   const seenIds = new Set<string>();
 
   for (const [index, stage] of def.stages.entries()) {
     issues.push(...checkStageIdUnique(stage, index, seenIds));
-    issues.push(...checkGateOnFailPairing(stage, index));
-    issues.push(...checkOnFailTarget(stage, index, def.stages));
-    issues.push(...checkBudgetNonEmpty(stage, index));
+    if (stage.kind === "agent") {
+      issues.push(...checkGateOnFailPairing(stage, index));
+      issues.push(...checkOnFailTarget(stage, index, def.stages));
+      issues.push(...checkBudgetNonEmpty(stage, index));
+    }
   }
 
   return issues;
 }
 
-// Reports a duplicate stage id.
 function checkStageIdUnique(
   stage: RunDef["stages"][number],
   index: number,
@@ -164,9 +182,8 @@ function checkStageIdUnique(
   return [];
 }
 
-// Reports a gate or onFail declared without its required partner field.
 function checkGateOnFailPairing(
-  stage: RunDef["stages"][number],
+  stage: RunDef["stages"][number] & { readonly gate?: string; readonly onFail?: string },
   index: number,
 ): RunDefValidationIssue[] {
   if (stage.gate !== undefined && stage.onFail === undefined) {
@@ -190,9 +207,8 @@ function checkGateOnFailPairing(
   return [];
 }
 
-// Reports an onFail target that does not exist or points to a non-earlier stage.
 function checkOnFailTarget(
-  stage: RunDef["stages"][number],
+  stage: RunDef["stages"][number] & { readonly onFail?: string; readonly gate?: string },
   index: number,
   stages: RunDef["stages"],
 ): RunDefValidationIssue[] {
@@ -223,9 +239,10 @@ function checkOnFailTarget(
   return [];
 }
 
-// Reports a budget object that declares no ceiling.
 function checkBudgetNonEmpty(
-  stage: RunDef["stages"][number],
+  stage: RunDef["stages"][number] & {
+    readonly budget?: { readonly maxTokens?: number; readonly maxDollars?: number };
+  },
   index: number,
 ): RunDefValidationIssue[] {
   if (stage.budget === undefined) {
@@ -245,10 +262,7 @@ function checkBudgetNonEmpty(
 }
 
 /**
- * Validates an unknown candidate as a RunDef.
- *
- * Runs TypeBox structural validation first, then cross-field invariants only if
- * structural validation passes. Does not mutate the candidate.
+ * Validates an unknown candidate as a RunDef without mutating it.
  *
  * @param candidate - Candidate value loaded from discovered YAML.
  *
@@ -257,9 +271,6 @@ function checkBudgetNonEmpty(
  * @example
  * ```ts
  * const result = validateRunDef(candidate);
- * if (result.ok) {
- *   console.log(result.value.id);
- * }
  * ```
  */
 export function validateRunDef(candidate: unknown): RunDefValidationResult {
@@ -282,7 +293,7 @@ export function validateRunDef(candidate: unknown): RunDefValidationResult {
  *
  * @returns The validated RunDef.
  *
- * @throws RunDefValidationError When structural validation or cross-field validation fails.
+ * @throws RunDefValidationError When structural or cross-field validation fails.
  *
  * @example
  * ```ts
@@ -307,7 +318,6 @@ export function parseRunDef(candidate: unknown): RunDef {
  * @example
  * ```ts
  * assertRunDef(candidate);
- * // candidate is now narrowed to RunDef
  * ```
  */
 export function assertRunDef(candidate: unknown): asserts candidate is RunDef {
@@ -326,9 +336,7 @@ export function assertRunDef(candidate: unknown): asserts candidate is RunDef {
  *
  * @example
  * ```ts
- * if (isRunDef(candidate)) {
- *   console.log(candidate.stages.length);
- * }
+ * if (isRunDef(candidate)) console.log(candidate.stages.length);
  * ```
  */
 export function isRunDef(candidate: unknown): candidate is RunDef {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve as resolvePath } from "node:path";
 
 import type { ModelThinking } from "../../model/index.js";
+import type { CompiledAgentStage } from "../../rundef/index.js";
 import type { StageExecutionRequest, StageExecutionResult } from "../workflow-executor.js";
 import {
   buildStageArgs,
@@ -15,6 +16,7 @@ import {
   type GatedHeadlessOutputExtraction,
 } from "./headless-stream-output.js";
 import { resolvePiBmadExtensionPath } from "./pi-bmad-extension.js";
+import { createStderrCapture } from "./stderr-capture.js";
 import {
   BMAD_STAGE_STDIO,
   nodeStageSpawn,
@@ -38,7 +40,10 @@ export const DEFAULT_KILL_ESCALATION_MS = 10_000 as const;
 const millisecondsPerSecond = 1000;
 
 /** Request for running one BMAD stage through the Pi CLI. */
-export interface RunBmadStageRequest extends Omit<StageExecutionRequest, "signal"> {
+export interface RunBmadStageRequest extends Omit<StageExecutionRequest, "signal" | "stage"> {
+  /** Compiled agent stage executed through Pi. */
+  readonly stage: CompiledAgentStage;
+
   /** Abort signal that cancels the child process. */
   readonly signal: AbortSignal;
 
@@ -121,7 +126,7 @@ export function runBmadStage(request: RunBmadStageRequest): Promise<StageExecuti
   const now = request.now ?? Date.now;
   const startMs = now();
   const parser = createHeadlessJsonlParser();
-  const stderr = createStderrCapture();
+  const stderr = createStderrCapture(MAX_STAGE_STDERR_CHARS);
   const state = createRunState(resolveKillEscalationMs(request));
   const spawn = request.spawn ?? nodeStageSpawn;
   logStageSpawn(request, invocation, timeoutMs);
@@ -264,7 +269,9 @@ const attachChildHandlers = (child: BmadStageChildProcess, context: CloseContext
     context.stderr.push(chunk);
   });
   child.once("error", (error: unknown) => {
-    rejectOnce(context, new BmadStageSpawnError(context.command, error));
+    if (!context.state.timedOut && !context.state.aborted) {
+      rejectOnce(context, new BmadStageSpawnError(context.command, error));
+    }
   });
   child.once("close", (code: number | null) => {
     resolveClose(context, code);
@@ -375,21 +382,3 @@ const createRunState = (killEscalationMs: number): RunState => ({
   killTimer: undefined,
   killEscalationMs,
 });
-
-const createStderrCapture = (): {
-  readonly push: (chunk: Uint8Array | string) => void;
-  readonly value: () => string;
-} => {
-  let captured = "";
-  return {
-    push(chunk) {
-      captured = `${captured}${chunkToString(chunk)}`.slice(0, MAX_STAGE_STDERR_CHARS);
-    },
-    value() {
-      return captured;
-    },
-  };
-};
-
-const chunkToString = (chunk: Uint8Array | string): string =>
-  typeof chunk === "string" ? chunk : new TextDecoder("utf-8").decode(chunk);

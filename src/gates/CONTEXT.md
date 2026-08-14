@@ -1,6 +1,6 @@
 # gates/ — Context
 
-> Canonical payload decisions registered by name for YAML stages that request BMAD verification gates.
+> Named canonical and compatibility payload decisions for agent stages that request BMAD verification gates.
 
 ## ADRs
 
@@ -9,15 +9,17 @@
 ## Invariants
 
 - `e2e-verify` passes only canonical `verdict: pass`; `code-review` passes only canonical `verdict: approved`.
-- Positive verdicts must include exactly the expected properties, valid counts/lists, matching story identity, and no contradictory failures/findings.
-- Unknown verdicts, unknown properties, malformed fields, identity mismatch, and contradictory payloads fail closed.
+- Positive verdicts for the canonical `e2e-verify` and `code-review` gates must include exactly the expected properties, valid counts/lists, matching story identity, and no contradictory failures/findings.
+- Unknown verdicts, unknown properties, malformed fields, identity mismatch, and contradictory payloads fail closed in the canonical gates.
+- `code-review-lenient` is an explicit compatibility gate: it also accepts `needs-dev` or `needs-verify` when normalized critical/high counts are both zero.
 - Failed gates return immutable reasons/findings suitable for backward regression.
-- Registration is deterministic and idempotent through the RunDef gate registry.
+- Registration is deterministic and idempotent through the RunDef gate registry; the registration summary reports the two canonical gate names even though the lenient gate is also registered.
 
 ## Gotchas
 
-- Do not use fuzzy field sniffing or accept aliases not present in the pi-bmad result schemas.
-- A schema-valid envelope is not sufficient for a pass; cross-field consistency and active story identity are gate responsibilities.
+- Do not use fuzzy field sniffing or accept aliases not present in the pi-bmad result schemas for canonical gates.
+- A schema-valid envelope is not sufficient for a canonical pass; cross-field consistency and active story identity are gate responsibilities.
+- The lenient gate treats missing or invalid severity counts as zero; select it only when that compatibility policy is intentional.
 - Changing a gate name breaks YAML compilation for every RunDef that references it.
 
 ## Learnings

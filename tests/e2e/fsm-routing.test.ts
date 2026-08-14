@@ -143,6 +143,96 @@ describe("FSM routing and gates", () => {
     }
   });
 
+  it("executes mixed agent, code, agent stages in declared order", () => {
+    const root = makeProject();
+    writePipeline(
+      root,
+      "mixed",
+      `
+id: mixed
+stages:
+  - id: alpha
+    kind: agent
+    workflow: dev-story
+    agent: dev
+    timeout: 60
+  - id: check
+    kind: code
+    command: node
+    args: ["-e", "process.stdout.write('discarded')"]
+    timeout: 60
+  - id: omega
+    kind: agent
+    workflow: dev-story
+    agent: dev
+    timeout: 60
+`,
+    );
+
+    const outcome = runCli(root, "mixed", "B7-MIXED");
+
+    expect(outcome.stderr, outcome.stderr).toBe("");
+    expect(outcome.status, outcome.stdout).toBe(0);
+    expect(singleResult(outcome)["stagesRun"]).toEqual(["alpha", "check", "omega"]);
+  });
+
+  it("stops terminally when a code stage exits nonzero", () => {
+    const root = makeProject();
+    writePipeline(
+      root,
+      "code-failure",
+      `
+id: code-failure
+stages:
+  - id: check
+    kind: code
+    command: node
+    args: ["-e", "process.stderr.write('check failed'); process.exit(3)"]
+    timeout: 60
+  - id: never
+    kind: agent
+    workflow: docs
+    agent: architect
+    timeout: 60
+`,
+    );
+
+    const outcome = runCli(root, "code-failure", "B8-CODE-FAIL");
+
+    expect(outcome.status).toBe(2);
+    expect(singleResult(outcome)).toMatchObject({
+      status: "failed",
+      regressions: 0,
+      stagesRun: ["check"],
+    });
+    expect(readState(root, "B8-CODE-FAIL").stages["never"]?.status).toBe("pending");
+  });
+
+  it("rejects invalid code YAML before spawning its command", () => {
+    const root = makeProject();
+    const marker = spawnMarkerPath(root, "invalid-code");
+    writePipeline(
+      root,
+      "invalid-code",
+      `
+id: invalid-code
+stages:
+  - id: check
+    kind: code
+    command: node
+    args: ["-e", "require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'spawned')"]
+    env:
+      FORBIDDEN: value
+`,
+    );
+
+    const outcome = runCli(root, "invalid-code", "B9-INVALID-CODE");
+
+    expect(outcome.status).toBe(2);
+    expect(singleResult(outcome)).toMatchObject({ status: "needs-attention" });
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("rejects an unregistered gate at compile time without spawning a child", () => {
     const root = makeProject();
     writePipeline(

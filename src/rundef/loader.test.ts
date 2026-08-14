@@ -145,6 +145,29 @@ describe("RunDef loader", () => {
     }
   });
 
+  it("rejects agent maxRetries at the YAML loader boundary", async () => {
+    const root = await createProjectRoot();
+    const filePath = await writePipeline(
+      root,
+      "invalid.yaml",
+      [
+        "id: invalid",
+        "stages:",
+        "  - id: dev-story",
+        "    kind: agent",
+        "    workflow: dev-story",
+        "    agent: dev",
+        "    maxRetries: 1",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(loadRunDefFile(filePath)).rejects.toMatchObject({
+      code: "invalid-rundef",
+      path: filePath,
+    });
+  });
+
   it("throws RunDefLoadError when the pipelines path is not a directory", async () => {
     const root = await createProjectRoot();
     const pipelinesPath = getRunDefPipelinesDir(root);

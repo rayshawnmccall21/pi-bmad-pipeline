@@ -11,7 +11,7 @@
 - `redactText`, `redactError`, and `redactValue` replace supported credential shapes with `[REDACTED]` before diagnostics or events cross process boundaries.
 - Match summaries are deterministic and returned with immutable results.
 - Deep redaction traverses string leaves in JSON-like arrays/objects and freezes the sanitized structure.
-- Events, debug logs, and Git diagnostics reuse this module as the single redaction source.
+- CLI failures, local-code diagnostics, events, and debug logs reuse this module as the shared redaction source.
 
 ## Gotchas
 

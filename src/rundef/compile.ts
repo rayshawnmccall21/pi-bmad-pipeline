@@ -14,6 +14,7 @@
 import { parseRunDef } from "./schema.js";
 import { payloadGateRegistry } from "./registry.js";
 import type {
+  CompiledCodeStage,
   CompiledStageDef,
   PayloadGate,
   PayloadGateRegistry,
@@ -190,7 +191,7 @@ function resolveStageGate(gateName: string, ctx: StageCompileContext): PayloadGa
  */
 function addObservabilityFields(
   fields: Record<string, unknown>,
-  stage: RunDef["stages"][number],
+  stage: Extract<RunDef["stages"][number], { kind: "agent" }>,
 ): void {
   if (stage.oPool !== undefined) {
     fields["oPool"] = stage.oPool;
@@ -214,7 +215,10 @@ function addObservabilityFields(
  * addCopiedFields(fields, stage);
  * ```
  */
-function addCopiedFields(fields: Record<string, unknown>, stage: RunDef["stages"][number]): void {
+function addCopiedFields(
+  fields: Record<string, unknown>,
+  stage: Extract<RunDef["stages"][number], { kind: "agent" }>,
+): void {
   if (stage.budget !== undefined) {
     fields["budget"] = copyBudget(stage.budget);
   }
@@ -237,7 +241,7 @@ function addCopiedFields(fields: Record<string, unknown>, stage: RunDef["stages"
  * ```
  */
 function buildOptionalFields(
-  stage: RunDef["stages"][number],
+  stage: Extract<RunDef["stages"][number], { kind: "agent" }>,
   ctx: StageCompileContext,
 ): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
@@ -257,6 +261,34 @@ function buildOptionalFields(
   return fields;
 }
 
+type AgentStage = Extract<RunDef["stages"][number], { kind: "agent" }>;
+type CodeStage = Extract<RunDef["stages"][number], { kind: "code" }>;
+
+function compileAgentStage(stage: AgentStage, ctx: StageCompileContext): CompiledStageDef {
+  const base = {
+    id: stage.id,
+    kind: "agent" as const,
+    workflow: stage.workflow,
+    agent: stage.agent,
+    index: ctx.index,
+    timeoutSeconds: stage.timeout ?? ctx.defaultTimeout,
+    ...(stage.description === undefined ? {} : { description: stage.description }),
+  };
+  return Object.freeze({ ...base, ...buildOptionalFields(stage, ctx) });
+}
+
+function compileCodeStage(stage: CodeStage, ctx: StageCompileContext): CompiledCodeStage {
+  return Object.freeze({
+    id: stage.id,
+    kind: "code",
+    command: stage.command,
+    args: Object.freeze([...(stage.args ?? [])]),
+    index: ctx.index,
+    timeoutSeconds: stage.timeout ?? ctx.defaultTimeout,
+    ...(stage.description === undefined ? {} : { description: stage.description }),
+  });
+}
+
 /**
  * Compiles a single RunDef stage into a compiled stage definition.
  *
@@ -273,17 +305,15 @@ function buildOptionalFields(
 function compileStage(stage: RunDef["stages"][number], ctx: StageCompileContext): CompiledStageDef {
   const stageCtx: StageCompileContext = { ...ctx, stageId: stage.id };
 
-  const base = {
-    id: stage.id,
-    kind: stage.kind,
-    workflow: stage.workflow,
-    agent: stage.agent,
-    index: stageCtx.index,
-    timeoutSeconds: stage.timeout ?? stageCtx.defaultTimeout,
-  };
+  switch (stage.kind) {
+    case "agent":
+      return compileAgentStage(stage, stageCtx);
+    case "code":
+      return compileCodeStage(stage, stageCtx);
+  }
 
-  const compiled = Object.freeze({ ...base, ...buildOptionalFields(stage, stageCtx) });
-  return compiled;
+  const exhaustiveStage: never = stage;
+  return exhaustiveStage;
 }
 
 /**

@@ -39,4 +39,20 @@ describe("narrowed mission documentation", () => {
       /built-in(?:-vs-discovered| definition| definitions)|evidence|pull request|\bPR\b|merge|audit (?:artifact|logging|output|reason|status)|stage extension|current-run/iu,
     );
   });
+
+  it("documents code stages without universal Pi or worktree claims", () => {
+    const publicDocumentation = [
+      "README.md",
+      "CONTEXT.md",
+      "skills/pi-bmad-pipeline-workflows/SKILL.md",
+    ]
+      .map(readProjectFile)
+      .join("\n");
+
+    expect(publicDocumentation).toContain("kind: code");
+    expect(publicDocumentation).toContain("command:");
+    expect(publicDocumentation).not.toMatch(
+      /one (?:fresh, hermetic |hermetic )?Pi child per stage|each stage starts a fresh Pi process|ensure isolated story worktree|locks and isolated worktrees/iu,
+    );
+  });
 });

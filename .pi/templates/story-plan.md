@@ -115,14 +115,17 @@
      4. Add or remove tasks as needed but ALWAYS keep the - [ ] prefix. -->
 
 **Slice 1 — {{GROUP_NAME}}**
+
 - [ ] {{TASK_DESCRIPTION}}
   - [ ] {{SUBTASK_DETAIL}}
 
 **Slice 2 — {{GROUP_NAME}}**
+
 - [ ] {{TASK_DESCRIPTION}}
   - [ ] {{SUBTASK_DETAIL}}
 
 **Validate**
+
 - [ ] {{VALIDATION_COMMAND}}
 
 ---
@@ -131,8 +134,8 @@
 
 <!-- List every test file that must pass, with coverage scope. -->
 
-| Test File | Coverage |
-|-----------|----------|
+| Test File            | Coverage           |
+| -------------------- | ------------------ |
 | `{{TEST_FILE_PATH}}` | {{WHAT_IT_COVERS}} |
 
 ---

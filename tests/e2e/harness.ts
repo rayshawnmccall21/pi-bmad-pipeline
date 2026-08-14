@@ -5,7 +5,7 @@
  * against a throwaway project root and observes the four external channels:
  * CLI exit code, JSONL event stream, durable state file, and lock directory.
  */
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess, type SpawnSyncReturns } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -143,6 +143,12 @@ interface RunOutcome {
   readonly stderr: string;
 }
 
+/** Running built CLI and its eventual captured outcome. */
+interface RunningCli {
+  readonly child: ChildProcess;
+  readonly outcome: Promise<RunOutcome>;
+}
+
 const spawnCli = (
   args: readonly string[],
   env: Readonly<Record<string, string>>,
@@ -197,6 +203,50 @@ export const runCli = (
  * @param args - CLI tokens after the built binary path.
  * @param extraEnv - Additional child-cli environment.
  */
+/** Starts the built CLI asynchronously so tests can send an external abort signal. */
+export const startCli = (
+  root: string,
+  rundefId: string,
+  storyId: string,
+  extraEnv: Readonly<Record<string, string>> = {},
+): RunningCli => {
+  const child = spawn(
+    "node",
+    [
+      builtCliPath,
+      "run",
+      rundefId,
+      "--story-id",
+      storyId,
+      "--spec-file",
+      "spec.md",
+      "--project-root",
+      root,
+      "--jsonl",
+    ],
+    {
+      cwd: projectRoot,
+      env: { ...process.env, ...baseEnv, ...extraEnv },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  const outcome = new Promise<RunOutcome>((resolveOutcome, rejectOutcome) => {
+    child.once("error", rejectOutcome);
+    child.once("close", (status) => {
+      resolveOutcome({ status, stdout, stderr });
+    });
+  });
+  return { child, outcome };
+};
+
 export const runRaw = (
   args: readonly string[],
   extraEnv: Readonly<Record<string, string>> = {},

@@ -50,6 +50,9 @@ export interface StageExecutionResult {
   /** Optional JSONL parse error. */
   readonly parseError?: string;
 
+  /** Bounded, redacted failure diagnostic safe for durable/public boundaries. */
+  readonly diagnostic?: string;
+
   /** Optional usage reported by the child execution. */
   readonly usage?: StageExecutionUsage;
 

@@ -10,7 +10,14 @@ import {
   registerPayloadGate,
 } from "./index.js";
 
-import type { PayloadGate, PayloadGateRegistry, RunDef } from "./index.js";
+import type {
+  CompiledAgentStage,
+  CompiledCodeStage,
+  CompiledStageDef,
+  PayloadGate,
+  PayloadGateRegistry,
+  RunDef,
+} from "./index.js";
 
 const passGate: PayloadGate = (): { passed: boolean } => ({ passed: true });
 
@@ -35,6 +42,20 @@ const gatedRunDef = (): RunDef => ({
   ],
 });
 
+const agentStageAt = (stages: readonly CompiledStageDef[], index: number): CompiledAgentStage => {
+  const stage = stages[index];
+  expect(stage?.kind).toBe("agent");
+  if (stage?.kind !== "agent") throw new Error("expected compiled agent stage");
+  return stage;
+};
+
+const codeStageAt = (stages: readonly CompiledStageDef[], index: number): CompiledCodeStage => {
+  const stage = stages[index];
+  expect(stage?.kind).toBe("code");
+  if (stage?.kind !== "code") throw new Error("expected compiled code stage");
+  return stage;
+};
+
 describe("RunDef compilation", () => {
   beforeEach(() => {
     clearPayloadGateRegistry();
@@ -53,6 +74,16 @@ describe("RunDef compilation", () => {
         timeoutSeconds: DEFAULT_STAGE_TIMEOUT_SECONDS,
       },
     ]);
+  });
+
+  it("preserves an optional agent stage description", () => {
+    const runDef = minimalRunDef();
+    const stages = compileRunDef({
+      ...runDef,
+      stages: [{ ...runDef.stages[0]!, description: "Create the next story" }],
+    });
+
+    expect(stages[0]?.description).toBe("Create the next story");
   });
 
   it("returns frozen compiled stages and a frozen stage array", () => {
@@ -110,7 +141,7 @@ describe("RunDef compilation", () => {
       payloadGateName: "e2e-verify",
       onFail: "dev-story",
     });
-    expect(stages[1]?.payloadGate).toBe(passGate);
+    expect(agentStageAt(stages, 1).payloadGate).toBe(passGate);
   });
 
   it("resolves payload gates through an injected registry", () => {
@@ -120,7 +151,7 @@ describe("RunDef compilation", () => {
 
     const stages = compileRunDef(gatedRunDef(), { registry });
 
-    expect(stages[1]?.payloadGate).toBe(passGate);
+    expect(agentStageAt(stages, 1).payloadGate).toBe(passGate);
   });
 
   it("throws RunDefCompileError for an unregistered payload gate", () => {
@@ -160,8 +191,9 @@ describe("RunDef compilation", () => {
 
     const stages = compileRunDef(runDef);
 
-    expect(stages[0]?.thinking).toBe("high");
-    expect(stages[0]?.budget).toEqual({ maxTokens: 1000, maxDollars: 0 });
+    const compiledStage = agentStageAt(stages, 0);
+    expect(compiledStage.thinking).toBe("high");
+    expect(compiledStage.budget).toEqual({ maxTokens: 1000, maxDollars: 0 });
   });
 
   it("copies and freezes compiled budget objects", () => {
@@ -180,9 +212,12 @@ describe("RunDef compilation", () => {
 
     const stages = compileRunDef(runDef);
 
-    expect(stages[0]?.budget).toEqual({ maxTokens: 1000 });
-    expect(stages[0]?.budget).not.toBe(runDef.stages[0]?.budget);
-    expect(Object.isFrozen(stages[0]?.budget)).toBe(true);
+    const compiledStage = agentStageAt(stages, 0);
+    expect(compiledStage.budget).toEqual({ maxTokens: 1000 });
+    expect(compiledStage.budget).not.toBe(
+      (runDef.stages[0] as unknown as Record<string, unknown>)["budget"],
+    );
+    expect(Object.isFrozen(compiledStage.budget)).toBe(true);
   });
 
   it("omits optional compiled fields when the source stage omits them", () => {
@@ -216,9 +251,10 @@ describe("RunDef compilation", () => {
       ],
     });
 
-    expect(stages[0]?.extensions).toEqual(["/ext/obs.ts", "/ext/subagents.ts"]);
-    expect(stages[0]?.extensions).not.toBe(sources);
-    expect(Object.isFrozen(stages[0]?.extensions)).toBe(true);
+    const compiledStage = agentStageAt(stages, 0);
+    expect(compiledStage.extensions).toEqual(["/ext/obs.ts", "/ext/subagents.ts"]);
+    expect(compiledStage.extensions).not.toBe(sources);
+    expect(Object.isFrozen(compiledStage.extensions)).toBe(true);
   });
 
   it("does not mutate the input RunDef", () => {
@@ -238,5 +274,67 @@ describe("RunDef compilation", () => {
     const stages = compileValidatedRunDef(minimalRunDef());
 
     expect(stages[0]?.id).toBe("create-story");
+  });
+});
+
+describe("code stage compilation", () => {
+  const codeRunDef = (): RunDef => ({
+    id: "pipeline",
+    stages: [{ id: "check", kind: "code", command: "npm", args: ["run", "check"], timeout: 1800 }],
+  });
+
+  it("compiles a code stage with command and args", () => {
+    const stages = compileRunDef(codeRunDef());
+    expect(stages[0]).toMatchObject({
+      id: "check",
+      kind: "code",
+      command: "npm",
+      args: ["run", "check"],
+      index: 0,
+    });
+  });
+
+  it("preserves an optional code stage description", () => {
+    const runDef = codeRunDef();
+    const stages = compileRunDef({
+      ...runDef,
+      stages: [{ ...runDef.stages[0]!, description: "Run project checks" }],
+    });
+
+    expect(stages[0]?.description).toBe("Run project checks");
+  });
+
+  it("freezes compiled args array", () => {
+    const stages = compileRunDef(codeRunDef());
+    expect(Object.isFrozen(codeStageAt(stages, 0).args)).toBe(true);
+  });
+
+  it("compiles args as empty frozen array when source omits args", () => {
+    const stages = compileRunDef({
+      id: "pipeline",
+      stages: [{ id: "check", kind: "code", command: "npm" }],
+    });
+    const compiledStage = codeStageAt(stages, 0);
+    expect(compiledStage.args).toEqual([]);
+    expect(Object.isFrozen(compiledStage.args)).toBe(true);
+  });
+
+  it("skips payload gates for code stages", () => {
+    const stages = compileRunDef(codeRunDef());
+    expect("payloadGate" in (stages[0] as object)).toBe(false);
+    expect("payloadGateName" in (stages[0] as object)).toBe(false);
+  });
+
+  it("returns frozen code stage object", () => {
+    const stages = compileRunDef(codeRunDef());
+    expect(Object.isFrozen(stages[0])).toBe(true);
+  });
+
+  it("applies default timeout when code stage omits timeout", () => {
+    const stages = compileRunDef({
+      id: "pipeline",
+      stages: [{ id: "check", kind: "code", command: "npm" }],
+    });
+    expect(stages[0]?.timeoutSeconds).toBe(DEFAULT_STAGE_TIMEOUT_SECONDS);
   });
 });

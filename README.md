@@ -1,6 +1,6 @@
 # pi-bmad-pipeline
 
-A Unix-style supervisor for finite-state pipelines discovered from YAML. It runs one hermetic Pi child per stage, persists resumable state, and emits redacted JSONL events.
+A Unix-style supervisor for finite-state pipelines discovered from YAML. It dispatches closed `agent | code` stage kinds under one durable FSM, persists resumable state, and emits redacted JSONL events.
 
 ## Pipeline definitions
 
@@ -14,6 +14,11 @@ stages:
     workflow: dev-story
     agent: dev
     timeout: 3600
+  - id: check
+    kind: code
+    command: npm
+    args: ["run", "check"]
+    timeout: 900
   - id: verify
     kind: agent
     workflow: e2e-verify
@@ -23,7 +28,11 @@ stages:
     timeout: 7200
 ```
 
-Definitions are validated and compiled before any child starts. Missing definitions, malformed YAML, duplicate IDs, and unregistered gates fail closed. The repository's `sdlc.yaml` is an example definition rather than compiled-in policy.
+Definitions are validated and compiled before any child starts. Missing definitions, malformed YAML, duplicate IDs, mixed-kind fields, and unregistered gates fail closed. The repository's `sdlc.yaml` is example data rather than compiled-in policy.
+
+Agent stages run the named pi-bmad workflow and accept output only after emission-key provenance, schema, workflow, and story checks. Code stages directly spawn the executable and literal arguments with no shell, at the exact `--project-root`, with ignored stdin and the full inherited `process.env`; YAML cannot override `shell`, `cwd`, or `env`. Exit `0` succeeds without agent output. Other exits fail terminally. Output is continuously drained and discarded on success; failure diagnostics are capped at 16,384 characters and redacted before durable or public use. Timeout and abort terminate the detached process group with `SIGTERM`, then bounded `SIGKILL`.
+
+Code stages are trusted local execution, not a sandbox. Recovery is at-least-once: an interrupted running stage returns to pending and may execute again, so commands that have side effects must be idempotent.
 
 ## CLI
 
@@ -34,12 +43,12 @@ bmad-pipeline help
 bmad-pipeline version
 ```
 
-`run` acquires the story lock, selects discovered YAML, resolves the worktree and model, resumes or initializes durable state, runs the FSM, writes state after transitions, emits one terminal result, and releases the lock.
+`run` acquires the story lock, selects discovered YAML, resolves model configuration, resumes or initializes durable state, dispatches stages at the exact project root, writes state after transitions, emits one terminal result, and releases the lock.
 
 ## Durable interfaces
 
 - State: `.pi/pipeline/state/<story-id>.json`
-- Locks and isolated worktrees: `.pi/pipeline/`
+- Locks: `.pi/pipeline/locks/`
 - Process API: one-line redacted JSONL events and exit codes
 
 The durable state is the audit surface. Product policy belongs in YAML stages or in external tools that consume state and events.

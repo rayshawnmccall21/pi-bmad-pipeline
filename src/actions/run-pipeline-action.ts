@@ -29,7 +29,12 @@ import {
   type PipelineEventEmitter,
   type PipelineEventSink,
 } from "../events/index.js";
-import { PiCliWorkflowExecutor, type WorkflowExecutor } from "../executors/index.js";
+import {
+  LocalCodeExecutor,
+  PiCliWorkflowExecutor,
+  StageExecutorDispatcher,
+  type WorkflowExecutor,
+} from "../executors/index.js";
 import { registerBmadPayloadGates } from "../gates/index.js";
 import { resolveModelConfig, type ModelThinking } from "../model/index.js";
 import { selectAndCompileRunDef } from "../rundef/index.js";
@@ -166,7 +171,7 @@ export const defaultRunPipelineActionDeps: RunPipelineActionDeps = Object.freeze
   selectAndCompile: selectAndCompileRunDef,
   resolveModel: resolveModelConfig,
   createExecutor: (options: CreateStageExecutorOptions): WorkflowExecutor =>
-    new PiCliWorkflowExecutor(options),
+    new StageExecutorDispatcher(new PiCliWorkflowExecutor(options), new LocalCodeExecutor()),
   runStages: runPipelineStages,
   createRunId: (): string => randomUUID(),
 } satisfies RunPipelineActionDeps);
