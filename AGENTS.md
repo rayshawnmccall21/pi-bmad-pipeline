@@ -45,3 +45,9 @@ Each top-level module under `src/` has a `CONTEXT.md` with its responsibility, p
 - Do not modify locked quality configuration: `eslint.config.js`, `.prettierrc*`, `vitest.config.ts`, `knip.json`, `tsconfig*.json`, or `scripts/crap-*.mjs`.
 - Keep public functions documented and within the configured complexity limits.
 - This package is the standalone `pi-bmad-pipeline` supervisor CLI, not a Pi extension.
+
+## Tool Discipline (headless agents)
+
+- NEVER scan the filesystem from root (`find /`, `grep -r /`, `ls -R /`); it trips the 180s workflow watchdog and terminally fails the stage. Artifacts live under `.pi/artifacts/` relative to cwd.
+- The `subagent` tool IS available in every pipeline stage. NEVER assume a tool is absent from memory — verify first with `subagent({action:"list"})`. dev-story and code-review are expected to delegate (scout probes, TDD worker tasks).
+- If a workflow tool call has not been made recently, resume by calling `bmad_workflow_step(advance)` — do not end your turn with text only.
