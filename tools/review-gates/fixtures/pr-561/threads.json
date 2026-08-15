@@ -1,0 +1,1103 @@
+{
+  "pages": 1,
+  "threads": [
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSo_",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/qa/ARCHITECTURE.md",
+      "line": 704,
+      "comments": [
+        {
+          "databaseId": 3771393411,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\ud83d\udca4 Low value_\n\n**Fix the section numbering gap.**\n\nThe document jumps from `## 6. Process Flow` to `## 10. Implementation Gap`. Sections 7, 8, and 9 do not exist. Renumber the remaining sections, or add the missing ones. Also add a language to the fenced blocks flagged by markdownlint (MD040) and end the file with a single newline (MD047).\n\n<detai"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSpC",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/qa/README.md",
+      "line": 214,
+      "comments": [
+        {
+          "databaseId": 3771393413,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Fix the contradictory retirement wording.**\n\nThe sentence states that the legacy files are retired and also that they \"are deleted by the orchestrator once parity is confirmed\". The rest of this cohort states the deletion already happened. Use one tense: the files are deleted; do not reference or boot them.\n\n<details>\n<summary>\ud83e\udd16 Pro"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSpE",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa/start-services.sh",
+      "line": 324,
+      "comments": [
+        {
+          "databaseId": 3771393419,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**Secrets reach the process command line, and the values are unquoted.**\n\n`start_app \"web-client\" 3002 bash -c \"$(web_client_qa_env) ...\"` embeds the generated exports in argv. `RESEND_API_KEY` and `TWILIO_AUTH_TOKEN` then appear in `ps` output for every local user. The `printf 'export %s=%s\\n'` format also emits unquoted values, so a value that "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSpb",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/qa/validate-surface.sh",
+      "line": 4,
+      "comments": [
+        {
+          "databaseId": 3771393449,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Enable immediate shell error handling.**\n\n`set -uo pipefail` omits `-e`. Use `set -euo pipefail` so an unexpected command failure cannot continue this validator with incomplete state.\n\nAs per coding guidelines, existing shell scripts must use `set -euo pipefail`.\n\n\n\n\n<details>\n<summary>Proposed fix</summary>\n\n```diff\n-set -uo pipefa"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSpf",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/skills/plan-editing/SKILL.md",
+      "line": 112,
+      "comments": [
+        {
+          "databaseId": 3771393453,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Correct or qualify the future-dated exploration entry.**\n\nLine 112 records completed exploration on August 13, 2026, but the review date is August 12, 2026. If this is planned work, mark it as planned. Otherwise record the actual evidence date.\n\n<details>\n<summary>\ud83e\udd16 Prompt for AI Agents</summary>\n\n```\nVerify each finding against cur"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSpj",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "AGENTS.md",
+      "line": 662,
+      "comments": [
+        {
+          "databaseId": 3771393457,
+          "author": "coderabbitai",
+          "body": "_\ud83e\ude7a Stability & Availability_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\nset -euo pipefail\nrg -n -C 8 'subagent|agent|parallel|dispatch|fix loop' .pi/skills/qa-services-startup/SKILL.md\n```\n\nRepository: rayshawnmccall21/StylePassV2\n\nLength of output: 3068\n\n---\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\nset -euo pipefail\n\nprint"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSpn",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "apps/mobile-barber/__tests__/services/plan.service.non-versioned-ownership.test.ts",
+      "line": 48,
+      "comments": [
+        {
+          "databaseId": 3771393463,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Queue a third `from()` return value.**\n\n`updatePlan` calls `getPlanById` again after the update, so it invokes `supabase.from` three times. The third call returns `undefined` and `.select()` throws. The tests still pass because they never inspect `result`, which hides the broken mock chain.\n\n<details>\n<summary>\ud83d\udc9a Suggested mock fix</"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSpv",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "apps/mobile-barber/__tests__/services/plan.service.test.ts",
+      "line": 708,
+      "comments": [
+        {
+          "databaseId": 3771393473,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Assert the RPC payload, not the refetch mock.**\n\n`result.data?.price_in_cents` comes from `mockGetPlanAfterUpdate`, so line 699 restates the mock. The test cannot detect whether `updatePlan` forwards the cleared rollover fields. Assert `p_update_fields` to cover the normalization claim in the test name.\n\n<details>\n<summary>\ud83d\udc9a Suggest"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSp2",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "apps/mobile-barber/__tests__/services/plan.service.test.ts",
+      "line": 838,
+      "comments": [
+        {
+          "databaseId": 3771393481,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n**Assert the number of `from()` calls.**\n\nThe test name states that individual `from().insert()` and `from().update()` calls must not happen. The assertions only check the RPC payload. A regression that re-adds a direct write would still pass, because the extra `from()` mocks are simply undefined and the versioned branch would fail "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSp-",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "apps/mobile-barber/src/services/plan.service.ts",
+      "line": 579,
+      "comments": [
+        {
+          "databaseId": 3771393491,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**The non-versioned ownership guard compares a value against itself.** `updatePlan` reads `currentPlan.data.barber_id` from the row it is about to update, then filters on that same value, so the predicate is always true. The new test asserts only `expect.any(String)`, so it accepts the tautology and reports the guard as present.\n- `apps/mobile-ba"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqE",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "apps/mobile-barber/src/services/plan.service.ts",
+      "line": 606,
+      "comments": [
+        {
+          "databaseId": 3771393498,
+          "author": "coderabbitai",
+          "body": "_\ud83d\uddc4\ufe0f Data Integrity & Integration_ | _\ud83d\udfe0 Major_ | _\ud83c\udfd7\ufe0f Heavy lift_\n\n**The non-versioned path can delete all plan items without restoring them.**\n\nThe delete at line 585 and the insert at line 593 are separate requests. If the insert fails, the delete is already committed. The plan then has no service items, and `updatePlan` reports an error that says nothing was applied. This is the same failure mode"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqG",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": "docs/architecture.md",
+      "line": 149,
+      "comments": [
+        {
+          "databaseId": 3771393502,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\nset -euo pipefail\nrg -n 'packageManager|pnpm@|10\\.30\\.3|8\\.6\\.10' package.json pnpm-lock.yaml .github .tool-versions 2>/dev/null || true\n```\n\nRepository: rayshawnmccall21/StylePassV2\n\nLength of output: 219\n\n---\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqN",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": "docs/dependency-audit.md",
+      "line": 4,
+      "comments": [
+        {
+          "databaseId": 3771393512,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Use one next-review date.**\n\nThe header says `2026-09-03` at Line 4, but the changed cadence entry says `2026-09-01` at Line 62. Keep both values identical so audit ownership does not depend on which section a reader uses.\n\n\n\n\n\n\n\nAlso applies to: 62-62\n\n<details>\n<summary>\ud83e\udd16 Prompt for AI Agents</summary>\n\n```\nVerify each finding aga"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqQ",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": "docs/dependency-audit.md",
+      "line": 8,
+      "comments": [
+        {
+          "databaseId": 3771393515,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\nset -euo pipefail\nrg -n -C 2 '\"react\"\\s*:' package.json apps/web-client/package.json pnpm-lock.yaml\nrg -n -C 2 'React.*19\\.' docs/architecture.md docs/dependency-audit.md\n```\n\nRepository: rayshawnmccall21/StylePassV2\n\nLength of output: 2200\n\n---\n\n\ud83c\udfc1"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqT",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": "docs/development-guide.md",
+      "line": 135,
+      "comments": [
+        {
+          "databaseId": 3771393518,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Synchronize the remaining Maestro script table.**\n\nThe new instructions use `scripts/install-maestro.sh`, `scripts/test-install-maestro.sh`, and the Maestro expert package. The later table still presents `scripts/run-maestro.sh` and `scripts/run-maestro-suite.sh` as active entry points at Lines 364-365. Remove those entries or mark "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqV",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "docs/handoffs/HANDOFF-20260811-150927.md",
+      "line": 40,
+      "comments": [
+        {
+          "databaseId": 3771393520,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Add blank lines around the fenced command in both handoff files.**\n\n`markdownlint-cli2` reports the same MD031 violation in both documents.\n\n- `docs/handoffs/HANDOFF-20260811-150927.md#L31-L40`: Add a blank line before and after the indented `bash` fence.\n- `docs/handoffs/HANDOFF-20260811-151628.md#L31-L40`: Add a blank line before "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqX",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": "docs/source-tree.md",
+      "line": 17,
+      "comments": [
+        {
+          "databaseId": 3771393522,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Document the new `.pi` directories.**\n\nThe tree lists `.pi/agents`, `.pi/extensions`, `.pi/qa-experts`, and `.pi/qa-state`, but it omits `.pi/bmad/pipelines` and `.pi/skills`, which are part of this change. Readers cannot locate the pipeline definitions or the `plan-editing` skill from this map. Add these directories, or mark the `."
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqZ",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "qa/requirement-loop/dashboard/dashboard.html",
+      "line": 240,
+      "comments": [
+        {
+          "databaseId": 3771393526,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\ud83d\udca4 Low value_\n\n**Add `type=\"button\"` to the control buttons.**\n\nHTMLHint reports `button-type-require` for every new button. Without an explicit type, a button inside a future form submits it. Line 344 also fails `input-requires-label`; the checkbox uses `aria-label`, so wrap it or point a `<label for>` at an `id`.\n\n\n\n\n\n\nAlso applies to: 277-278, "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqc",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "qa/requirement-loop/dashboard/dashboard.html",
+      "line": 1121,
+      "comments": [
+        {
+          "databaseId": 3771393530,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udd34 Critical_ | _\u26a1 Quick win_\n\n**Unescaped artifact values reach `innerHTML` in the unified dashboard.** The dashboard escapes some server-derived fields with `esc()` and omits it for others, so run-directory names, run file names, and Metro log content render as HTML. The new XSS test asserts the escaped form, so the suite is RED until every interpolation is escaped.\n- `qa"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqg",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "qa/requirement-loop/dashboard/server.mjs",
+      "line": 120,
+      "comments": [
+        {
+          "databaseId": 3771393533,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**`requireToken` fails open when `QA_DASHBOARD_TOKEN` is unset.**\n\nLine 102 returns `true` with no token configured, so `/ingest`, `/stage`, and `/client-log` accept unauthenticated writes in the default configuration. `server.security.test.mjs` lines 16-20 assert that this exact pattern must not exist, so the new test fails. Decide one contract:"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqh",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "qa/requirement-loop/dashboard/server.mjs",
+      "line": 482,
+      "comments": [
+        {
+          "databaseId": 3771393535,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**Remove `bash -c` string interpolation from the Metro reader.**\n\n`newestLog.path` is interpolated into four shell strings. A file name under `.logs/start-app/` that contains a double quote or `$(...)` executes as a shell command inside the dashboard process. Pass the path as an argument instead, and stop spawning a shell.\n\n<details>\n<summary>\ud83d\udd12 P"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqk",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "qa/requirement-loop/dashboard/server.mjs",
+      "line": 552,
+      "comments": [
+        {
+          "databaseId": 3771393540,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udd34 Critical_ | _\u26a1 Quick win_\n\n**`/api/runs/:id/:file` still escapes the runs root.**\n\nThe route regex `([^/]+)` on line 649 matches `..`. With `runId = '..'`, `runDir` resolves to `.pi/qa-state`, and the containment check on line 542 only compares the file against that escaped directory. A request such as `GET /api/runs/../agent-stream.jsonl` returns arbitrary QA state fil"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqn",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "qa/requirement-loop/dashboard/server.mjs",
+      "line": 578,
+      "comments": [
+        {
+          "databaseId": 3771393544,
+          "author": "coderabbitai",
+          "body": "_\ud83c\udfaf Functional Correctness_ | _\ud83d\udd34 Critical_ | _\u26a1 Quick win_\n\n**The `.log` branch serializes Promises.**\n\n`safe` is an `async` function, so `.map((l) => safe(...))` produces an array of Promises. `JSON.stringify` renders each one as `{}`. Every `.log` request returns `[{},{},...]`. Parse the lines synchronously.\n\n<details>\n<summary>\ud83d\udc1b Proposed fix</summary>\n\n```diff\n   if (file.endsWith('.log')) {\n+  "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqq",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "qa/requirement-loop/dashboard/server.mjs",
+      "line": 592,
+      "comments": [
+        {
+          "databaseId": 3771393549,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udd34 Critical_ | _\u26a1 Quick win_\n\n**Prefix origin matching accepts hostile origins.**\n\n`origin.startsWith('http://localhost')` allows `http://localhost.attacker.test`, and `origin.startsWith('http://127.0.0.1')` allows `http://127.0.0.1.attacker.test`. The reflected `Access-Control-Allow-Origin` then lets that page read every `/api/*` response, including run artifacts and log "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqt",
+      "isResolved": true,
+      "isOutdated": true,
+      "path": "qa/requirement-loop/orchestrator/qa_orchestrator/sdlc_bridge.py",
+      "line": 368,
+      "comments": [
+        {
+          "databaseId": 3771393556,
+          "author": "coderabbitai",
+          "body": "_\ud83d\uddc4\ufe0f Data Integrity & Integration_ | _\ud83d\udfe0 Major_ | _\ud83c\udfd7\ufe0f Heavy lift_\n\n**Use executor-issued, run-bound Maestro evidence for device reproduction.** The validator accepts self-reported fields plus an arbitrary non-empty file, and its self-test enforces that unsafe behavior.\n- `qa/requirement-loop/orchestrator/qa_orchestrator/sdlc_bridge.py#L284-L302`: validate a fresh Maestro executor receipt bound to th"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSqu",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": "qa/requirement-loop/orchestrator/qa_orchestrator/sdlc_bridge.py",
+      "line": 496,
+      "comments": [
+        {
+          "databaseId": 3771393558,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Require Context7 before implementation work.**\n\nThe debug prompt permits MCP use but does not require a Context7 invocation. The debug workflow can implement a fix, so it must explicitly invoke Context7 before planning or changing code.\n\n<details>\n<summary>Proposed prompt update</summary>\n\n```diff\n-                \"Before diagnosis,"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSq2",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "RUNBOOK.md",
+      "line": 35,
+      "comments": [
+        {
+          "databaseId": 3771393567,
+          "author": "coderabbitai",
+          "body": "_\ud83c\udfaf Functional Correctness_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Keep the Sentry route consistent.**\n\nThe changed diagram uses `/api/0/envelope/`, but the Mock Server API table at Line 219 still documents `POST /api/1/envelope/`. Update the table or the diagram so one route is authoritative. Otherwise, operators can validate the wrong endpoint.\n\n<details>\n<summary>\ud83e\udd16 Prompt for AI Agents</summary>\n\n```\nVe"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSq3",
+      "isResolved": true,
+      "isOutdated": true,
+      "path": "RUNBOOK.md",
+      "line": null,
+      "comments": [
+        {
+          "databaseId": 3771393569,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe0 Major_ | _\ud83c\udfd7\ufe0f Heavy lift_\n\n**Block local QA until the database-trigger fallback is safe.**\n\nThe runbook states that an unset `app.settings.supabase_url` sends appointment-status notifications to the production Supabase URL. This contradicts the \u201c100% locally\u201d guarantee and can send real SMS from seeded local actions. Set and validate a local URL before trigger-driven not"
+        },
+        {
+          "databaseId": 3778216394,
+          "author": "rayshawnmccall21",
+          "body": "Fixed in 65c764b85. Appointment-status and waitlist trigger definitions now resolve explicit `app.settings.supabase_url`, then Vault `supabase_url`, and warn/return `NEW` before `net.http_post` when absent\u2014no inferred local or production fallback. Under the project\u2019s zero-customer/reset-only migration policy, existing migration history was corrected directly. Six source checks pass, `supabase db r"
+        },
+        {
+          "databaseId": 3778219483,
+          "author": "coderabbitai",
+          "body": "`@rayshawnmccall21`, confirmed. The documented trigger behavior now fails closed when configuration is absent. This removes the production fallback and preserves the local QA safety requirement.\n\n---\n\n<details>\n<summary>\u270f\ufe0f Learnings added</summary>\n\n```\nLearnt from: rayshawnmccall21\nRepo: rayshawnmccall21/StylePassV2 PR: 561\nFile: RUNBOOK.md:0-0\nTimestamp: 2026-08-13T18:51:16.740Z\nLearning: For St"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSq4",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "supabase/migrations/20240101000000_baseline.sql",
+      "line": 4809,
+      "comments": [
+        {
+          "databaseId": 3771393570,
+          "author": "coderabbitai",
+          "body": "_\ud83e\ude7a Stability & Availability_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**Make the trigger creation idempotent.**\n\nThe function uses `CREATE OR REPLACE`, but `CREATE TRIGGER` fails with SQLSTATE 42710 if `barbers_identity_immutable` already exists. Re-applying the baseline then aborts.\n\n<details>\n<summary>\ud83d\udee1\ufe0f Proposed fix</summary>\n\n```diff\n+DROP TRIGGER IF EXISTS barbers_identity_immutable ON barbers;\n CREATE T"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSq8",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "supabase/migrations/20260806000001_fix_grandfathering_rls_recursion.sql",
+      "line": 6,
+      "comments": [
+        {
+          "databaseId": 3771393577,
+          "author": "coderabbitai",
+          "body": "_\ud83d\uddc4\ufe0f Data Integrity & Integration_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Both new migrations manage their own transaction.** The Supabase migration runner already opens a transaction per file. The nested `BEGIN` emits a warning, and the `COMMIT` ends the runner-managed transaction, so statements the runner executes afterwards lose rollback protection. Static analysis flags both files.\n- `supabase/migratio"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSq9",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "supabase/migrations/20260806000010_create_apply_subscription_plan_version.sql",
+      "line": 134,
+      "comments": [
+        {
+          "databaseId": 3771393579,
+          "author": "coderabbitai",
+          "body": "_\ud83d\uddc4\ufe0f Data Integrity & Integration_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**Derive `has_grandfathered_subscribers` from the actual rows.**\n\nLine 134 sets the flag from the requested scope only. Two cases produce a wrong flag:\n\n- Scope is `new_subscribers_only` and the plan has no active, non-grandfathered subscription. The `UPDATE` at line 113 touches zero rows, but the flag becomes `true`.\n- Scope is `all_s"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSq_",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "supabase/migrations/20260806000010_create_apply_subscription_plan_version.sql",
+      "line": 149,
+      "comments": [
+        {
+          "databaseId": 3771393582,
+          "author": "coderabbitai",
+          "body": "_\ud83d\uddc4\ufe0f Data Integrity & Integration_ | _\ud83d\udd34 Critical_ | _\u26a1 Quick win_\n\n**`COALESCE` makes nullable plan fields impossible to clear.**\n\n`p_update_fields->>'rollover_max_credits'` returns SQL NULL both when the key is absent and when the value is JSON `null`. `COALESCE(NULL, rollover_max_credits)` then keeps the old value. The same applies to `credit_expiration_months`, `max_subscribers`, and `descriptio"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSrB",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "supabase/tests/security/sty91-apply-plan-version-authorization.test.sql",
+      "line": 58,
+      "comments": [
+        {
+          "databaseId": 3771393584,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n**Assert the seed preconditions.**\n\nIf no plan lacks a version row, or if only one barber exists, `current_setting` returns an empty string and the `::uuid` cast fails with SQLSTATE 22P02. The failure message does not name the missing fixture.\n\nAdd explicit assertions after line 58 so a missing fixture reports a clear cause.\n\n<detai"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSrC",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "supabase/tests/security/sty91-apply-plan-version-contract-source.test.mjs",
+      "line": 35,
+      "comments": [
+        {
+          "databaseId": 3771393586,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n**Do not locate the statement by exact whitespace.**\n\n`indexOf('SELECT\\n    pl.id')` depends on the exact indentation and on LF line endings. After any reformatting of the migration, or on a CRLF checkout, the result is `-1`. `slice(-1, ownershipQueryEnd)` then returns an unrelated tail and the assertion fails with a message about a"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSrE",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "supabase/tests/security/sty91-grandfathering-rls.test.sql",
+      "line": 167,
+      "comments": [
+        {
+          "databaseId": 3771393589,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Correct the assertion messages.**\n\n`has_column_privilege` reports column-level `GRANT` state. It does not evaluate row-level security. The messages state \"through RLS\", which claims more than the check proves. Change the wording so a future triage does not treat these assertions as RLS coverage.\n\n<details>\n<summary>\ud83d\udcdd Proposed wordin"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSrH",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "supabase/tests/security/sty91-rpc-column-contract.test.mjs",
+      "line": 110,
+      "comments": [
+        {
+          "databaseId": 3771393596,
+          "author": "coderabbitai",
+          "body": "_\ud83d\uddc4\ufe0f Data Integrity & Integration_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\nset -euo pipefail\n\nmigration='supabase/migrations/20260806000010_create_apply_subscription_plan_version.sql'\ntest_file='supabase/tests/security/sty91-rpc-column-contract.test.mjs'\n\nrg -n -C 16 'INSERT\\s+INTO\\s+public\\.subscription_plan_versions|crea"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSrI",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "supabase/tests/security/sty91-rpc-for-update-lock.test.sql",
+      "line": 65,
+      "comments": [
+        {
+          "databaseId": 3771393597,
+          "author": "coderabbitai",
+          "body": "_\ud83d\uddc4\ufe0f Data Integrity & Integration_ | _\ud83d\udfe0 Major_ | _\ud83c\udfd7\ufe0f Heavy lift_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\nset -euo pipefail\n\nrg -n -C 5 'SELECT plan\\(|SELECT ok\\(|SELECT lives_ok\\(|dblink|pg_background|FOR UPDATE' \\\n  supabase/tests supabase/migrations\n```\n\nRepository: rayshawnmccall21/StylePassV2\n\nLength of output: 50385\n\n---\n\n\ud83c\udfc1 Script executed:\n\n```"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSrO",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "tools/qa-mock-server/src/index.ts",
+      "line": 126,
+      "comments": [
+        {
+          "databaseId": 3771393603,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n**Extract the duplicated `hasEvent` block.**\n\nThe `/capture` and `/capture/` handlers contain identical body validation and push logic. Register one handler for both paths.\n\n<details>\n<summary>\u267b\ufe0f Proposed refactor</summary>\n\n```diff\n-app.post('/capture', (req: Request, res: Response) => {\n-  ...\n-})\n-app.post('/capture/', (req: Requ"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSrW",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "tools/qa-mock-server/src/index.ts",
+      "line": 462,
+      "comments": [
+        {
+          "databaseId": 3771393616,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udd35 Trivial_ | _\ud83d\udca4 Low value_\n\n**Use a timing-safe comparison for the reset token.**\n\n`provided !== \\`Bearer ${token}\\`` compares byte by byte and returns early. Use `crypto.timingSafeEqual` after a length check, as `server.mjs` does for `QA_DASHBOARD_TOKEN`. This keeps both token checks consistent.\n\n<details>\n<summary>\ud83e\udd16 Prompt for AI Agents</summary>\n\n```\nVerify each findin"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxSrY",
+      "isResolved": true,
+      "isOutdated": false,
+      "path": "tools/qa-mock-server/src/index.ts",
+      "line": 518,
+      "comments": [
+        {
+          "databaseId": 3771393620,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udd34 Critical_ | _\u26a1 Quick win_\n\n**Percent-encoding bypasses the handoffs guard.**\n\n`req.path` is not URL-decoded. A request to `/qa/evidence/<run>/%68andoffs/password-reset-handoff.json` fails the `includes('handoffs')` check, and `realpathSync` on the encoded literal throws `ENOENT`, so the middleware calls `next()`. `express.static` then decodes the path and serves the rec"
+        },
+        {
+          "databaseId": 3778216407,
+          "author": "rayshawnmccall21",
+          "body": "Fixed in 65c764b85. `/qa/evidence` now decodes once, rejects malformed and exact private path segments, proves the canonical target remains under the canonical evidence root, and serves only that validated regular file without falling through to `express.static`. Regressions cover encoded handoffs, private symlink aliases, outside-root symlinks, malformed encoding, and token non-disclosure; focuse"
+        },
+        {
+          "databaseId": 3778218102,
+          "author": "coderabbitai",
+          "body": "`@rayshawnmccall21`, the updated `/qa/evidence` handler addresses the percent-encoding bypass. The canonical-path and regular-file checks also prevent symlink and path-escape disclosure.\n\n\u2705 Review thread resolved.\n\n<sub>You are interacting with an AI system.</sub>\n\n<!-- This is an auto-generated reply by CodeRabbit -->"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTiH",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/bmad/scripts/run-pipeline.py",
+      "line": 288,
+      "comments": [
+        {
+          "databaseId": 3771399029,
+          "author": "coderabbitai",
+          "body": "_\ud83e\ude7a Stability & Availability_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**Drain stderr while the pipeline runs.**\n\nThe runner reads `stderr` only after the stdout loop ends. If `bmad-pipeline` writes enough stderr output to fill the pipe, it blocks before closing stdout. The runner then waits forever in the stdout loop.\n\nMerge stderr into stdout or drain stderr concurrently.\n\n<details>\n<summary>Proposed fix</su"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTiN",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/extensions/__tests__/app-memory.test.ts",
+      "line": 72,
+      "comments": [
+        {
+          "databaseId": 3771399037,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\ud83d\udca4 Low value_\n\n**Wrap the temp-directory lifecycle in `try`/`finally`.**\n\nThese four tests call `rm(root, ...)` as the last statement. If any assertion above it throws, the temporary directory leaks for the whole test session. The two tests at lines 121-154 and 156-178 already use `try`/`finally`. Apply the same pattern here, or move cleanup into "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTiT",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/extensions/app-memory.ts",
+      "line": 196,
+      "comments": [
+        {
+          "databaseId": 3771399048,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe0 Major_ | _\ud83c\udfd7\ufe0f Heavy lift_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\n# Description: Compare the two flow-confinement implementations for divergence.\nset -euo pipefail\n\nfd -t f 'flow-yaml.ts|flow-dependencies.ts|constants.ts' .pi/qa-experts/maestro/src --exec cat -n {}\n\necho '--- runFlow dependency extraction sites"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTib",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/extensions/app-memory.ts",
+      "line": 180,
+      "comments": [
+        {
+          "databaseId": 3771399059,
+          "author": "coderabbitai",
+          "body": "_\ud83e\ude7a Stability & Availability_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Convert filesystem errors into promotion errors.**\n\n`confinedFlowPath` calls `fs.realpathSync(candidate)` without a guard. If the target file does not exist, `realpathSync` throws a raw `ENOENT` error. Two reachable paths hit this:\n\n- Line 111: `memory_save_script` with a `libraryName` that has no committed `<libraryName>.yaml`.\n- Line 17"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTij",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/extensions/app-memory.ts",
+      "line": 191,
+      "comments": [
+        {
+          "databaseId": 3771399069,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udf10 Web query:\n\n`Maestro mobile testing commands that accept point coordinates tapOn longPressOn doubleTapOn swipe`\n\n\ud83d\udca1 Result:\n\nIn Maestro, coordinate-based interactions are supported through the `point` parameter, which accepts either relative percentages (e.g., \"50%, 50%\") or absolute pixel values (e"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTin",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/capabilities.yaml",
+      "line": 74,
+      "comments": [
+        {
+          "databaseId": 3771399075,
+          "author": "coderabbitai",
+          "body": "_\ud83d\uddc4\ufe0f Data Integrity & Integration_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**The `flow_library` to `run_flow` rename is not applied to every consumer of the tool name.** This PR folds committed-flow resolution into `run_flow`, but the old tool name still appears in the expert learn page, so configuration and documentation now disagree about which tool exists.\n- `.pi/qa-experts/capabilities.yaml#L74-L74`: conf"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTir",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/extensions/index.ts",
+      "line": 60,
+      "comments": [
+        {
+          "databaseId": 3771399081,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\ud83d\udca4 Low value_\n\n**Align the scope of `targetState` with its documented contract.**\n\n`targetState` is declared at module scope. The `ToolRuntime.targetState` doc comment in `.pi/qa-experts/maestro/src/types.ts` states \"Target state shared by tools registered from the same extension instance\". Every call to `maestroExtension` reuses this single objec"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTiu",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/flows/cancel-appointment.yaml",
+      "line": 73,
+      "comments": [
+        {
+          "databaseId": 3771399084,
+          "author": "coderabbitai",
+          "body": "_\ud83c\udfaf Functional Correctness_ | _\ud83d\udd35 Trivial_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\n# Description: Find every flow that consumes EVIDENCE_DIR and confirm the harness is the only injector.\nset -euo pipefail\n\nrg -n 'EVIDENCE_DIR' .pi/qa-experts/maestro\n\nrg -n -C3 'takeScreenshot' .pi/qa-experts/maestro/flows\n```\n\nRepository: rayshawnmccall21/StylePassV2\n"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTiw",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/flows/login-barber1.yaml",
+      "line": 7,
+      "comments": [
+        {
+          "databaseId": 3771399088,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Expected identity values become redaction tokens.**\n\n`collectEnvironmentValues` in `.pi/qa-experts/maestro/src/flow-yaml.ts` treats every `env` value as a secret to redact. `EXPECTED_BARBER_NAME` and `EXPECTED_BUSINESS_NAME` are not secrets. When the new identity check fails, the JUnit failure text reports `[REDACTED]` in place of t"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTiy",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/skills/mobile-log-debugging/SKILL.md",
+      "line": 78,
+      "comments": [
+        {
+          "databaseId": 3771399091,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Correct the contradictory sentence about the temporary directory.**\n\nThe text states that `run_flow` \"keeps raw Maestro debug/test output in a deleted temporary directory\". A directory cannot hold output and be deleted at the same time. A reader cannot tell whether the artifacts are retrievable.\n\nState the sequence instead.\n\n<detail"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTi4",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/skills/mobile-log-debugging/SKILL.md",
+      "line": 83,
+      "comments": [
+        {
+          "databaseId": 3771399104,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\ud83d\udca4 Low value_\n\n**Replace the machine-specific absolute paths with repository-relative paths.**\n\nLines 82 and 83 hardcode `/Users/Apple/workplace/StylePassV2/`. That path exists on one developer machine only. Another operator or a CI lane cannot follow these instructions. The path also publishes a local account name into a committed document.\n\nUse "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTi8",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/command.ts",
+      "line": 4,
+      "comments": [
+        {
+          "databaseId": 3771399109,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\n# Description: Inspect the binary allowlist and every executeFile call site to confirm the file values and env expectations.\nset -euo pipefail\n\nfd -t f 'command.ts' .pi/qa-experts/maestro --exec cat -n\n\nrg -n -C4 'isAllowedBinary|ALLOWED_BINAR' .pi/qa-experts/"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjG",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/flow-yaml.ts",
+      "line": 41,
+      "comments": [
+        {
+          "databaseId": 3771399127,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\n# Description: Confirm the parse-error message is surfaced unredacted and locate the redaction helpers.\nset -euo pipefail\n\nfd -a 'flow-yaml.ts' .pi | xargs -r rg -n 'invalid_flow_yaml|error.message'\nrg -n -C4 'redactRunText|publishSanitizedJunit' --glob '*.ts'"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjK",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/flow-yaml.ts",
+      "line": 64,
+      "comments": [
+        {
+          "databaseId": 3771399136,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n**The redaction set has no notion of sensitivity.** Every `env` value and every command literal becomes a redaction token, so non-secret and very short values scrub useful text out of JUnit evidence and failure output.\n- `.pi/qa-experts/maestro/src/flow-yaml.ts#L61-L64`: apply a minimum length to command-derived values in `collectSt"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjP",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/flow-yaml.ts",
+      "line": 96,
+      "comments": [
+        {
+          "databaseId": 3771399142,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udf10 Web query:\n\n`Maestro takeScreenshot command syntax path mapping form documentation`\n\n\ud83d\udca1 Result:\n\nThe Maestro `takeScreenshot` command is used to capture a screenshot of the current screen during a test flow, saving it as a PNG file [1][2]. Syntax The command supports both a shorthand syntax and a de"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjU",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/record-video.ts",
+      "line": 175,
+      "comments": [
+        {
+          "databaseId": 3771399148,
+          "author": "coderabbitai",
+          "body": "_\ud83e\ude7a Stability & Availability_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**Make the reclaim-guard tombstone name unique per attempt.**\n\nLine 163 builds the tombstone from `staleToken`. `staleToken` is a property of the dead guard, not of the current attempt, so the same path is reused by every process that tries to reclaim the same dead guard.\n\n`rename(path, tombstone)` at line 165 moves the guard directory, inc"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjZ",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/record-video.ts",
+      "line": 186,
+      "comments": [
+        {
+          "databaseId": 3771399154,
+          "author": "coderabbitai",
+          "body": "_\ud83e\ude7a Stability & Availability_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Report a lost reclaim race as retryable.**\n\n`reclaimGuardedLock` reaches line 184 when the lock owner no longer matches `staleToken`. That means another process already replaced the stale owner and now holds a valid lock. The correct next action is a retry.\n\n`activeLockFailure` sets `recoverability: 'user_action_required'` and reports the"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjc",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/run-flow-support.ts",
+      "line": 24,
+      "comments": [
+        {
+          "databaseId": 3771399164,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\ud83d\udca4 Low value_\n\n**These shared helpers hardcode `'run_flow'` as the failing tool.**\n\n`requiredRunDevice` and `requiredRunText` always build the failure with the tool name `'run_flow'`. The message in `requiredRunDevice` says \"simulator-backed Maestro tools\", which indicates other tools call it. When `record_video_start` or another tool calls these "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjf",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/run-flow-support.ts",
+      "line": 200,
+      "comments": [
+        {
+          "databaseId": 3771399167,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**`commandFailureReason` returns unredacted `stderr` to a caller that does not redact it.**\n\nThis helper returns `command.stderr` verbatim. Inside `run-flow.ts` that is safe, because line 297 redacts `stderr` before line 326 calls this helper. The tool layer does not do that. The provided snippet from `.pi/qa-experts/maestro/src/tools.ts` lines 2"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjl",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/run-flow.ts",
+      "line": 129,
+      "comments": [
+        {
+          "databaseId": 3771399174,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n**The staged flow path is computed twice, and the first value is always discarded.**\n\n`resolveInlineFlow` sets `flowPath: stagedFlowPath(runtime, fileName.data)` at line 126. For every staged flow, `createRunFlowPlan` then overwrites it at line 238 with `plannedFlowPath(source, evidence.data)`, which returns `join(evidenceDir, 'flow"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjo",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/src/run-flow.ts",
+      "line": 317,
+      "comments": [
+        {
+          "databaseId": 3771399178,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udd35 Trivial_\n\n**Runtime values reach Maestro through process arguments.**\n\n`runFlowArgs` passes every entry of `env` as `-e KEY=VALUE`. Command arguments are readable from the process table by any local user for the lifetime of the process. The password-reset flows pass `RECOVERY_LINK` this way, per `.pi/agents/qa-test-runner.md` line 37. The redaction work in `run-flow-sup"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjs",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/tests/extension.test.ts",
+      "line": 37,
+      "comments": [
+        {
+          "databaseId": 3771399184,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udf10 Web query:\n\n`TypeBox 0.34 Value.Check Type.Union additionalProperties false behavior`\n\n\ud83d\udca1 Result:\n\nIn TypeBox, the behavior of `additionalProperties: false` within a `Type.Union` or `Type.Object` is consistent with standard JSON Schema expectations: it restricts objects from containing"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTjx",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/tests/junit.test.ts",
+      "line": 46,
+      "comments": [
+        {
+          "databaseId": 3771399191,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n**Cover the descending-length ordering invariant.**\n\n`secretValues` in `.pi/qa-experts/maestro/src/run-flow-support.ts` line 151 sorts secrets by descending length. That sort is what stops a short secret from fragmenting a longer one and leaving part of it visible. The single case here does not exercise overlapping secrets, so a regression in t"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTj5",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/tests/path-and-library.test.ts",
+      "line": 276,
+      "comments": [
+        {
+          "databaseId": 3771399202,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n**Assert flow structure, not raw substrings.**\n\n`expect(flow).toContain('isMaestro: true\\n- waitForAnimationToEnd')` depends on the exact indentation and line order of `login-barber1.yaml`. A formatting-only edit to the flow fails this test with no behavior change. The suite already imports `inspectFlowYaml`, and `yaml` is available"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTj-",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/tests/record-video.test.ts",
+      "line": 68,
+      "comments": [
+        {
+          "databaseId": 3771399209,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udd35 Trivial_ | _\u26a1 Quick win_\n\n**Two test files recompute the recording-lock path.** `.pi/qa-experts/maestro/src/record-video.ts` lines 41-42 derive the lock path from a `sha256` hash of the UDID inside a `recording-locks` directory, and it does not export that derivation. Both test files therefore duplicate it. If the derivation changes in `src`, the tests seed "
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTkA",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/qa-experts/maestro/tests/record-video.test.ts",
+      "line": 258,
+      "comments": [
+        {
+          "databaseId": 3771399214,
+          "author": "coderabbitai",
+          "body": "_\ud83e\ude7a Stability & Availability_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**The exact failure message assertion makes this test order-dependent.**\n\nBoth `recordVideoStart` calls run in one process, so both write `process.pid` into their lock owner metadata. Two interleavings are reachable.\n\nIf caller B calls `mkdir` while A is still inside its reclaim sequence, B loses the reclaim guard and receives `reclaimColli"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTkJ",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/skills/.manifest.json",
+      "line": 13,
+      "comments": [
+        {
+          "databaseId": 3771399231,
+          "author": "coderabbitai",
+          "body": "_\ud83e\ude7a Stability & Availability_ | _\ud83d\udfe0 Major_ | _\ud83c\udfd7\ufe0f Heavy lift_\n\n**Use relocatable skill and extension paths.**\n\nThese committed paths require `/Users/Apple` and, for the manifest entry, the temporary `.trees/STY-91` worktree. A fresh checkout, CI runner, or another worktree cannot load the registered skill or start these pipelines. Resolve paths from repository configuration or the active installation"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTkM",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/skills/bmad-pipeline-runner/SKILL.md",
+      "line": 58,
+      "comments": [
+        {
+          "databaseId": 3771399235,
+          "author": "coderabbitai",
+          "body": "_\ud83c\udfaf Functional Correctness_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Make every extension example satisfy the documented schema.**\n\nLine 58 requires absolute file paths. The examples use `~/.pi/...` and aliases such as `obs`. A user who copies these examples can create a pipeline that the documented validator rejects.\n\nEither document expansion and alias resolution in the schema or replace every example with"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTkT",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/skills/bmad-pipeline-runner/SKILL.md",
+      "line": 206,
+      "comments": [
+        {
+          "databaseId": 3771399242,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**Do not place an unchecked story identifier in `rm -rf` paths.**\n\nA substituted value such as `../../..` can escape `.pi/pipeline/locks/` and delete unrelated repository files. Provide a cleanup command that first validates the identifier against the accepted Linear ticket format, then uses the validated value as one path component.\n\n<details>\n<"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTkW",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/skills/plan-editing/SKILL.md",
+      "line": 129,
+      "comments": [
+        {
+          "databaseId": 3771399248,
+          "author": "coderabbitai",
+          "body": "_\ud83c\udfaf Functional Correctness_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n<details>\n<summary>\ud83e\udde9 Analysis chain</summary>\n\n\ud83c\udfc1 Script executed:\n\n```shell\n#!/bin/bash\nset -e\nfile=\".pi/skills/plan-editing/SKILL.md\"\nprintf '%s\\n' '--- documented selectors and example ---'\nsed -n '35,60p' \"$file\"\nsed -n '110,135p' \"$file\"\nprintf '%s\\n' '--- all selector references ---'\nrg -n -C 2 'plan-price-input|plan-save-button|price-in"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTkY",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": ".pi/skills/qa-services-startup/SKILL.md",
+      "line": 87,
+      "comments": [
+        {
+          "databaseId": 3771399250,
+          "author": "coderabbitai",
+          "body": "_\ud83e\ude7a Stability & Availability_ | _\ud83d\udfe0 Major_ | _\u26a1 Quick win_\n\n**Run the fix loop with one subagent at a time.**\n\n\u201cSpawn ONE subagent per failing area\u201d can start multiple agents at once. Concurrent agents can restart shared services, overwrite logs, and modify the same QA state. Process each failing area sequentially and re-run validation after each repair.\n\nAs per coding guidelines, \u201cOne agent at a ti"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTkb",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": ".pi/workflows/guides/code-review/STY-91-attack-plan.md",
+      "line": 12,
+      "comments": [
+        {
+          "databaseId": 3771399256,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Publish one evidence-backed scope-validation verdict.**\n\nThe attack plan says `p_change_scope` validation is missing, then marks the task done. The findings report has the same conflict. This record cannot guide remediation or release decisions until it cites the current migration and fresh test result.\n\n- `.pi/workflows/guides/code"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTkd",
+      "isResolved": false,
+      "isOutdated": true,
+      "path": "artifacts/debug/debug-report.md",
+      "line": 79,
+      "comments": [
+        {
+          "databaseId": 3771399259,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udd12 Security & Privacy_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Remove persistent local and device identifiers from the committed report.**\n\nThe report stores a local workstation path and the raw simulator UDID in multiple sections. These identifiers expose user and environment metadata without being required to explain the defect.\n\nUse repository-relative paths. Replace the UDID with a redacted device labe"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6YxTkf",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "dev-story-sessions-report.html",
+      "line": 45,
+      "comments": [
+        {
+          "databaseId": 3771399263,
+          "author": "coderabbitai",
+          "body": "_\ud83c\udfaf Functional Correctness_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Correct the session aggregates and `v4` status.**\n\nThe report lists 13 Claude sessions and 2 DeepSeek sessions. Lines 159-160 instead report 14 Claude sessions and 9 completed Claude sessions. Also, `v4` is marked `completed` in the overview but `No emit` in the milestone table.\n\nRegenerate the summary cards and model metrics from the sessi"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6ZCD9s",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "qa/requirement-loop/docs/plan/STAGE-RUNNER-REFACTOR.md",
+      "line": 309,
+      "comments": [
+        {
+          "databaseId": 3777821318,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Fix the Markdown table before merge.**\n\nThe header declares two columns, but the separator row declares four. The `grade` row also uses unescaped `|` characters inside `verdict: passed | failed | blocked`. Markdown will split that row into extra cells and obscure the stage-result contract. Use a two-column separator row and escape t"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6ZDMkA",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "docs/doc-drift.md",
+      "line": 20,
+      "comments": [
+        {
+          "databaseId": 3778258232,
+          "author": "coderabbitai",
+          "body": "_\ud83d\udcd0 Maintainability & Code Quality_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Record an owner and due date for the remaining drift.**\n\nLine 20 records unresolved `CreatePlanModal.tsx` drift, but it does not assign a follow-up owner or due date. Add both values, or resolve the warning.\n\nAs per coding guidelines, the Doc Drift rule requires a follow-up owner/date for unresolved drift.\n\n<details>\n<summary>\ud83e\udd16 Prom"
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwDOPuf4tc6ZDMkG",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "RUNBOOK.md",
+      "line": 306,
+      "comments": [
+        {
+          "databaseId": 3778258238,
+          "author": "coderabbitai",
+          "body": "_\ud83c\udfaf Functional Correctness_ | _\ud83d\udfe1 Minor_ | _\u26a1 Quick win_\n\n**Use `start-services.sh` for Resend and Twilio routing.**\n\nLine 306 directs operators to update `apps/web-client/.env.local`. The documented QA routing source is `start-services.sh` `web_client_qa_env()`. Update this fix instruction to restart through `bash .pi/qa/start-services.sh` and verify that function exports both base URLs.\n\n<details>"
+        }
+      ]
+    }
+  ]
+}

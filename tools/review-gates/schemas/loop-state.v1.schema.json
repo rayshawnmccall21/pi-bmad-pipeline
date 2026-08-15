@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-gates.loop-state.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "loop-state.v1"
+    },
+    "storyId": {
+      "type": "string"
+    },
+    "pr": {
+      "type": "integer"
+    },
+    "repo": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "expectedHead": {
+      "type": "string"
+    },
+    "reviewCycles": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "max": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "count",
+        "max"
+      ],
+      "additionalProperties": false
+    },
+    "reRequested": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "fingerprints": {
+      "type": "object"
+    },
+    "fpCounts": {
+      "type": "object"
+    },
+    "pendingApplied": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "pendingUnapplied": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "updatedAt": {
+      "type": "string"
+    },
+    "chain": {
+      "type": "object",
+      "properties": {
+        "prev": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "prev",
+        "hash"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "storyId",
+    "pr",
+    "branch",
+    "expectedHead",
+    "reviewCycles",
+    "chain"
+  ],
+  "additionalProperties": false
+}

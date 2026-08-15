@@ -1,0 +1,48 @@
+{
+  "isDraft": false,
+  "mergeable": "MERGEABLE",
+  "reviewDecision": "CHANGES_REQUESTED",
+  "statusCheckRollup": [
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-08-13T18:57:13Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-08-13T18:52:14Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://supabase.com/dashboard/project/mrlimmuhxsdeyksexqag",
+      "name": "Supabase Preview",
+      "startedAt": "2026-08-13T18:51:15Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-08-13T18:54:26Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://vercel.com/github",
+      "name": "Vercel Preview Comments",
+      "startedAt": "2026-08-13T18:54:26Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "Vercel \u2013 admin-portal",
+      "startedAt": "2026-08-13T18:52:11Z",
+      "state": "SUCCESS",
+      "targetUrl": "https://vercel.com/rayshawn-mccalls-projects/admin-portal/EfSRrfAwj3qNRz8jRp8ziWBbGYVC"
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "Vercel \u2013 web-client",
+      "startedAt": "2026-08-13T18:54:25Z",
+      "state": "SUCCESS",
+      "targetUrl": "https://vercel.com/rayshawn-mccalls-projects/web-client/Fh5guCJtHc6BJYYhHcfkg8gDkGma"
+    }
+  ]
+}

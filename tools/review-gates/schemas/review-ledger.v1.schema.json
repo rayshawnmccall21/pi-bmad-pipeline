@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-gates.review-ledger.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "review-ledger.v1"
+    },
+    "generatedAt": {
+      "type": "string"
+    },
+    "storyId": {
+      "type": "string"
+    },
+    "pr": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer"
+        },
+        "headSha": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "isDraft": {
+          "type": "boolean"
+        },
+        "mergeableState": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "headSha",
+        "state",
+        "isDraft"
+      ],
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "state": {
+          "type": "string"
+        },
+        "commitId": {
+          "type": "string"
+        },
+        "submittedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "matchesHead": {
+          "type": "boolean"
+        },
+        "advertisedActionable": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "commitId",
+        "matchesHead"
+      ],
+      "additionalProperties": false
+    },
+    "threads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "isResolved": {
+            "type": "boolean"
+          },
+          "isOutdated": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "commentIds": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "fingerprint",
+          "isResolved",
+          "isOutdated"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "outsideDiff": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "reviewId": {
+            "type": "integer"
+          },
+          "file": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fingerprint",
+          "file"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "threads": {
+          "type": "integer"
+        },
+        "unresolved": {
+          "type": "integer"
+        },
+        "outsideDiff": {
+          "type": "integer"
+        },
+        "pages": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "threads",
+        "unresolved",
+        "outsideDiff",
+        "pages"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "pr",
+    "review",
+    "threads",
+    "outsideDiff",
+    "counts"
+  ],
+  "additionalProperties": false
+}
