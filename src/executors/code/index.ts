@@ -16,3 +16,4 @@ export type {
   LocalCodeSpawn,
   LocalCodeSpawnOptions,
 } from "./local-code-executor.js";
+export { liftFindings, type LiftFindingsRequest } from "./findings-lift.js";

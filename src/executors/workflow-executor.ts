@@ -53,6 +53,9 @@ export interface StageExecutionResult {
   /** Bounded, redacted failure diagnostic safe for durable/public boundaries. */
   readonly diagnostic?: string;
 
+  /** Findings lifted from a code stage's findings file on exit 1 (v1.1). */
+  readonly findings?: readonly string[];
+
   /** Optional usage reported by the child execution. */
   readonly usage?: StageExecutionUsage;
 
