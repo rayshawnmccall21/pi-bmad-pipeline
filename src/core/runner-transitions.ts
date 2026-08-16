@@ -20,6 +20,7 @@ import {
 
 import type { StageDecision } from "./stage-decision.js";
 import type { StageExecutionResult, StageExecutionUsage } from "../executors/index.js";
+import type { StageHandoff } from "../security/stage-handoff.js";
 
 /** Update describing one settled stage attempt to fold into durable state. */
 export interface StageAttemptOutcome {
@@ -38,8 +39,14 @@ export interface StageAttemptOutcome {
   /** Updated regression count after routing. */
   readonly regressions: number;
 
+  /** Actual routed successor stage id, or null when terminal. */
+  readonly successorId: string | null;
+
   /** Regression target stage id, or null when not regressing. */
   readonly regressionTargetId: string | null;
+
+  /** Optional normalized payload to attach to the routed successor. */
+  readonly upstreamHandoff?: StageHandoff;
 
   /** ISO timestamp when the attempt finished. */
   readonly finishedAt: string;
@@ -105,6 +112,9 @@ export const markStageRunning = (
     history: previous.history,
     ...(previous.reason === undefined ? {} : { reason: previous.reason }),
     ...(previous.findings === undefined ? {} : { findings: previous.findings }),
+    ...(previous.upstreamHandoff === undefined
+      ? {}
+      : { upstreamHandoff: previous.upstreamHandoff }),
   });
   return withStage(
     {
@@ -143,9 +153,16 @@ export const applyStageOutcome = (
     },
     buildFinishedStage(previous, outcome),
   );
-  return outcome.regressionTargetId === null
+  if (outcome.regressionTargetId !== null) {
+    return resetRegressionTarget(base, {
+      targetId: outcome.regressionTargetId,
+      decision: outcome.decision,
+      upstreamHandoff: outcome.upstreamHandoff,
+    });
+  }
+  return outcome.successorId === null
     ? base
-    : resetRegressionTarget(base, outcome.regressionTargetId, outcome.decision);
+    : replaceSuccessorHandoff(base, outcome.successorId, outcome.upstreamHandoff);
 };
 
 /**
@@ -292,24 +309,54 @@ const buildFinishedStage = (previous: StageState, outcome: StageAttemptOutcome):
     reason: outcome.decision.reason,
   });
 
-const resetRegressionTarget = (
+const replaceSuccessorHandoff = (
   state: PipelineState,
   targetId: string,
-  decision: StageDecision,
+  upstreamHandoff: StageHandoff | undefined,
 ): PipelineState => {
   const previous = stageStateOf(state, targetId);
   return withStage(
     state,
     Object.freeze({
-      id: targetId,
+      id: previous.id,
+      status: previous.status,
+      attempts: previous.attempts,
+      startedAt: previous.startedAt,
+      finishedAt: previous.finishedAt,
+      history: previous.history,
+      ...(previous.reason === undefined ? {} : { reason: previous.reason }),
+      ...(previous.findings === undefined ? {} : { findings: previous.findings }),
+      ...(upstreamHandoff === undefined ? {} : { upstreamHandoff }),
+    }),
+  );
+};
+
+interface ResetRegressionTargetRequest {
+  readonly targetId: string;
+  readonly decision: StageDecision;
+  readonly upstreamHandoff: StageHandoff | undefined;
+}
+
+const resetRegressionTarget = (
+  state: PipelineState,
+  request: ResetRegressionTargetRequest,
+): PipelineState => {
+  const previous = stageStateOf(state, request.targetId);
+  return withStage(
+    state,
+    Object.freeze({
+      id: request.targetId,
       status: "pending",
       attempts: previous.attempts,
       startedAt: null,
       finishedAt: null,
       history: previous.history,
-      ...(decision.findings === undefined
+      ...(request.decision.findings === undefined
         ? {}
-        : { findings: Object.freeze([...decision.findings]) }),
+        : { findings: Object.freeze([...request.decision.findings]) }),
+      ...(request.upstreamHandoff === undefined
+        ? {}
+        : { upstreamHandoff: request.upstreamHandoff }),
     }),
   );
 };

@@ -192,12 +192,13 @@ export function toBuildStageArgsRequest(request: RunBmadStageRequest): BuildStag
 }
 
 type OptionalStageArgsFields = Partial<
-  Pick<BuildStageArgsRequest, "runId" | "priorFindings" | "piBin">
+  Pick<BuildStageArgsRequest, "runId" | "priorFindings" | "upstreamHandoff" | "piBin">
 >;
 
 const optionalStageArgsFields = (request: RunBmadStageRequest): OptionalStageArgsFields => ({
   ...(request.runId === undefined ? {} : { runId: request.runId }),
   ...(request.priorFindings === undefined ? {} : { priorFindings: request.priorFindings }),
+  ...(request.upstreamHandoff === undefined ? {} : { upstreamHandoff: request.upstreamHandoff }),
   ...(request.piBin === undefined ? {} : { piBin: request.piBin }),
 });
 

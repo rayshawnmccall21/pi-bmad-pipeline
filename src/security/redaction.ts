@@ -108,31 +108,29 @@ export function redactError(error: Error): RedactionResult {
  * ```
  */
 export function redactValue(value: RedactableValue): RedactableValue {
-  if (typeof value === "string") {
-    return redactText(value).value;
-  }
+  return typeof value === "string" ? redactText(value).value : redactNonStringValue(value);
+}
+
+const redactNonStringValue = (value: Exclude<RedactableValue, string>): RedactableValue => {
   if (isRedactableArray(value)) {
     return Object.freeze(value.map((item) => redactValue(item)));
   }
-  if (isRedactableObject(value)) {
-    return redactObject(value);
-  }
-  return value;
-}
+  return typeof value === "object" && value !== null ? redactObject(value) : value;
+};
 
 const redactObject = (value: RedactableObject): RedactableValue => {
   const redacted: Record<string, RedactableValue> = {};
   for (const [key, entry] of Object.entries(value)) {
-    redacted[key] = redactValue(entry);
+    Object.defineProperty(redacted, key, {
+      value: redactValue(entry),
+      enumerable: true,
+    });
   }
   return Object.freeze(redacted);
 };
 
 const isRedactableArray = (value: RedactableValue): value is readonly RedactableValue[] =>
   Array.isArray(value);
-
-const isRedactableObject = (value: RedactableValue): value is RedactableObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const simplePattern = (name: CredentialPatternName, regex: RegExp): CredentialPattern => ({
   name,

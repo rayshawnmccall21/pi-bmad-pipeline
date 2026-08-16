@@ -27,3 +27,5 @@ final-implementation-agent-plan.md
 
 # Python cache
 __pycache__/
+.pi/pipeline/state/
+.pi-subagents/

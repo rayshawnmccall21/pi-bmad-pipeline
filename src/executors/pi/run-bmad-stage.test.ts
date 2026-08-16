@@ -7,6 +7,7 @@ import { buildEmissionProvenance } from "pi-bmad";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEBUG_LOG_PREFIX, PIPELINE_DEBUG_ENV_VAR } from "../../events/index.js";
+import { createStageHandoff } from "../../security/stage-handoff.js";
 import {
   BmadStageSpawnError,
   MAX_STAGE_STDERR_CHARS,
@@ -79,6 +80,12 @@ const request = (overrides: Partial<RunBmadStageRequest> = {}): RunBmadStageRequ
   ...overrides,
 });
 
+const handoff = (value: unknown) => {
+  const normalized = createStageHandoff(value);
+  expect(normalized).toBeDefined();
+  return normalized!;
+};
+
 const createFakeChild = (): BmadStageChildProcess => {
   const child = new EventEmitter() as BmadStageChildProcess;
   child.stdout = new PassThrough();
@@ -106,15 +113,18 @@ const writeStderr = (child: BmadStageChildProcess, text: string): void => {
 
 describe("run BMAD stage", () => {
   it("maps requests to build-stage-args requests", () => {
+    const upstreamHandoff = handoff({ locations: ["src/example.ts:42"] });
     const input = request({
       priorFindings: ["a"],
+      upstreamHandoff,
       piBin: "pix",
       piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
       emissionKey: "key-1",
       runId: "run-9",
     });
 
-    expect(toBuildStageArgsRequest(input)).toEqual({
+    const mapped = toBuildStageArgsRequest(input);
+    expect(mapped).toEqual({
       stage: input.stage,
       storyId: "STORY-123",
       specFile: "./specs/story-123.md",
@@ -123,15 +133,18 @@ describe("run BMAD stage", () => {
       model: "gpt-5.5-pro",
       thinking: "medium",
       priorFindings: ["a"],
+      upstreamHandoff,
       piBin: "pix",
       piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
       emissionKey: "key-1",
       runId: "run-9",
     });
+    expect(mapped.upstreamHandoff).toBe(upstreamHandoff);
   });
 
   it("omits optional build-stage-args fields when absent", () => {
     expect(toBuildStageArgsRequest(request())).not.toHaveProperty("priorFindings");
+    expect(toBuildStageArgsRequest(request())).not.toHaveProperty("upstreamHandoff");
     expect(toBuildStageArgsRequest(request())).not.toHaveProperty("piBin");
     expect(toBuildStageArgsRequest(request())).not.toHaveProperty("runId");
   });
@@ -398,17 +411,18 @@ describe("run BMAD stage", () => {
     expect(result).not.toHaveProperty("aborted");
   });
 
-  it("does not mutate request or prior findings", async () => {
+  it("does not mutate the request, prior findings, or upstream handoff", async () => {
     const findings = ["a"];
+    const upstreamHandoff = handoff({ locations: ["src/example.ts:42"] });
     const [spawn, child] = createSpawn();
-    const input = request({ spawn, priorFindings: findings });
-    const before = JSON.stringify({ input, findings });
+    const input = request({ spawn, priorFindings: findings, upstreamHandoff });
+    const before = JSON.stringify({ input, findings, upstreamHandoff });
 
     const promise = runBmadStage(input);
     close(child, 0);
     await promise;
 
-    expect(JSON.stringify({ input, findings })).toBe(before);
+    expect(JSON.stringify({ input, findings, upstreamHandoff })).toBe(before);
   });
 });
 
@@ -576,6 +590,24 @@ describe("run BMAD stage debug logging", () => {
     expect(event?.["args"]).toEqual(expect.arrayContaining(["--bmad-story", "STORY-123"]));
     const rendered = write.mock.calls.map((call) => String(call[0])).join("");
     expect(rendered).not.toContain("emission-key-secret-1");
+  });
+
+  it("spawns and debug-logs only the redacted upstream handoff", async () => {
+    const fakeSecret = "Bearer fake-token-1234567890";
+    const upstreamHandoff = handoff({ nested: { token: fakeSecret } });
+    const write = captureDebug();
+    const [spawn, child] = createSpawn();
+
+    const promise = runBmadStage(request({ spawn, upstreamHandoff }));
+    close(child, 0);
+    await promise;
+
+    const spawnedArgs = vi.mocked(spawn).mock.calls[0]?.[1];
+    const spawnEvent = debugEvents(write).find((entry) => entry["event"] === "stage.spawn");
+    const rendered = `${JSON.stringify(spawnedArgs)}${JSON.stringify(spawnEvent?.["args"])}`;
+    expect(upstreamHandoff).toContain('"token":"[REDACTED]"');
+    expect(rendered).toContain('\\"token\\":\\"[REDACTED]\\"');
+    expect(rendered).not.toContain(fakeSecret);
   });
 
   it("emits an accepted stage.envelope-gate verdict without a failure reason", async () => {

@@ -1,11 +1,15 @@
 # AGENTS.md
 
-Orientation index for agents working in this package.
+Orientation index for agents working in this package. Read the linked artifacts for full context; this file only routes you to them.
+
+## Research & Planning
+
+No analysis, product, architecture, or epic artifacts are currently published under `.pi/artifacts/`.
 
 ## Current Context
 
 - [Package context](CONTEXT.md) — mission, core flow, boundaries, and operational invariants
-- [STY-112 plan](.pi/plans/code-stage-type.md) — approved implementation plan (6 slices, red/green TDD)
+- [STY-115 specification](.pi/plans/stage-handoff.md) — bounded, redacted, replay-stable predecessor payload handoff
 
 ## Story Template
 
@@ -24,7 +28,7 @@ When writing `.pi/artifacts/implementation/story-source-intake.md`, use the chec
 ```markdown
 # Story Source Intake
 
-- Issue Identifier: STY-112
+- Issue Identifier: STY-123
 - Title: Story title
 
 ## Upstream Source
@@ -45,3 +49,9 @@ Each top-level module under `src/` has a `CONTEXT.md` with its responsibility, p
 - Do not modify locked quality configuration: `eslint.config.js`, `.prettierrc*`, `vitest.config.ts`, `knip.json`, `tsconfig*.json`, or `scripts/crap-*.mjs`.
 - Keep public functions documented and within the configured complexity limits.
 - This package is the standalone `pi-bmad-pipeline` supervisor CLI, not a Pi extension.
+
+## Tool Discipline (headless agents)
+
+- NEVER scan the filesystem from root (`find /`, `grep -r /`, `ls -R /`); it trips the 180s workflow watchdog and terminally fails the stage. Artifacts live under `.pi/artifacts/` relative to cwd.
+- The `subagent` tool IS available in every pipeline stage. NEVER assume a tool is absent from memory — verify first with `subagent({action:"list"})`. dev-story and code-review are expected to delegate (scout probes, TDD worker tasks).
+- If a workflow tool call has not been made recently, resume by calling `bmad_workflow_step(advance)` — do not end your turn with text only.

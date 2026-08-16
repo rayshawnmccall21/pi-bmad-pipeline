@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CompiledStageDef } from "../rundef/index.js";
+import { createStageHandoff } from "../security/stage-handoff.js";
 import {
   createInitialPipelineState,
   getFirstIncompleteStageId,
@@ -55,6 +56,10 @@ const withStage = (state: PipelineState, id: string, next: Partial<StageState>):
     },
   },
 });
+
+const handoff = createStageHandoff({
+  findings: [{ severity: "high", locations: ["src/example.ts:42"], detail: "Use café ☕" }],
+})!;
 
 describe("pipeline state reconciliation", () => {
   it("returns no changes for valid initial state", () => {
@@ -134,6 +139,45 @@ describe("pipeline state reconciliation", () => {
     expect(result.state.stages["dev-story"]?.startedAt).toBeNull();
     expect(result.state.stages["dev-story"]?.finishedAt).toBeNull();
     expect(result.state.stages["dev-story"]?.history).toEqual([]);
+  });
+
+  it("preserves a valid normalized handoff unchanged without reconciliation issues", () => {
+    const state = withStage(createState(), "dev-story", { upstreamHandoff: handoff });
+    const roundTripped = JSON.parse(JSON.stringify(state)) as PipelineState;
+    const before = JSON.stringify(roundTripped);
+
+    const result = reconcilePipelineState({ state: roundTripped, stages: compiledStages() });
+
+    expect(result.changed).toBe(false);
+    expect(result.issues).toEqual([]);
+    expect(result.state.stages["dev-story"]?.upstreamHandoff).toBe(handoff);
+    expect(Buffer.from(result.state.stages["dev-story"]!.upstreamHandoff!, "utf8")).toEqual(
+      Buffer.from(handoff, "utf8"),
+    );
+    expect(
+      (JSON.parse(JSON.stringify(result.state)) as PipelineState).stages["dev-story"]
+        ?.upstreamHandoff,
+    ).toBe(handoff);
+    expect(Object.isFrozen(result.state)).toBe(true);
+    expect(Object.isFrozen(result.state.stages["dev-story"])).toBe(true);
+    expect(JSON.stringify(roundTripped)).toBe(before);
+  });
+
+  it("preserves a handoff while resetting an interrupted running stage", () => {
+    const state = withStage(createState(), "dev-story", {
+      status: "running",
+      startedAt: "2026-07-01T00:00:00.000Z",
+      upstreamHandoff: handoff,
+    });
+    const before = JSON.stringify(state);
+
+    const result = reconcilePipelineState({ state, stages: compiledStages() });
+
+    expect(result.issues.map((issue) => issue.code)).toEqual(["running-stage-reset"]);
+    expect(result.state.stages["dev-story"]?.status).toBe("pending");
+    expect(result.state.stages["dev-story"]?.upstreamHandoff).toBe(handoff);
+    expect(Object.isFrozen(result.state.stages["dev-story"])).toBe(true);
+    expect(JSON.stringify(state)).toBe(before);
   });
 
   it("resets an interrupted code stage to pending without fake history", () => {

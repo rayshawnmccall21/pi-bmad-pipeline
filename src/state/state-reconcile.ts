@@ -283,6 +283,7 @@ const cloneStage = (stage: StageState): StageState => ({
   history: stage.history.map(cloneAttempt),
   ...(stage.reason === undefined ? {} : { reason: stage.reason }),
   ...(stage.findings === undefined ? {} : { findings: [...stage.findings] }),
+  ...(stage.upstreamHandoff === undefined ? {} : { upstreamHandoff: stage.upstreamHandoff }),
 });
 
 const cloneAttempt = (attempt: StageAttemptState): StageAttemptState => ({

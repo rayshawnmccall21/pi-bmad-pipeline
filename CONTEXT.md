@@ -49,6 +49,8 @@ The repository includes `.pi/bmad/pipelines/sdlc.yaml` as discovered example dat
 
 State is stored at `.pi/pipeline/state/<story-id>.json`. It records the story, selected RunDef ID and digest, spec, model/thinking configuration, stage history, regressions, timestamps, and economics. Resume proceeds only when these identities match the active invocation; the digest includes code command/args, so changing either blocks resume before spawn.
 
+Normalized, redacted, bounded serialized handoff bytes are persisted on the actual successor stage and replayed unchanged through state round-trip, reconciliation, and resume. Rejected or oversized handoffs persist no partial payload and degrade to the unchanged `priorFindings` summary fallback.
+
 Recovery is at-least-once, not exactly-once. An interrupted running stage is reconciled to pending without fabricated history and runs again; authors must make commands idempotent when replay matters.
 
 ## Execution boundaries
@@ -56,6 +58,8 @@ Recovery is at-least-once, not exactly-once. An interrupted running stage is rec
 `StageExecutorDispatcher` uses one exhaustive switch over the two supported kinds and owns exactly one agent delegate and one code delegate. There is no executor registry, plugin API, factory map, or added dependency, and each concrete executor rejects the wrong kind before starting a process.
 
 Agent stages start Pi with discovery and sessions disabled and offline mode enabled. A per-process emission key authenticates terminal output; accepted output must also match the requested schema, workflow, and story. Payload gates receive the active story identity, and an agent exit `0` without authenticated validated output still fails.
+
+An authenticated predecessor payload may enter the next agent prompt only as prompt-only Mode A untrusted reasoning context. It is distinct from the next child's own authenticated provenance and cannot serve as that child's emission. Handoff acceptance or rejection does not change gates, conformance, pass/fail decisions, routing, or regression limits; rejected or oversized handoffs retain the unchanged `priorFindings` heading, order, content, and summary fallback.
 
 Code stages directly spawn the exact executable and literal argv with `shell: false`, exact `projectRoot` cwd, ignored stdin, drained stdout/stderr, and full inherited `process.env`. Exit `0` succeeds with `output: null`; nonzero or missing exit codes fail terminally and never enter agent gate regression. Successful output is discarded. Failure diagnostics are capped at 16,384 characters and redacted before decisions, durable state, events, or debug logs. Timeout and abort signal the detached process group with `SIGTERM`, then bounded `SIGKILL`, to include descendants. Code execution is trusted local execution, not a sandbox.
 

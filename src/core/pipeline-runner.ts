@@ -32,6 +32,7 @@ import {
   stageStateOf,
 } from "./runner-transitions.js";
 import { getFirstIncompleteStageId, type PipelineState } from "../state/index.js";
+import { createStageHandoff } from "../security/stage-handoff.js";
 
 import type { RunBudget } from "./budgets.js";
 import type { StageDecision } from "./stage-decision.js";
@@ -238,7 +239,8 @@ const executeStage = async (
   stage: CompiledStageDef,
   attempt: number,
 ): Promise<ExecutionAttempt> => {
-  const findings = stageStateOf(context.state, stage.id).findings;
+  const invokedStage = stageStateOf(context.state, stage.id);
+  const findings = invokedStage.findings;
   const { storyId, specFile, projectRoot } = context.request;
   try {
     const result = await context.request.executor.execute({
@@ -248,6 +250,9 @@ const executeStage = async (
       projectRoot,
       attempt,
       ...(findings === undefined ? {} : { priorFindings: [...findings] }),
+      ...(invokedStage.upstreamHandoff === undefined
+        ? {}
+        : { upstreamHandoff: invokedStage.upstreamHandoff }),
       signal: context.signal,
     });
     return { kind: "result", result };
@@ -291,17 +296,24 @@ const stateAfterOutcome = (
   context: RunContext,
   input: SettleInput,
   evaluated: StageEvaluation,
-): PipelineState =>
-  applyStageOutcome(context.state, {
+): PipelineState => {
+  const upstreamHandoff =
+    input.execution.output === null
+      ? undefined
+      : createStageHandoff(input.execution.output["payload"]);
+  return applyStageOutcome(context.state, {
     stageId: input.stage.id,
     attempt: input.attempt,
     decision: evaluated.decision,
     execution: input.execution,
     regressions: evaluated.route.regressions,
+    successorId: evaluated.route.nextStageId ?? null,
     regressionTargetId:
       evaluated.route.action === "regress" ? (evaluated.route.nextStageId ?? null) : null,
+    ...(upstreamHandoff === undefined ? {} : { upstreamHandoff }),
     finishedAt: isoTime(context),
   });
+};
 
 const concludeStep = (
   context: RunContext,

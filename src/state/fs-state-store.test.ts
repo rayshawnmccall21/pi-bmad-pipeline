@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEBUG_LOG_PREFIX, PIPELINE_DEBUG_ENV_VAR } from "../events/index.js";
 import type { CompiledStageDef } from "../rundef/index.js";
+import { createStageHandoff } from "../security/stage-handoff.js";
 import {
   PIPELINE_STATE_FILE_EXTENSION,
   PIPELINE_STATE_RELATIVE_DIR,
@@ -220,6 +221,90 @@ describe("filesystem pipeline state store", () => {
         );
       }
     }
+  });
+
+  it.each([
+    ["raw secret JSON", JSON.stringify({ token: "Bearer fake-token-1234567890" })],
+    ["malformed JSON", '{"finding":'],
+    ["oversized JSON", JSON.stringify("x".repeat(40_000))],
+    ["a non-string value", { finding: "safe" }],
+    ["noncanonical but sanitizable JSON", '{ "finding": "safe" }'],
+  ])("rejects an unsafe durable upstream handoff containing %s", async (_name, value) => {
+    const root = await createProjectRoot();
+    const state = createState();
+    const tampered = {
+      ...state,
+      stages: {
+        ...state.stages,
+        "dev-story": { ...state.stages["dev-story"]!, upstreamHandoff: value },
+      },
+    } as unknown as PipelineState;
+
+    await expect(savePipelineState(root, tampered)).rejects.toMatchObject({
+      code: "invalid-state",
+    });
+    await expect(loadPipelineState(root, state.storyId)).resolves.toBeUndefined();
+
+    const path = getPipelineStatePath(root, state.storyId);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${JSON.stringify(tampered, null, 2)}\n`, "utf8");
+
+    await expect(loadPipelineState(root, state.storyId)).rejects.toMatchObject({
+      code: "invalid-state",
+    });
+  });
+
+  it("round-trips a canonical sanitized upstream handoff byte-for-byte", async () => {
+    const root = await createProjectRoot();
+    const rawSecret = "Bearer fake-token-1234567890";
+    const upstreamHandoff = createStageHandoff({
+      finding: "src/example.ts:42",
+      token: rawSecret,
+    });
+    expect(upstreamHandoff).toBeDefined();
+    const state = createState();
+    const stateWithHandoff: PipelineState = {
+      ...state,
+      stages: {
+        ...state.stages,
+        "dev-story": { ...state.stages["dev-story"]!, upstreamHandoff: upstreamHandoff! },
+      },
+    };
+
+    const path = await savePipelineState(root, stateWithHandoff);
+    const saved = await readFile(path, "utf8");
+    const loaded = await loadPipelineState(root, state.storyId);
+
+    expect(saved).not.toContain(rawSecret);
+    expect(loaded?.stages["dev-story"]?.upstreamHandoff).toBe(upstreamHandoff);
+    expect(Buffer.from(loaded!.stages["dev-story"]!.upstreamHandoff!, "utf8")).toEqual(
+      Buffer.from(upstreamHandoff!, "utf8"),
+    );
+  });
+
+  it("rejects a durable stage record whose embedded id differs from its map key", async () => {
+    const root = await createProjectRoot();
+    const state = createState();
+    const tampered = {
+      ...state,
+      stages: {
+        ...state.stages,
+        "dev-story": { ...state.stages["dev-story"]!, id: "create-story" },
+      },
+    } as PipelineState;
+
+    await expect(savePipelineState(root, tampered)).rejects.toMatchObject({
+      code: "invalid-state",
+    });
+    await expect(loadPipelineState(root, state.storyId)).resolves.toBeUndefined();
+
+    const path = getPipelineStatePath(root, state.storyId);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${JSON.stringify(tampered, null, 2)}\n`, "utf8");
+
+    await expect(loadPipelineState(root, state.storyId)).rejects.toMatchObject({
+      code: "invalid-state",
+    });
   });
 
   it("throws read-failed when the state path is a directory", async () => {

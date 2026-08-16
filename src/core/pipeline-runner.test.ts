@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_MAX_REGRESSIONS, runPipelineStages } from "./index.js";
 import { createInitialPipelineState } from "../state/index.js";
+import {
+  MAX_STAGE_HANDOFF_BYTES,
+  createStageHandoff,
+  type StageHandoff,
+} from "../security/stage-handoff.js";
 
 import type { PipelineState, StageState } from "../state/index.js";
 import type { CompiledAgentStage, CompiledCodeStage, CompiledStageDef } from "../rundef/index.js";
@@ -133,6 +138,10 @@ const gatedStages = (): readonly CompiledStageDef[] => [
   stage("b", 1, { payloadGate: okGate, payloadGateName: "ok-gate", onFail: "a" }),
 ];
 
+type StageStateWithHandoff = StageState & { readonly upstreamHandoff?: StageHandoff };
+const handoffOf = (state: StageState | undefined): StageHandoff | undefined =>
+  (state as StageStateWithHandoff | undefined)?.upstreamHandoff;
+
 describe("runPipelineStages", () => {
   it("runs all stages to done and accumulates economics", async () => {
     const usage = { tokens: 10, dollars: 0.25 };
@@ -166,10 +175,44 @@ describe("runPipelineStages", () => {
     expect(executor.requests[0]?.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("runs mixed agent, code, agent stages in declared order", async () => {
-    const stages = [stage("a", 0), codeStage("check", 1), stage("b", 2)];
-    const { request, executor } = harness(stages, [
+  it("persists an agent payload on its normal successor and forwards the exact handoff", async () => {
+    const payload = { ok: true, result: { files: ["src/example.ts"], count: 1 } };
+    const expected = createStageHandoff(payload);
+    expect(expected).toBeDefined();
+    const { request, executor, saves } = harness(twoStages(), [
+      okResult({ output: { payload } }),
       okResult(),
+    ]);
+
+    await runPipelineStages(request);
+
+    const successorSave = saves.find((saved) => handoffOf(saved.stages["b"]) === expected);
+    expect(handoffOf(successorSave?.stages["b"])).toBe(expected);
+    expect(executor.requests[1]?.upstreamHandoff).toBe(expected);
+  });
+
+  it("redacts a payload before every durable save and successor request", async () => {
+    const rawSecret = "Bearer test-secret-token-1234567890";
+    const payload = { ok: true, nested: [{ authorization: rawSecret }] };
+    const { request, executor, saves } = harness(twoStages(), [
+      okResult({ output: { payload } }),
+      okResult(),
+    ]);
+
+    await runPipelineStages(request);
+
+    const captures = [...saves, ...executor.requests].map((value) => JSON.stringify(value));
+    expect(captures.every((capture) => !capture.includes(rawSecret))).toBe(true);
+    expect(captures.some((capture) => capture.includes("[REDACTED]"))).toBe(true);
+    expect(executor.requests[1]?.upstreamHandoff).toContain("[REDACTED]");
+  });
+
+  it("runs mixed agent, code, agent stages in declared order without stale code output", async () => {
+    const stages = [stage("a", 0), codeStage("check", 1), stage("b", 2)];
+    const agentPayload = { ok: true, source: "agent-a" };
+    const expected = createStageHandoff(agentPayload);
+    const { request, executor } = harness(stages, [
+      okResult({ output: { payload: agentPayload } }),
       okResult({ output: null }),
       okResult(),
     ]);
@@ -183,6 +226,8 @@ describe("runPipelineStages", () => {
       "code",
       "agent",
     ]);
+    expect(executor.requests[1]?.upstreamHandoff).toBe(expected);
+    expect(executor.requests[2]?.upstreamHandoff).toBeUndefined();
   });
 
   it("stops terminally on a nonzero code exit without increasing regressions", async () => {
@@ -259,6 +304,33 @@ describe("runPipelineStages", () => {
     expect(result.state.stages["a"]?.attempts).toBe(1);
   });
 
+  it("reuses the exact persisted handoff when resuming an incomplete successor", async () => {
+    const { request, executor } = harness(twoStages(), [okResult()]);
+    const persisted = createStageHandoff({ z: 1, a: ["kept exactly"] });
+    expect(persisted).toBeDefined();
+    const passed: StageState = {
+      id: "a",
+      status: "passed",
+      attempts: 1,
+      startedAt: T0,
+      finishedAt: T0,
+      history: [],
+    };
+    const pendingB: StageStateWithHandoff = {
+      ...request.state.stages["b"]!,
+      upstreamHandoff: persisted!,
+    };
+    const state: PipelineState = {
+      ...request.state,
+      startedAt: T0,
+      stages: { ...request.state.stages, a: passed, b: pendingB },
+    };
+
+    await runPipelineStages({ ...request, state });
+
+    expect(executor.requests[0]?.upstreamHandoff).toBe(persisted);
+  });
+
   it("returns done without executing when every stage is complete", async () => {
     const { request, executor } = harness(twoStages(), []);
     const stages = Object.fromEntries(
@@ -321,6 +393,63 @@ describe("runPipelineStages", () => {
     );
     expect(regressed?.stages["a"]?.findings).toEqual(findings);
     expect(regressed?.stages["a"]?.startedAt).toBeNull();
+  });
+
+  it("regresses with the full review finding while retaining gate routing and summaries", async () => {
+    const priorFindings = ["Findings by severity: high=1"];
+    const finding = {
+      severity: "high",
+      title: "Unsafe call",
+      locations: [{ path: "src/example.ts", line: 42 }],
+      requiredAction: "Validate before use",
+    };
+    const failedPayload = { ok: false, findings: priorFindings, reviewFindings: [finding] };
+    const expected = createStageHandoff(failedPayload);
+    const { request, executor, saves } = harness(gatedStages(), [
+      okResult(),
+      okResult({ output: { payload: failedPayload } }),
+      okResult(),
+      okResult(),
+    ]);
+
+    const result = await runPipelineStages(request);
+
+    expect(result.regressions).toBe(1);
+    expect(result.stagesRun).toEqual(["a", "b", "a", "b"]);
+    expect(executor.requests[2]).toMatchObject({
+      attempt: 2,
+      priorFindings,
+      upstreamHandoff: expected,
+    });
+    expect(executor.requests[2]?.upstreamHandoff).toContain("src/example.ts");
+    expect(executor.requests[2]?.upstreamHandoff).toContain("42");
+    const regressed = saves.find(
+      (saved) => saved.regressions === 1 && saved.stages["a"]?.status === "pending",
+    );
+    expect(handoffOf(regressed?.stages["a"])).toBe(expected);
+    expect(regressed?.stages["a"]?.findings).toEqual(priorFindings);
+  });
+
+  it("rejects an oversized handoff whole while retaining the findings fallback", async () => {
+    const priorFindings = ["Findings by severity: high=1"];
+    const oversized = `OVER_CAP_${"x".repeat(MAX_STAGE_HANDOFF_BYTES + 1)}_END`;
+    const payload = { ok: false, findings: priorFindings, detail: oversized };
+    const { request, executor, saves } = harness(gatedStages(), [
+      okResult(),
+      okResult({ output: { payload } }),
+      okResult(),
+      okResult(),
+    ]);
+
+    await runPipelineStages(request);
+
+    expect(executor.requests[2]?.priorFindings).toEqual(priorFindings);
+    expect(executor.requests[2]?.upstreamHandoff).toBeUndefined();
+    expect(handoffOf(saves.find((saved) => saved.regressions === 1)?.stages["a"])).toBeUndefined();
+    for (const captured of [...saves, ...executor.requests]) {
+      expect(JSON.stringify(captured)).not.toContain("OVER_CAP_");
+      expect(JSON.stringify(captured)).not.toContain("_END");
+    }
   });
 
   it("fails closed when the regression limit is exceeded", async () => {
