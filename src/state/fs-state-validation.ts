@@ -1,3 +1,5 @@
+import { sanitizeStageHandoff } from "../security/stage-handoff.js";
+
 import type { PipelineState } from "./pipeline-state.js";
 
 const pipelineStatuses = new Set([
@@ -55,6 +57,14 @@ const hasOptionalString = (record: Record<string, unknown>, key: string): boolea
 const hasOptionalStringArray = (record: Record<string, unknown>, key: string): boolean =>
   !(key in record) || isStringArray(record[key]);
 
+const hasValidOptionalStageHandoff = (record: Record<string, unknown>): boolean => {
+  const persistedHandoff = record["upstreamHandoff"];
+  return (
+    !("upstreamHandoff" in record) ||
+    (isString(persistedHandoff) && sanitizeStageHandoff(persistedHandoff) === persistedHandoff)
+  );
+};
+
 const validStatus = (value: unknown, statuses: ReadonlySet<string>): boolean =>
   typeof value === "string" && statuses.has(value);
 
@@ -96,14 +106,18 @@ const validStageCore = (value: Record<string, unknown>): boolean =>
     Array.isArray(value["history"]) && value["history"].every(validAttempt),
   ].every(Boolean);
 
-const validStage = (value: unknown): boolean =>
+const validStage = (value: unknown): value is Record<string, unknown> =>
   isRecord(value) &&
   validStageCore(value) &&
   hasOptionalString(value, "reason") &&
-  hasOptionalStringArray(value, "findings");
+  hasOptionalStringArray(value, "findings") &&
+  hasValidOptionalStageHandoff(value);
 
 const validStages = (value: unknown): boolean =>
-  isRecord(value) && Object.values(value).every(validStage);
+  isRecord(value) &&
+  Object.entries(value).every(
+    ([stageId, stageState]) => validStage(stageState) && stageState["id"] === stageId,
+  );
 
 const validEconomics = (value: unknown): boolean =>
   isRecord(value) && isNonNegativeInteger(value["tokens"]) && isNonNegativeFinite(value["dollars"]);

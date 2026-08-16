@@ -1,11 +1,15 @@
 # AGENTS.md
 
-Orientation index for agents working in this package.
+Orientation index for agents working in this package. Read the linked artifacts for full context; this file only routes you to them.
+
+## Research & Planning
+
+No analysis, product, architecture, or epic artifacts are currently published under `.pi/artifacts/`.
 
 ## Current Context
 
 - [Package context](CONTEXT.md) — mission, core flow, boundaries, and operational invariants
-- [STY-112 plan](.pi/plans/code-stage-type.md) — approved implementation plan (6 slices, red/green TDD)
+- [STY-115 specification](.pi/plans/stage-handoff.md) — bounded, redacted, replay-stable predecessor payload handoff
 
 ## Story Template
 
@@ -24,7 +28,7 @@ When writing `.pi/artifacts/implementation/story-source-intake.md`, use the chec
 ```markdown
 # Story Source Intake
 
-- Issue Identifier: STY-112
+- Issue Identifier: STY-123
 - Title: Story title
 
 ## Upstream Source

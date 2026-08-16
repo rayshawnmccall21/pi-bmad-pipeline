@@ -1,4 +1,5 @@
 import type { CompiledStageDef } from "../rundef/index.js";
+import type { StageHandoff } from "../security/stage-handoff.js";
 
 /** Usage reported by one stage execution. */
 export interface StageExecutionUsage {
@@ -31,6 +32,9 @@ export interface StageExecutionRequest {
 
   /** Optional findings from prior failed gates. */
   readonly priorFindings?: readonly string[];
+
+  /** Redacted, bounded predecessor context; not this stage's authenticated output. */
+  readonly upstreamHandoff?: StageHandoff;
 
   /** Abort signal controlled by the supervisor. */
   readonly signal: AbortSignal;

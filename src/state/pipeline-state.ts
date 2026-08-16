@@ -13,6 +13,7 @@
  */
 
 import type { CompiledStageDef } from "../rundef/index.js";
+import type { StageHandoff } from "../security/stage-handoff.js";
 
 /** Current durable state feature version written by this runner. */
 export const RUNNER_FEATURE_VERSION = 1 as const;
@@ -107,6 +108,9 @@ export interface StageState {
 
   /** Optional latest findings used for regression routing. */
   readonly findings?: readonly string[];
+
+  /** Normalized, redacted, bounded predecessor context for this stage invocation. */
+  readonly upstreamHandoff?: StageHandoff;
 }
 
 /** Durable state for one pipeline run, persisted as JSON. */
