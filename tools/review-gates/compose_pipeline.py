@@ -19,8 +19,8 @@ Deterministically generates two pipeline YAMLs from the base SDLC RunDef:
 
 Every agent stage gets the observability triple (oPool/oName/oTag) and the
 extension set proven by the run that built PR #561 (pi-observability +
-pi-subagents + pi-mcp-adapter), plus a per-stage maxDollars budget —
-no shipped pipeline declares budgets today; this one does.
+pi-subagents + pi-mcp-adapter). Bounded by rounds (--max-regressions)
+and per-stage timeouts rather than dollar caps.
 
 The composer is itself a gate: it re-checks id uniqueness and the
 onFail-must-be-earlier invariant, then shells out to validate-rundef.mjs
@@ -47,11 +47,6 @@ DEFAULT_EXTENSIONS = [
     "/Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts",
 ]
 
-BUDGET_DOLLARS = {
-    "create-story": 8, "e2e-plan": 8, "dev-story": 25, "e2e-verify": 15,
-    "code-review": 8, "update-pr": 12, "docs": 8,
-}
-
 # Stage-timeout overrides above the base RunDef (strip.yaml precedent:
 # dev-story earns 7200s when review-remediation cycles are in play).
 TIMEOUT_OVERRIDES = {"dev-story": 7200, "code-review": 2400}
@@ -72,9 +67,8 @@ def agent_stage(base: dict, story_id: str, extensions: list[str]) -> dict:
     timeout = TIMEOUT_OVERRIDES.get(stage["id"])
     if timeout is not None:
         stage["timeout"] = timeout
-    dollars = BUDGET_DOLLARS.get(stage["id"])
-    if dollars is not None:
-        stage["budget"] = {"maxDollars": dollars}
+    # Bounded by rounds (--max-regressions) and per-stage timeouts, not
+    # dollars: the operator chose a 10-round ceiling over cost stop-gaps.
     return stage
 
 
@@ -148,6 +142,10 @@ def compose(args: argparse.Namespace) -> tuple[dict, dict]:
         timeout=300, scripts_dir=scripts_dir, on_fail="docs",
         findings_file=".pi/artifacts/docs/findings.json",
     )
+    # Severity-scoped bar: code-review-lenient passes on 0 critical + 0 high
+    # (mediums/lows are tracked debt, not blockers). The reviewer stays
+    # adversarial; only the gate policy changes.
+    base_stages["code-review"] = dict(base_stages["code-review"], gate="code-review-lenient")
     sdlc_stages = (
         [agent_stage(base_stages[s], args.story_id, extensions)
          for s in ["create-story", "e2e-plan", "dev-story", "e2e-verify", "code-review"]]
@@ -212,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--extensions", nargs="*", default=DEFAULT_EXTENSIONS)
     ap.add_argument("--live-reconcile", action="store_true")
-    ap.add_argument("--max-regressions", type=int, default=6)
+    ap.add_argument("--max-regressions", type=int, default=10)
     ap.add_argument("--validator",
                     default=str(REPO_ROOT / "skills/pi-bmad-pipeline-workflows/scripts/validate-rundef.mjs"))
     args = ap.parse_args(argv)
