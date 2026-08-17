@@ -166,6 +166,11 @@ def preflight_worktree(state: dict, *, allow_detached: bool = False) -> None:
             f"preflight: on branch '{branch}', loop expects '{expected_branch}'")
 
 
+def local_head() -> str | None:
+    code, head = git(["rev-parse", "HEAD"])
+    return head if code == 0 else None
+
+
 def assert_head_matches(state: dict, live_head: str) -> None:
     expected = state.get("expectedHead")
     if expected and live_head != expected:

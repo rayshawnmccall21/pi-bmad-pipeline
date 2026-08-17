@@ -48,9 +48,13 @@ DEFAULT_EXTENSIONS = [
 ]
 
 BUDGET_DOLLARS = {
-    "create-story": 8, "e2e-plan": 8, "dev-story": 15, "e2e-verify": 15,
+    "create-story": 8, "e2e-plan": 8, "dev-story": 25, "e2e-verify": 15,
     "code-review": 8, "update-pr": 12, "docs": 8,
 }
+
+# Stage-timeout overrides above the base RunDef (strip.yaml precedent:
+# dev-story earns 7200s when review-remediation cycles are in play).
+TIMEOUT_OVERRIDES = {"dev-story": 7200, "code-review": 2400}
 
 OUT_REL = ".pi/artifacts/review-loop"
 FINDINGS_REL = f"{OUT_REL}/findings.json"
@@ -58,10 +62,16 @@ FINDINGS_REL = f"{OUT_REL}/findings.json"
 
 def agent_stage(base: dict, story_id: str, extensions: list[str]) -> dict:
     stage = dict(base)
+    # Observability triple on EVERY agent stage: pool groups the story,
+    # oName is globally unique (story-prefixed) so parallel stories never
+    # collide in the pi-observability viewer, oTag filters by stage kind.
     stage["oPool"] = story_id
-    stage["oName"] = stage["id"]
+    stage["oName"] = f"{story_id}-{stage['id']}"
     stage["oTag"] = stage["id"]
     stage["extensions"] = list(extensions)
+    timeout = TIMEOUT_OVERRIDES.get(stage["id"])
+    if timeout is not None:
+        stage["timeout"] = timeout
     dollars = BUDGET_DOLLARS.get(stage["id"])
     if dollars is not None:
         stage["budget"] = {"maxDollars": dollars}
@@ -174,6 +184,22 @@ def check_invariants(doc: dict) -> None:
         if target is not None and (target not in ids or ids.index(target) >= index):
             raise SystemExit(f"{doc['id']}: stage {stage['id']} onFail '{target}' "
                              "is not an earlier stage")
+    # Docs must run BEFORE the PR on every path. Because the FSM only moves
+    # forward or regresses backward-then-forward, index order is the proof:
+    # docs < docs-verify < update-pr guarantees every pass through update-pr
+    # (including macro regressions) re-verified docs first.
+    if "update-pr" in ids:
+        for stage_id in ("docs", "docs-verify"):
+            if stage_id not in ids:
+                raise SystemExit(f"{doc['id']}: update-pr present without {stage_id} "
+                                 "— docs must be verified before the PR")
+            if ids.index(stage_id) >= ids.index("update-pr"):
+                raise SystemExit(f"{doc['id']}: {stage_id} (index "
+                                 f"{ids.index(stage_id)}) must come before "
+                                 f"update-pr (index {ids.index('update-pr')})")
+        verify = doc["stages"][ids.index("docs-verify")]
+        if verify.get("onFail") != "docs":
+            raise SystemExit(f"{doc['id']}: docs-verify.onFail must be 'docs'")
 
 
 def main(argv: list[str] | None = None) -> int:

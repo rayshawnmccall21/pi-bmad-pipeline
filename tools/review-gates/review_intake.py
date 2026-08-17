@@ -144,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-polls", type=int, default=0,
                     help="0 = until deadline; N = at most N polls (tests)")
     ap.add_argument("--allow-detached", action="store_true")
+    ap.add_argument("--no-request-review", dest="request_review",
+                    action="store_false", default=True)
     args = ap.parse_args(argv)
     out_dir = Path(args.out)
 
@@ -161,9 +163,23 @@ def main(argv: list[str] | None = None) -> int:
         )
     try:
         c.preflight_worktree(state, allow_detached=args.allow_detached)
-        c.assert_head_matches(state, pr["headSha"])
     except SystemExit as err:
         return int(err.code)
+    expected = state.get("expectedHead")
+    if expected and pr["headSha"] != expected:
+        if c.local_head() == pr["headSha"]:
+            # The pipeline's own push (update-pr / reconcile) moved the PR
+            # head and the local checkout carries it: adopt the new head.
+            state["expectedHead"] = pr["headSha"]
+            state["updatedAt"] = c.now_iso()
+            c.loop_state_save(out_dir, state)
+            state = c.loop_state_load(out_dir)
+        else:
+            print("review-gates: head drift — PR head "
+                  f"{pr['headSha'][:10]} is neither expected "
+                  f"{expected[:10]} nor the local HEAD; external "
+                  "interference, escalating", file=sys.stderr)
+            return c.EXIT_ESCALATE
 
     if pr["state"] != "OPEN" or pr["isDraft"]:
         print(f"review-gates: PR is {pr['state']}, draft={pr['isDraft']}",
@@ -183,6 +199,23 @@ def main(argv: list[str] | None = None) -> int:
         review = latest_head_review(reviews, pr["headSha"])
         if review:
             break
+        # Auto-reviews pause after 5 reviewed commits; the loop is immune
+        # only if it asks. Once per SHA, idempotent via loop-state.
+        if (args.request_review and pr["headSha"] not in state["reRequested"]):
+            try:
+                c.gh(["pr", "comment", str(args.pr), "--repo", args.repo,
+                      "--body", "@coderabbitai full review\n\n"
+                      f"<!-- review-gates:{pr['headSha']} -->"])
+                state["reRequested"].append(pr["headSha"])
+                state["updatedAt"] = c.now_iso()
+                c.loop_state_save(out_dir, state)
+                state = c.loop_state_load(out_dir)
+                print("review-gates: requested @coderabbitai full review "
+                      f"for {pr['headSha'][:10]}")
+            except c.GhError as err:
+                print(f"review-gates: re-review request failed: {err}",
+                      file=sys.stderr)
+                return c.EXIT_FAIL
         if args.max_polls and polls >= args.max_polls:
             print("review-gates: no head-SHA review within max-polls",
                   file=sys.stderr)

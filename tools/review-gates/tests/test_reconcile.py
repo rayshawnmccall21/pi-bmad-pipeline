@@ -63,9 +63,8 @@ def test_dry_run_verifies_before_planning(fixture_ledger, out_dir, tmp_path):
     assert plan["counts"]["uncovered"] == len(queue["blocking"]) - 4
 
 
-def test_missing_dispositions_maps_to_needs_human_and_escalates(
-    fixture_ledger, out_dir, tmp_path
-):
+def test_missing_dispositions_cycle0_passes_through(fixture_ledger, out_dir, tmp_path):
+    import json
     import reconcile_threads
 
     run_classify(out_dir)
@@ -73,4 +72,22 @@ def test_missing_dispositions_maps_to_needs_human_and_escalates(
         "--out", str(out_dir), "--dry-run",
         "--evidence-dir", str(tmp_path), "--allow-detached",
     ])
-    assert code == 2  # fail closed: no dispositions file = all needs_human
+    assert code == 0  # cycle 0: dev-story never regressed, nothing owed yet
+    plan = json.loads((out_dir / "reconcile-plan.json").read_text())
+    assert plan["counts"]["needsHuman"] == 0
+    assert plan["counts"]["uncovered"] > 0
+
+
+def test_missing_dispositions_cycle1_escalates(fixture_ledger, out_dir, tmp_path):
+    import _common
+    import reconcile_threads
+
+    run_classify(out_dir)
+    state = _common.loop_state_load(out_dir)
+    state["reviewCycles"]["count"] = 1
+    _common.loop_state_save(out_dir, state)
+    code = reconcile_threads.main([
+        "--out", str(out_dir), "--dry-run",
+        "--evidence-dir", str(tmp_path), "--allow-detached",
+    ])
+    assert code == 2  # dev-story ran and owed dispositions: fail closed

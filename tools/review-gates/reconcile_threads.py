@@ -185,7 +185,28 @@ def main(argv: list[str] | None = None) -> int:
 
     disp_path = Path(args.dispositions or out_dir / "dispositions.json")
     if not disp_path.exists():
-        # Fail closed: no dispositions = every blocking finding needs a human.
+        cycles = (state.get("reviewCycles") or {}).get("count", 0) if state else 0
+        if cycles == 0:
+            # First entry into the tail: dev-story has never regressed, so
+            # no dispositions can exist yet. Nothing to reconcile — the
+            # approval gate downstream turns the blocking findings into the
+            # first regression.
+            plan = {
+                "schema": "reconcile-plan.v1",
+                "generatedAt": c.now_iso(),
+                "dryRun": True,
+                "actions": [{"fingerprint": i["fingerprint"],
+                             "action": "uncovered"}
+                            for i in queue["blocking"]],
+                "counts": {"needsHuman": 0,
+                           "uncovered": len(queue["blocking"])},
+            }
+            c.write_json_atomic(out_dir / "reconcile-plan.json", plan)
+            print("review-gates: cycle 0 — no dispositions expected yet; "
+                  f"{len(queue['blocking'])} findings await the first "
+                  "regression")
+            return c.EXIT_OK
+        # Cycle >= 1: dev-story ran and owed us dispositions. Fail closed.
         plan = {
             "schema": "reconcile-plan.v1",
             "generatedAt": c.now_iso(),

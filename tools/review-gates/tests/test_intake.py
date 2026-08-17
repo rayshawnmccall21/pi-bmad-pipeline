@@ -57,3 +57,48 @@ def test_intake_escalates_on_head_drift(fake_gh, out_dir):
     ])
     assert code == 2
     assert not (out_dir / "ledger.json").exists()
+
+
+def test_intake_adopts_head_moved_by_our_own_push(fake_gh, out_dir, monkeypatch):
+    """update-pr pushed: PR head moved AND local HEAD matches it — adopt."""
+    import json
+
+    import _common
+    import review_intake
+
+    out_dir.mkdir(parents=True)
+    _common.loop_state_init(out_dir, story_id="STY-91", pr=561,
+                            repo="rayshawnmccall21/StylePassV2",
+                            branch="whatever", head="0" * 40)
+    fixture_head = json.loads(
+        (out_dir / "loop-state.json").read_text())  # placeholder read
+    import conftest
+
+    live_head = json.loads(
+        (conftest.FIXTURES / "pr.json").read_text())["head"]["sha"]
+    monkeypatch.setattr(_common, "local_head", lambda: live_head)
+    code = review_intake.main([
+        "--pr", "561", "--repo", "rayshawnmccall21/StylePassV2",
+        "--out", str(out_dir), "--story-id", "STY-91",
+        "--max-polls", "1", "--allow-detached", "--no-request-review",
+    ])
+    assert code == 0
+    state = json.loads((out_dir / "loop-state.json").read_text())
+    assert state["expectedHead"] == live_head
+
+
+def test_intake_escalates_when_moved_head_is_not_ours(fake_gh, out_dir, monkeypatch):
+    import _common
+    import review_intake
+
+    out_dir.mkdir(parents=True)
+    _common.loop_state_init(out_dir, story_id="STY-91", pr=561,
+                            repo="rayshawnmccall21/StylePassV2",
+                            branch="whatever", head="0" * 40)
+    monkeypatch.setattr(_common, "local_head", lambda: "f" * 40)
+    code = review_intake.main([
+        "--pr", "561", "--repo", "rayshawnmccall21/StylePassV2",
+        "--out", str(out_dir), "--story-id", "STY-91",
+        "--max-polls", "1", "--allow-detached", "--no-request-review",
+    ])
+    assert code == 2
