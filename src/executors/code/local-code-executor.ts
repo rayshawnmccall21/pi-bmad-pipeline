@@ -3,6 +3,7 @@ import type { Readable } from "node:stream";
 
 import type { CompiledCodeStage } from "../../rundef/index.js";
 import { createDiagnosticCapture, type DiagnosticCapture } from "./code-diagnostic.js";
+import { liftFindings } from "./findings-lift.js";
 import type {
   StageExecutionRequest,
   StageExecutionResult,
@@ -287,11 +288,19 @@ const resolveOnce = (context: RunContext): void => {
 
 const buildResult = (context: RunContext): StageExecutionResult => {
   const diagnostic = failureDiagnostic(context);
+  const findings = liftFindings({
+    stage: context.stage,
+    projectRoot: context.request.projectRoot,
+    exitCode: context.state.exitCode,
+    timedOut: context.state.timedOut,
+    aborted: context.state.aborted,
+  });
   return {
     output: null,
     exitCode: context.state.exitCode,
     durationMs: Math.max(0, context.now() - context.startedAt),
     ...(diagnostic.length === 0 ? {} : { diagnostic }),
+    ...(findings === undefined ? {} : { findings }),
     ...(context.state.timedOut ? { timedOut: true } : {}),
     ...(context.state.aborted ? { aborted: true } : {}),
   };

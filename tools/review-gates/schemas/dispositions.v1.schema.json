@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-gates.dispositions.v1",
+  "type": "object",
+  "properties": {
+    "checkpoint": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "blocked"
+      ]
+    },
+    "schema": {
+      "const": "dispositions.v1"
+    },
+    "storyId": {
+      "type": "string"
+    },
+    "queueRef": {
+      "type": "string"
+    },
+    "dispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "fix",
+              "false_positive",
+              "outdated_fixed",
+              "duplicate",
+              "needs_human"
+            ]
+          },
+          "evidence": {
+            "type": "object",
+            "properties": {
+              "commitSha": {
+                "type": "string"
+              },
+              "testId": {
+                "type": "string"
+              },
+              "rationale": {
+                "type": "string"
+              },
+              "canonicalFingerprint": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "fingerprint",
+          "disposition",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "checkpoint",
+    "status",
+    "schema",
+    "storyId",
+    "dispositions"
+  ],
+  "additionalProperties": false
+}

@@ -24,6 +24,9 @@ export interface StageDecisionExecutionResult {
   /** Bounded, already-redacted failure diagnostic from the executor. */
   readonly diagnostic?: string;
 
+  /** Findings lifted from a code stage's findings file on exit 1 (v1.1). */
+  readonly findings?: readonly string[];
+
   /** Optional usage reported by the child execution. */
   readonly usage?: BudgetUsage;
 
@@ -106,6 +109,7 @@ const checkExecutionFailure = (request: CheckStageDecisionRequest): StageDecisio
   timedOutFailure(request) ??
   parseFailure(request) ??
   missingOutputFailure(request) ??
+  codeGateFailure(request) ??
   exitFailure(request);
 
 const abortedFailure = (request: CheckStageDecisionRequest): StageDecision | undefined =>
@@ -134,6 +138,43 @@ const missingOutputFailure = (request: CheckStageDecisionRequest): StageDecision
 
 const missingOutputDecision = (request: CheckStageDecisionRequest): StageDecision =>
   failure(request, "failed", `Stage "${request.stage.id}" did not produce validated output.`);
+
+/**
+ * Applies the v1.1 code-stage gate: the exit code is the gate.
+ *
+ * Exit 1 with lifted findings becomes "gate-failed" (routable via onFail).
+ * Exit 1 without findings is fail-closed terminal, so an empty-findings
+ * regress is never manufactured. Exit codes of two or greater fall
+ * through to the terminal exit failure.
+ *
+ * @param request - Compiled stage and execution result to evaluate.
+ *
+ * @returns A gate decision for code-stage exit 1, or undefined otherwise.
+ */
+const codeGateFailure = (request: CheckStageDecisionRequest): StageDecision | undefined => {
+  if (request.stage.kind !== "code" || request.result.exitCode !== 1) {
+    return undefined;
+  }
+  const findings = request.result.findings;
+  if (findings === undefined || findings.length === 0) {
+    return failure(
+      request,
+      "failed",
+      `Stage "${request.stage.id}" exited with code 1 but no valid findings ` +
+        "file was lifted; failing closed instead of regressing empty.",
+    );
+  }
+  return freezeDecision({
+    stageId: request.stage.id,
+    kind: "gate-failed",
+    passed: false,
+    reason:
+      `Stage "${request.stage.id}" code gate failed with ` +
+      `${String(findings.length)} findings.`,
+    ...usageField(request.result.usage),
+    findings: [...findings],
+  });
+};
 
 const exitFailure = (request: CheckStageDecisionRequest): StageDecision | undefined =>
   request.result.exitCode === 0

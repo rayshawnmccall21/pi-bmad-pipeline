@@ -60,6 +60,8 @@ export const CodeRunDefStageSchema = Type.Object(
     command: Type.String({ minLength: 1, pattern: "\\S" }),
     args: Type.Optional(Type.Array(Type.String())),
     timeout: Type.Optional(Type.Integer({ minimum: 1 })),
+    onFail: Type.Optional(Type.String({ pattern: RUNDEF_IDENTIFIER_PATTERN })),
+    findingsFile: Type.Optional(Type.String({ minLength: 1 })),
   },
   { additionalProperties: false },
 );
@@ -160,9 +162,9 @@ function checkCrossFieldInvariants(def: RunDef): RunDefValidationIssue[] {
 
   for (const [index, stage] of def.stages.entries()) {
     issues.push(...checkStageIdUnique(stage, index, seenIds));
+    issues.push(...checkGateOnFailPairing(stage, index));
+    issues.push(...checkOnFailTarget(stage, index, def.stages));
     if (stage.kind === "agent") {
-      issues.push(...checkGateOnFailPairing(stage, index));
-      issues.push(...checkOnFailTarget(stage, index, def.stages));
       issues.push(...checkBudgetNonEmpty(stage, index));
     }
   }
@@ -195,7 +197,9 @@ function checkGateOnFailPairing(
     ];
   }
 
-  if (stage.onFail !== undefined && stage.gate === undefined) {
+  if (stage.onFail !== undefined && stage.gate === undefined && stage.kind === "agent") {
+    // Agent stages need a payload gate to emit gate-failed. Code stages do
+    // not: their exit code IS the gate (v1.1), so onFail alone is legal.
     return [
       {
         path: `/stages/${String(index)}/gate`,

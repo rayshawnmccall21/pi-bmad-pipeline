@@ -87,6 +87,12 @@ export interface CodeRunDefStage {
 
   /** Optional stage timeout in seconds. */
   readonly timeout?: number;
+
+  /** Optional regression target; the exit code is the gate (v1.1). */
+  readonly onFail?: string;
+
+  /** Optional projectRoot-relative findings file lifted on exit 1 (v1.1). */
+  readonly findingsFile?: string;
 }
 
 /** Represents one raw stage entry loaded from a discovered RunDef YAML file. */
@@ -168,6 +174,12 @@ export interface CompiledCodeStage extends CompiledStageCommon {
 
   /** Command arguments, normalized to an array. */
   readonly args: readonly string[];
+
+  /** Optional regression target; the exit code is the gate (v1.1). */
+  readonly onFail?: string;
+
+  /** Optional projectRoot-relative findings file lifted on exit 1 (v1.1). */
+  readonly findingsFile?: string;
 }
 
 /** Closed normalized stage union consumed by the pipeline FSM. */

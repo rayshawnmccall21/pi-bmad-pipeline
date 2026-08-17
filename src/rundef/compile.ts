@@ -286,6 +286,8 @@ function compileCodeStage(stage: CodeStage, ctx: StageCompileContext): CompiledC
     index: ctx.index,
     timeoutSeconds: stage.timeout ?? ctx.defaultTimeout,
     ...(stage.description === undefined ? {} : { description: stage.description }),
+    ...(stage.onFail === undefined ? {} : { onFail: stage.onFail }),
+    ...(stage.findingsFile === undefined ? {} : { findingsFile: stage.findingsFile }),
   });
 }
 

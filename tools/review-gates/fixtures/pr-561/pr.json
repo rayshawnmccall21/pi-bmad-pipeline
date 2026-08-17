@@ -1,0 +1,14 @@
+{
+  "number": 561,
+  "state": "open",
+  "draft": false,
+  "mergeable": true,
+  "mergeable_state": "blocked",
+  "head": {
+    "sha": "65c764b85095a810ed0f19ea1c466eb9669ca3f0",
+    "ref": "fix/STY-91-edit-plan-service-validation"
+  },
+  "base": {
+    "ref": "main"
+  }
+}

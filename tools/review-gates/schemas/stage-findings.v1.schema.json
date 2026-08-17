@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-gates.stage-findings.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "stage-findings.v1"
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "line": {},
+          "text": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "fingerprint",
+          "severity",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "findings"
+  ],
+  "additionalProperties": false
+}

@@ -144,7 +144,7 @@ const gateFailedRoute = (request: RouteStageDecisionRequest): StageRouteDecision
   missingOnFail(request) ?? invalidOnFail(request) ?? regressionLimit(request) ?? regress(request);
 
 const onFailOf = (request: RouteStageDecisionRequest): string | undefined =>
-  request.stage.kind === "agent" ? request.stage.onFail : undefined;
+  request.stage.onFail;
 
 const missingOnFail = (request: RouteStageDecisionRequest): StageRouteDecision | undefined =>
   onFailOf(request) === undefined
