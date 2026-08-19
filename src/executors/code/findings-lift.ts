@@ -65,16 +65,31 @@ export interface LiftFindingsRequest {
  * ```
  */
 export const liftFindings = (request: LiftFindingsRequest): readonly string[] | undefined => {
-  const file = request.stage.findingsFile;
-  if (file === undefined || request.exitCode !== 1 || request.timedOut || request.aborted) {
+  const file = liftablePath(request);
+  if (file === undefined) {
     return undefined;
   }
   const entries = readFindingEntries(resolvePath(request.projectRoot, file));
-  if (entries === undefined) {
+  const lifted = entries === undefined ? [] : collectFormatted(entries);
+  return lifted.length === 0 ? undefined : Object.freeze(lifted);
+};
+
+/**
+ * The findings file this settle may lift from.
+ *
+ * Only a clean gate-failure lifts: exit 1 with a declared file. A timeout
+ * or an abort means the stage never reached a verdict, so whatever the file
+ * holds describes an earlier run and must not reach a prompt.
+ *
+ * @param request - Stage, project root, and settle flags.
+ *
+ * @returns The declared findings path, or undefined when nothing may lift.
+ */
+const liftablePath = (request: LiftFindingsRequest): string | undefined => {
+  if (request.exitCode !== 1 || request.timedOut || request.aborted) {
     return undefined;
   }
-  const lifted = collectFormatted(entries);
-  return lifted.length === 0 ? undefined : Object.freeze(lifted);
+  return request.stage.findingsFile;
 };
 
 const readFindingEntries = (path: string): readonly unknown[] | undefined => {
