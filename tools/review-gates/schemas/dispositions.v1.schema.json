@@ -7,10 +7,7 @@
       "type": "string"
     },
     "status": {
-      "enum": [
-        "passed",
-        "blocked"
-      ]
+      "enum": ["passed", "blocked"]
     },
     "schema": {
       "const": "dispositions.v1"
@@ -30,14 +27,7 @@
             "type": "string"
           },
           "disposition": {
-            "enum": [
-              "fix",
-              "false_positive",
-              "outdated_fixed",
-              "duplicate",
-              "defer",
-              "needs_human"
-            ]
+            "enum": ["fix", "false_positive", "outdated_fixed", "duplicate", "defer", "needs_human"]
           },
           "evidence": {
             "type": "object",
@@ -72,21 +62,11 @@
             "additionalProperties": false
           }
         },
-        "required": [
-          "fingerprint",
-          "disposition",
-          "evidence"
-        ],
+        "required": ["fingerprint", "disposition", "evidence"],
         "additionalProperties": false
       }
     }
   },
-  "required": [
-    "checkpoint",
-    "status",
-    "schema",
-    "storyId",
-    "dispositions"
-  ],
+  "required": ["checkpoint", "status", "schema", "storyId", "dispositions"],
   "additionalProperties": false
 }

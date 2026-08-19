@@ -169,8 +169,7 @@ const codeGateFailure = (request: CheckStageDecisionRequest): StageDecision | un
     kind: "gate-failed",
     passed: false,
     reason:
-      `Stage "${request.stage.id}" code gate failed with ` +
-      `${String(findings.length)} findings.`,
+      `Stage "${request.stage.id}" code gate failed with ` + `${String(findings.length)} findings.`,
     ...usageField(request.result.usage),
     findings: [...findings],
   });

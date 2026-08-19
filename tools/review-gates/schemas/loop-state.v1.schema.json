@@ -31,10 +31,7 @@
           "type": "integer"
         }
       },
-      "required": [
-        "count",
-        "max"
-      ],
+      "required": ["count", "max"],
       "additionalProperties": false
     },
     "reRequested": {
@@ -74,21 +71,10 @@
           "type": "string"
         }
       },
-      "required": [
-        "prev",
-        "hash"
-      ],
+      "required": ["prev", "hash"],
       "additionalProperties": false
     }
   },
-  "required": [
-    "schema",
-    "storyId",
-    "pr",
-    "branch",
-    "expectedHead",
-    "reviewCycles",
-    "chain"
-  ],
+  "required": ["schema", "storyId", "pr", "branch", "expectedHead", "reviewCycles", "chain"],
   "additionalProperties": false
 }

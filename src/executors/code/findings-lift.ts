@@ -131,5 +131,4 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
-const sanitize = (text: string): string =>
-  text.replace(CONTROL_CHARS, "").replace(/\r/g, "");
+const sanitize = (text: string): string => text.replace(CONTROL_CHARS, "").replace(/\r/g, "");
