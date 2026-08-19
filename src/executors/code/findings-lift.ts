@@ -16,13 +16,13 @@ import { resolve as resolvePath } from "node:path";
 import type { CompiledCodeStage } from "../../rundef/index.js";
 
 /** Maximum findings lifted from one file. */
-export const FINDINGS_MAX_COUNT = 50;
+const FINDINGS_MAX_COUNT = 50;
 
 /** Maximum characters per formatted finding. */
-export const FINDINGS_MAX_ITEM_CHARS = 2048;
+const FINDINGS_MAX_ITEM_CHARS = 2048;
 
 /** Maximum total characters across all lifted findings. */
-export const FINDINGS_MAX_TOTAL_CHARS = 65536;
+const FINDINGS_MAX_TOTAL_CHARS = 65536;
 
 /** Raw-file ceiling before parsing is attempted (guards memory, not content). */
 const RAW_FILE_CEILING_MULTIPLIER = 4;
