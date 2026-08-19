@@ -14,6 +14,7 @@
 - Every returned state snapshot, stage history, issue list, and factory result is immutable.
 - Dispatch locks are per story, include run ownership metadata, reject live contention, and permit only defined stale-lock recovery.
 - Public `done` maps to result status `passed`; terminal/current-stage fields remain internally consistent.
+- Receipt-aware state uses feature version 2; a successful terminal record requires a canonical final scope receipt consistent with its review checkpoint, story/RunDef identity, and the exact matching passed stage attempt (stage ID, attempt, status, and finish time).
 
 ## Gotchas
 
@@ -21,6 +22,7 @@
 - Resume identity checks belong in the action preparation flow; reconciliation must not rewrite a mismatched RunDef/spec/model into compatibility.
 - Handoff belongs to the successor `StageState`, not the predecessor attempt history; replacing or clearing it must not mutate attempts, findings, timestamps, or history.
 - The removed `current-run.json` pointer and evidence store are not alternate state sources and must not return.
+- Legacy/nonterminal state may omit attestations. Its first trusted checkpoint or direct final-receipt attachment upgrades the runner feature version atomically in the same frozen transition; terminal, malformed-version, and newer-version states are never normalized into compatibility. Malformed, partial, stale-version, or receipt-less successful state never downgrades to permissive acceptance.
 
 ## Learnings
 

@@ -4,12 +4,14 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { attachFinalScopeReceipt, attachReviewCheckpoint } from "../core/runner-transitions.js";
 import { DEBUG_LOG_PREFIX, PIPELINE_DEBUG_ENV_VAR } from "../events/index.js";
 import type { CompiledStageDef } from "../rundef/index.js";
 import { createStageHandoff } from "../security/stage-handoff.js";
 import {
   PIPELINE_STATE_FILE_EXTENSION,
   PIPELINE_STATE_RELATIVE_DIR,
+  RUNNER_FEATURE_VERSION,
   PipelineStateStoreError,
   createInitialPipelineState,
   fsPipelineStateStore,
@@ -20,7 +22,12 @@ import {
   savePipelineState,
 } from "./index.js";
 
-import type { PipelineState } from "./index.js";
+import type {
+  FinalScopeReceipt,
+  PipelineState,
+  ReviewScopeCheckpoint,
+  StageState,
+} from "./index.js";
 
 let projectRoot: string | undefined;
 
@@ -39,15 +46,96 @@ const stage = (id: string, index: number): CompiledStageDef =>
     timeoutSeconds: 1800,
   });
 
+const finishedAt = "2026-07-01T00:00:00.000Z";
+const digest = (character: string): string => character.repeat(64);
+
 const createState = (storyId = "STORY-123"): PipelineState =>
   createInitialPipelineState({
     storyId,
+    runDefId: "sdlc",
+    runDefDigest: digest("a"),
     specFile: "./specs/story-123.md",
-    stages: [stage("create-story", 0), stage("dev-story", 1)],
+    stages: [stage("create-story", 0), stage("dev-story", 1), stage("code-review", 2)],
     model: "gpt-5.5-pro",
     thinking: "high",
-    startedAt: "2026-07-01T00:00:00.000Z",
+    startedAt: finishedAt,
   });
+
+const completedStage = (state: StageState): StageState => ({
+  ...state,
+  status: "passed",
+  attempts: 1,
+  startedAt: finishedAt,
+  finishedAt,
+  history: [
+    {
+      attempt: 1,
+      status: "passed",
+      startedAt: finishedAt,
+      finishedAt,
+      durationMs: 1,
+      exitCode: 0,
+      reason: "passed",
+    },
+  ],
+});
+
+const reviewedState = (runnerFeatureVersion: number = RUNNER_FEATURE_VERSION): PipelineState => {
+  const state = createState();
+  return {
+    ...state,
+    runnerFeatureVersion,
+    status: "running",
+    stages: {
+      ...state.stages,
+      "code-review": completedStage(state.stages["code-review"]!),
+    },
+  };
+};
+
+const doneState = (state = createState()): PipelineState => ({
+  ...state,
+  status: "done",
+  currentStage: null,
+  stages: Object.fromEntries(
+    Object.entries(state.stages).map(([id, stageState]) => [id, completedStage(stageState)]),
+  ),
+  finishedAt,
+});
+
+const receiptFor = (
+  state: PipelineState,
+): {
+  readonly checkpoint: ReviewScopeCheckpoint;
+  readonly receipt: FinalScopeReceipt;
+} => {
+  const reviewed = { paths: ["src/app.ts"], digest: digest("b") };
+  const qualityGate = {
+    stageId: "code-review",
+    attempt: 1,
+    status: "passed" as const,
+    finishedAt,
+  };
+  const checkpoint: ReviewScopeCheckpoint = {
+    version: 1,
+    storyId: state.storyId,
+    runId: "run-144",
+    runDefId: state.runDefId,
+    runDefDigest: state.runDefDigest,
+    branch: "sty-139/landing-integrity",
+    baseOid: "c".repeat(40),
+    reviewed,
+    qualityGate,
+  };
+  return {
+    checkpoint,
+    receipt: {
+      ...checkpoint,
+      docs: { paths: ["README.md"], digest: digest("d") },
+      finalWorkingTreeDigest: digest("e"),
+    },
+  };
+};
 
 afterEach(async () => {
   if (projectRoot !== undefined) {
@@ -133,6 +221,94 @@ describe("filesystem pipeline state store", () => {
     const state = createState();
     await savePipelineState(root, state);
     await expect(loadPipelineState(root, "STORY-123")).resolves.toEqual(state);
+  });
+
+  it.each([
+    [
+      "review checkpoint",
+      (state: PipelineState) => attachReviewCheckpoint(state, receiptFor(state).checkpoint),
+    ],
+    [
+      "direct final receipt",
+      (state: PipelineState) => attachFinalScopeReceipt(state, receiptFor(state).receipt),
+    ],
+  ] as const)(
+    "persists a %s attached to a valid legacy runner state",
+    async (_name, attachScope) => {
+      const root = await createProjectRoot();
+      const legacy = reviewedState(1);
+
+      await savePipelineState(root, legacy);
+      const attached = attachScope(legacy);
+      await expect(savePipelineState(root, attached)).resolves.toBe(
+        getPipelineStatePath(root, legacy.storyId),
+      );
+      await expect(loadPipelineState(root, legacy.storyId)).resolves.toEqual(attached);
+    },
+  );
+
+  it.each([
+    [
+      "a malformed review checkpoint",
+      (state: PipelineState): PipelineState => ({
+        ...state,
+        reviewCheckpoint: {
+          ...receiptFor(state).checkpoint,
+          baseOid: "not-an-oid",
+        },
+      }),
+      /malformed|inconsistent/u,
+    ],
+    [
+      "a newer runner feature version",
+      (state: PipelineState): PipelineState => ({
+        ...state,
+        runnerFeatureVersion: RUNNER_FEATURE_VERSION + 1,
+      }),
+      /newer than supported/u,
+    ],
+  ] as const)("rejects %s", async (_name, invalidState, reason) => {
+    const root = await createProjectRoot();
+    const state = invalidState(reviewedState());
+
+    await expect(savePipelineState(root, state)).rejects.toMatchObject({
+      code: "invalid-state",
+      reason: expect.stringMatching(reason),
+    });
+    await expect(loadPipelineState(root, state.storyId)).resolves.toBeUndefined();
+  });
+
+  it("rejects terminal done state without a final scope receipt", async () => {
+    const root = await createProjectRoot();
+
+    await expect(savePipelineState(root, doneState())).rejects.toMatchObject({
+      code: "invalid-state",
+      reason: expect.stringMatching(/finalScopeReceipt/u),
+    });
+    await expect(loadPipelineState(root, "STORY-123")).resolves.toBeUndefined();
+  });
+
+  it("round-trips a valid receipt and freezes its complete shape", async () => {
+    const root = await createProjectRoot();
+    const terminal = doneState();
+    const { checkpoint, receipt } = receiptFor(terminal);
+    const attested: PipelineState = {
+      ...terminal,
+      reviewCheckpoint: checkpoint,
+      finalScopeReceipt: receipt,
+    };
+
+    await savePipelineState(root, attested);
+    const loaded = await loadPipelineState(root, terminal.storyId);
+
+    expect(loaded).toEqual(attested);
+    expect(Object.isFrozen(loaded?.reviewCheckpoint)).toBe(true);
+    expect(Object.isFrozen(loaded?.reviewCheckpoint?.reviewed)).toBe(true);
+    expect(Object.isFrozen(loaded?.reviewCheckpoint?.reviewed.paths)).toBe(true);
+    expect(Object.isFrozen(loaded?.finalScopeReceipt)).toBe(true);
+    expect(Object.isFrozen(loaded?.finalScopeReceipt?.docs)).toBe(true);
+    expect(Object.isFrozen(loaded?.finalScopeReceipt?.docs.paths)).toBe(true);
+    expect(Object.isFrozen(loaded?.finalScopeReceipt?.qualityGate)).toBe(true);
   });
 
   it("returns a deeply frozen loaded state snapshot", async () => {

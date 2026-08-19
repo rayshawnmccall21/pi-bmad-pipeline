@@ -98,6 +98,7 @@ export const preparePipeline = async (
  *
  * @param context - Action context with injected dependencies.
  * @param prepared - Prepared stages, state, and executor.
+ * @param runId - Authenticated invocation id held by the dispatch lock.
  *
  * @returns Terminal FSM result.
  *
@@ -109,15 +110,18 @@ export const preparePipeline = async (
 export const executeStages = (
   context: PipelineActionContext,
   prepared: PreparedPipeline,
+  runId: string,
 ): Promise<RunPipelineStagesResult> => {
   const { deps, request } = context;
   return deps.runStages({
     stages: prepared.stages,
     state: prepared.state,
     storyId: request.storyId,
+    runId,
     specFile: request.specFile,
     projectRoot: request.projectRoot,
     executor: prepared.executor,
+    attestScope: deps.attestScope,
     saveState: async (state) => {
       await deps.saveState(request.projectRoot, state);
     },

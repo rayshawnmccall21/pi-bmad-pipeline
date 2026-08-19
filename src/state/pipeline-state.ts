@@ -16,7 +16,8 @@ import type { CompiledStageDef } from "../rundef/index.js";
 import type { StageHandoff } from "../security/stage-handoff.js";
 
 /** Current durable state feature version written by this runner. */
-export const RUNNER_FEATURE_VERSION = 1 as const;
+// eslint-disable-next-line @typescript-eslint/no-magic-numbers -- durable schema version.
+export const RUNNER_FEATURE_VERSION = 2 as const;
 
 /** Durable pipeline state statuses persisted across crashes. */
 export type PipelineStatus =
@@ -48,6 +49,69 @@ export interface RunEconomicsSummary {
 
   /** Total dollar usage accumulated across all stage attempts. */
   readonly dollars: number;
+}
+
+/** Canonical repository-relative paths and the digest of their bytes. */
+export interface RepositoryScope {
+  /** Sorted repository-relative paths included in the scope. */
+  readonly paths: readonly string[];
+
+  /** Deterministic digest of the scoped paths and bytes. */
+  readonly digest: string;
+}
+
+/** Passed quality-gate attempt bound to a reviewed scope. */
+export interface QualityGateReceipt {
+  /** Stage id that supplied the passing quality decision. */
+  readonly stageId: string;
+
+  /** One-based attempt that supplied the passing quality decision. */
+  readonly attempt: number;
+
+  /** Required passing quality result. */
+  readonly status: "passed";
+
+  /** ISO timestamp when the quality-gate attempt finished. */
+  readonly finishedAt: string;
+}
+
+/** Immutable repository scope captured when review passes. */
+export interface ReviewScopeCheckpoint {
+  /** Final-scope receipt schema version. */
+  readonly version: 1;
+
+  /** Story id bound to the reviewed scope. */
+  readonly storyId: string;
+
+  /** Authenticated pipeline run id bound to the reviewed scope. */
+  readonly runId: string;
+
+  /** Selected RunDef id bound to the reviewed scope. */
+  readonly runDefId: string;
+
+  /** Selected RunDef content digest bound to the reviewed scope. */
+  readonly runDefDigest: string;
+
+  /** Git branch observed when review passed. */
+  readonly branch: string;
+
+  /** Git base object id observed when review passed. */
+  readonly baseOid: string;
+
+  /** Reviewed source, test, and configuration scope. */
+  readonly reviewed: RepositoryScope;
+
+  /** Passing quality gate that authorized the checkpoint. */
+  readonly qualityGate: QualityGateReceipt;
+}
+
+/** Immutable final repository scope authorized for landing. */
+export interface FinalScopeReceipt extends ReviewScopeCheckpoint {
+  /** Allowlisted documentation scope added after review. */
+  readonly docs: RepositoryScope;
+
+  /** Digest of the complete authorized final working tree. */
+  readonly finalWorkingTreeDigest: string;
 }
 
 /** Durable record for one stage attempt. */
@@ -156,6 +220,12 @@ export interface PipelineState {
 
   /** Aggregated run economics. */
   readonly economics: RunEconomicsSummary;
+
+  /** Optional reviewed scope checkpoint; absent before review attestation. */
+  readonly reviewCheckpoint?: ReviewScopeCheckpoint;
+
+  /** Optional final scope receipt; absent before final attestation. */
+  readonly finalScopeReceipt?: FinalScopeReceipt;
 }
 
 /** Final action result returned by the public runner or action layer. */

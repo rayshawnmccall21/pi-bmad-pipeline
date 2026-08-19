@@ -34,6 +34,7 @@ export type PipelineRunFailureCode =
   | StageRouteFailureCode
   | "aborted"
   | "executor-error"
+  | "scope-attestation-failed"
   | "stage-budget-exceeded"
   | "run-budget-exceeded";
 
