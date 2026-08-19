@@ -15,6 +15,7 @@ import {
   runPipelineStages,
   type RunPipelineStagesRequest,
   type RunPipelineStagesResult,
+  type ScopeAttestor,
 } from "../core/index.js";
 import { StageExecutorDispatcher, type WorkflowExecutor } from "../executors/index.js";
 import { registerBmadPayloadGates } from "../gates/index.js";
@@ -124,6 +125,7 @@ const createHarness = (
       calls.push("executor");
       return executor;
     },
+    attestScope: vi.fn<ScopeAttestor>(),
     runStages: async (request) => {
       calls.push("fsm");
       return doneFsm(request);
@@ -171,6 +173,22 @@ describe("runPipelineAction", () => {
     expect(Object.keys(harness.request.deps ?? {})).not.toEqual(
       expect.arrayContaining(["runEvidence", "openPullRequest", "generateAuditReport"]),
     );
+  });
+
+  it("wires the injected scope attestor and lock run identity into the FSM", async () => {
+    const attestScope = vi.fn<ScopeAttestor>();
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({ deps: { attestScope, runStages } });
+
+    await runPipelineAction(harness.request);
+
+    expect(runStages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        attestScope,
+      }),
+    );
+    expect(attestScope).not.toHaveBeenCalled();
   });
 
   it("accepts an empty specFile and records it in the first saved state", async () => {
@@ -483,6 +501,7 @@ describe("runPipelineAction", () => {
     expect(defaultRunPipelineActionDeps.registerGates).toBe(registerBmadPayloadGates);
     expect(defaultRunPipelineActionDeps.selectAndCompile).toBe(selectAndCompileRunDef);
     expect(defaultRunPipelineActionDeps.runStages).toBe(runPipelineStages);
+    expect(defaultRunPipelineActionDeps.attestScope).toBeTypeOf("function");
     expect(
       defaultRunPipelineActionDeps.createExecutor({ model: "m", thinking: "medium" }),
     ).toBeInstanceOf(StageExecutorDispatcher);

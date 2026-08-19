@@ -27,6 +27,7 @@
 //   E2E_STDERR=<text>     write text to stderr before exit
 //   E2E_STDERR_CHARS=<n>  write n stderr chars before exit
 //   E2E_MARKER=<path>     write a marker file on spawn (no-spawn assertions)
+//   E2E_STAGE_TRACE=<path> append workflow, attempt, and durable state per spawn
 //   e2e-verify stages fail on attempt 1 and pass on attempt 2 so the
 //   regression/onFail routing can be exercised end to end.
 //
@@ -34,7 +35,7 @@
 // file as a module; the terminal emission only runs when this file is the
 // process entry point.
 import { createHmac } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
@@ -71,6 +72,20 @@ export function buildTerminalEnvelope({ workflow, storyId, attempt, failAlways =
       testsPassed: true,
       typecheckPassed: true,
       lintPassed: true,
+    };
+  } else if (workflow === "code-review") {
+    envelope.payload = {
+      storyId,
+      verdict: "approved",
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      autoFixed: false,
+    };
+  } else if (workflow === "docs") {
+    envelope.payload = {
+      rootIndexUpdated: false,
+      claudeSymlinkOk: true,
+      moduleContextCounts: { created: 0, updated: 0, migrated: 0, removed: 0 },
+      driftFixed: 0,
     };
   } else if (workflow === "e2e-verify") {
     const failed = failAlways || attempt === 1;
@@ -155,6 +170,7 @@ if (isMainModule) {
     stderr: process.env.E2E_STDERR ?? "",
     stderrChars: Number(process.env.E2E_STDERR_CHARS ?? "0"),
     marker: process.env.E2E_MARKER,
+    stageTrace: process.env.E2E_STAGE_TRACE,
   };
 
   const workflow = argValue("--bmad-workflow") ?? "dev-story";
@@ -164,6 +180,18 @@ if (isMainModule) {
 
   if (knobs.marker !== undefined) {
     writeFileSync(knobs.marker, "spawned\n", "utf8");
+  }
+  if (knobs.stageTrace !== undefined) {
+    const stateFile = resolve(".pi", "pipeline", "state", `${storyId}.json`);
+    appendFileSync(
+      knobs.stageTrace,
+      `${JSON.stringify({
+        workflow,
+        attempt,
+        state: JSON.parse(readFileSync(stateFile, "utf8")),
+      })}\n`,
+      "utf8",
+    );
   }
   if (knobs.stderrChars > 0) {
     process.stderr.write("x".repeat(knobs.stderrChars));

@@ -1,6 +1,17 @@
+import { isDeepStrictEqual } from "node:util";
+
+import {
+  FINAL_SCOPE_RECEIPT_VERSION,
+  createCanonicalRepositoryScope,
+} from "../security/final-scope-receipt.js";
 import { sanitizeStageHandoff } from "../security/stage-handoff.js";
 
-import type { PipelineState } from "./pipeline-state.js";
+import { RUNNER_FEATURE_VERSION, type PipelineState } from "./pipeline-state.js";
+import {
+  qualityGateMatchesDurableStage,
+  receiptIntegrityFactsAreValid,
+  repositoryScopesHaveDisjointPaths,
+} from "./scope-receipt-validation.js";
 
 const pipelineStatuses = new Set([
   "pending",
@@ -23,21 +34,24 @@ const stageAttemptStatuses = new Set([
   "gate-failed",
 ]);
 
-const requiredStrings = [
-  "storyId",
-  "runDefId",
-  "runDefDigest",
-  "specFile",
-  "model",
-  "thinking",
-] as const;
+const requiredStrings = "storyId runDefId runDefDigest specFile model thinking".split(" ");
+
+const repositoryScopeKeys = "paths digest".split(" ");
+const qualityGateKeys = "stageId attempt status finishedAt".split(" ");
+const reviewCheckpointKeys =
+  "version storyId runId runDefId runDefDigest branch baseOid reviewed qualityGate".split(" ");
+const finalScopeReceiptKeys = [...reviewCheckpointKeys, "docs", "finalWorkingTreeDigest"];
+const checkpointStringKeys = "storyId runId runDefId branch".split(" ");
+const lowercaseOidPattern = /^[0-9a-f]{40}$/u;
+const lowercaseDigestPattern = /^[0-9a-f]{64}$/u;
+const emptyFileBytes = new Uint8Array();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isString = (value: unknown): value is string => typeof value === "string";
 
-const isNonNegativeInteger = (value: unknown): boolean =>
+const isNonNegativeInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0;
 
 const isPositiveInteger = (value: unknown): boolean =>
@@ -48,8 +62,78 @@ const isNonNegativeFinite = (value: unknown): boolean =>
 
 const isStringOrNull = (value: unknown): boolean => value === null || typeof value === "string";
 
-const isStringArray = (value: unknown): boolean =>
+const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const isNonBlankString = (value: unknown): value is string =>
+  isString(value) && value.trim().length > 0;
+
+const hasExactKeys = (record: Record<string, unknown>, keys: readonly string[]): boolean =>
+  Object.keys(record).length === keys.length && keys.every((key) => Object.hasOwn(record, key));
+
+const hasCanonicalRepositoryPaths = (paths: readonly string[]): boolean => {
+  try {
+    const files = paths.map((path) => ({ path, bytes: emptyFileBytes }));
+    return isDeepStrictEqual(createCanonicalRepositoryScope(files).paths, paths);
+  } catch {
+    return false;
+  }
+};
+
+const validRepositoryScope = (value: unknown): boolean => {
+  if (!isRecord(value) || !hasExactKeys(value, repositoryScopeKeys)) {
+    return false;
+  }
+  const paths = value["paths"];
+  return (
+    isStringArray(paths) &&
+    hasCanonicalRepositoryPaths(paths) &&
+    isString(value["digest"]) &&
+    lowercaseDigestPattern.test(value["digest"])
+  );
+};
+
+const validQualityGate = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(value, qualityGateKeys) &&
+  isNonBlankString(value["stageId"]) &&
+  isPositiveInteger(value["attempt"]) &&
+  value["status"] === "passed" &&
+  isNonBlankString(value["finishedAt"]);
+
+const validCheckpointFields = (value: Record<string, unknown>): boolean =>
+  value["version"] === FINAL_SCOPE_RECEIPT_VERSION &&
+  checkpointStringKeys.every((key) => isNonBlankString(value[key])) &&
+  isString(value["runDefDigest"]) &&
+  lowercaseDigestPattern.test(value["runDefDigest"]) &&
+  isString(value["baseOid"]) &&
+  lowercaseOidPattern.test(value["baseOid"]) &&
+  validRepositoryScope(value["reviewed"]) &&
+  validQualityGate(value["qualityGate"]);
+
+const validReviewCheckpoint = (value: unknown): value is Record<string, unknown> =>
+  isRecord(value) && hasExactKeys(value, reviewCheckpointKeys) && validCheckpointFields(value);
+
+const validFinalScopeReceipt = (value: unknown): value is Record<string, unknown> =>
+  isRecord(value) &&
+  hasExactKeys(value, finalScopeReceiptKeys) &&
+  validCheckpointFields(value) &&
+  validRepositoryScope(value["docs"]) &&
+  isString(value["finalWorkingTreeDigest"]) &&
+  lowercaseDigestPattern.test(value["finalWorkingTreeDigest"]);
+
+const matchesStateIdentity = (
+  receipt: Record<string, unknown>,
+  state: Record<string, unknown>,
+): boolean =>
+  receipt["storyId"] === state["storyId"] &&
+  receipt["runDefId"] === state["runDefId"] &&
+  receipt["runDefDigest"] === state["runDefDigest"];
+
+const receiptMatchesCheckpoint = (
+  checkpoint: Record<string, unknown>,
+  receipt: Record<string, unknown>,
+): boolean => reviewCheckpointKeys.every((key) => isDeepStrictEqual(checkpoint[key], receipt[key]));
 
 const hasOptionalString = (record: Record<string, unknown>, key: string): boolean =>
   !(key in record) || isString(record[key]);
@@ -172,6 +256,58 @@ const rootOptionalOldFields = (candidate: Record<string, unknown>): string | und
     ? undefined
     : 'Optional fields "worktreePath" or "branch" must be strings when present.';
 
+const unsupportedVersionReason = (version: unknown): string | undefined =>
+  isNonNegativeInteger(version) && version > RUNNER_FEATURE_VERSION
+    ? `Field "runnerFeatureVersion" ${String(version)} is newer than supported version ${String(RUNNER_FEATURE_VERSION)}.`
+    : undefined;
+
+const incompatibleReceiptVersionReason = (
+  candidate: Record<string, unknown>,
+): string | undefined =>
+  (Object.hasOwn(candidate, "reviewCheckpoint") || Object.hasOwn(candidate, "finalScopeReceipt")) &&
+  candidate["runnerFeatureVersion"] !== RUNNER_FEATURE_VERSION
+    ? `Fields "reviewCheckpoint" and "finalScopeReceipt" require runnerFeatureVersion ${String(RUNNER_FEATURE_VERSION)}.`
+    : undefined;
+
+const rootReceiptVersionReason = (candidate: Record<string, unknown>): string | undefined => {
+  const unsupportedReason = unsupportedVersionReason(candidate["runnerFeatureVersion"]);
+  if (unsupportedReason !== undefined) {
+    return unsupportedReason;
+  }
+  if (candidate["status"] === "done" && !Object.hasOwn(candidate, "finalScopeReceipt")) {
+    return 'Field "finalScopeReceipt" is required when status is "done".';
+  }
+  return incompatibleReceiptVersionReason(candidate);
+};
+
+const validReceiptIntegrity = (candidate: Record<string, unknown>): boolean => {
+  const checkpoint = candidate["reviewCheckpoint"];
+  const receipt = candidate["finalScopeReceipt"];
+  const checkpointValid = validReviewCheckpoint(checkpoint);
+  const receiptValid = validFinalScopeReceipt(receipt);
+  const checkpointRecord = checkpointValid ? checkpoint : {};
+  const receiptRecord = receiptValid ? receipt : {};
+  return receiptIntegrityFactsAreValid({
+    checkpointPresent: Object.hasOwn(candidate, "reviewCheckpoint"),
+    checkpointValid,
+    checkpointMatches:
+      matchesStateIdentity(checkpointRecord, candidate) &&
+      qualityGateMatchesDurableStage(checkpointRecord["qualityGate"], candidate["stages"]),
+    receiptPresent: Object.hasOwn(candidate, "finalScopeReceipt"),
+    receiptValid,
+    receiptMatches: [
+      matchesStateIdentity(receiptRecord, candidate),
+      receiptMatchesCheckpoint(checkpointRecord, receiptRecord),
+      repositoryScopesHaveDisjointPaths(receiptRecord["reviewed"], receiptRecord["docs"]),
+    ].every(Boolean),
+  });
+};
+
+const rootReceiptIntegrityReason = (candidate: Record<string, unknown>): string | undefined =>
+  validReceiptIntegrity(candidate)
+    ? undefined
+    : 'Fields "reviewCheckpoint" or "finalScopeReceipt" are malformed, inconsistent, or name no matching quality stage attempt.';
+
 const rootReasonChecks = [
   rootStringReason,
   rootVersionReason,
@@ -183,6 +319,8 @@ const rootReasonChecks = [
   rootFinishedAtReason,
   rootEconomicsReason,
   rootOptionalOldFields,
+  rootReceiptVersionReason,
+  rootReceiptIntegrityReason,
 ] as const;
 
 /**

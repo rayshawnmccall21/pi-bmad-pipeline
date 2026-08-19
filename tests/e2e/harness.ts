@@ -122,6 +122,18 @@ export const makeProject = (): string => {
   tempRoots.push(root);
   mkdirSync(join(root, ".pi", "bmad", "pipelines"), { recursive: true });
   writeFileSync(join(root, "spec.md"), "# E2E story spec\n", "utf8");
+  for (const args of [
+    ["init", "-b", "main"],
+    ["config", "user.email", "pipeline-e2e@example.com"],
+    ["config", "user.name", "Pipeline E2E"],
+    ["add", "spec.md"],
+    ["commit", "-m", "seed"],
+  ]) {
+    const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    if (result.status !== 0) {
+      throw new Error(`Failed to initialize E2E Git fixture: ${result.stderr}`);
+    }
+  }
   return root;
 };
 

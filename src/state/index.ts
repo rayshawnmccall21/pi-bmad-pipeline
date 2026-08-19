@@ -12,8 +12,12 @@ export {
 
 export type {
   CreateInitialPipelineStateRequest,
+  FinalScopeReceipt,
   PipelineState,
   PipelineStatus,
+  QualityGateReceipt,
+  RepositoryScope,
+  ReviewScopeCheckpoint,
   RunEconomicsSummary,
   RunResult,
   RunResultStatus,

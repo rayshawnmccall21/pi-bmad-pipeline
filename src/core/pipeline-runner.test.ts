@@ -8,16 +8,52 @@ import {
   type StageHandoff,
 } from "../security/stage-handoff.js";
 
-import type { PipelineState, StageState } from "../state/index.js";
+import type {
+  FinalScopeReceipt,
+  PipelineState,
+  ReviewScopeCheckpoint,
+  StageState,
+} from "../state/index.js";
 import type { CompiledAgentStage, CompiledCodeStage, CompiledStageDef } from "../rundef/index.js";
 import type {
   StageExecutionRequest,
   StageExecutionResult,
   WorkflowExecutor,
 } from "../executors/index.js";
-import type { RunPipelineStagesRequest } from "./pipeline-runner.js";
+import type { RunPipelineStagesRequest, ScopeAttestor } from "./pipeline-runner.js";
 
 const T0 = "2026-08-05T00:00:00.000Z";
+const digest = (character: string): string => character.repeat(64);
+
+const reviewCheckpoint: ReviewScopeCheckpoint = {
+  version: 1,
+  storyId: "SH-1",
+  runId: "run-1",
+  runDefId: "legacy-unbound",
+  runDefDigest: "legacy-unbound",
+  branch: "sty-139/landing-integrity",
+  baseOid: "a".repeat(40),
+  reviewed: { paths: ["src/app.ts"], digest: digest("b") },
+  qualityGate: {
+    stageId: "code-review",
+    attempt: 1,
+    status: "passed",
+    finishedAt: T0,
+  },
+};
+
+const finalScopeReceipt: FinalScopeReceipt = {
+  ...reviewCheckpoint,
+  docs: { paths: ["README.md"], digest: digest("c") },
+  finalWorkingTreeDigest: digest("d"),
+};
+
+const createScopeAttestor = () =>
+  vi.fn<ScopeAttestor>(async (request) =>
+    request.phase === "review"
+      ? { kind: "review-checkpoint", checkpoint: reviewCheckpoint }
+      : { kind: "final-receipt", receipt: finalScopeReceipt },
+  );
 
 const stage = (
   id: string,
@@ -87,6 +123,7 @@ interface Harness {
   readonly request: RunPipelineStagesRequest;
   readonly saves: PipelineState[];
   readonly executor: ScriptedExecutor;
+  readonly attestScope: ReturnType<typeof createScopeAttestor>;
 }
 
 const harness = (
@@ -96,6 +133,7 @@ const harness = (
 ): Harness => {
   const saves: PipelineState[] = [];
   const executor = scriptedExecutor(script);
+  const attestScope = createScopeAttestor();
   const state = createInitialPipelineState({
     storyId: "SH-1",
     specFile: "spec.md",
@@ -106,13 +144,16 @@ const harness = (
   return {
     saves,
     executor,
+    attestScope,
     request: {
       stages,
       state,
       storyId: "SH-1",
+      runId: "run-1",
       specFile: "spec.md",
       projectRoot: "/root",
       executor,
+      attestScope,
       saveState: async (next) => {
         saves.push(next);
       },
@@ -136,6 +177,16 @@ const twoStages = (): readonly CompiledStageDef[] => [stage("a", 0), stage("b", 
 const gatedStages = (): readonly CompiledStageDef[] => [
   stage("a", 0),
   stage("b", 1, { payloadGate: okGate, payloadGateName: "ok-gate", onFail: "a" }),
+];
+
+const receiptStages = (): readonly CompiledStageDef[] => [
+  stage("dev-story", 0),
+  stage("code-review", 1, {
+    payloadGate: okGate,
+    payloadGateName: "code-review",
+    onFail: "dev-story",
+  }),
+  stage("docs", 2),
 ];
 
 type StageStateWithHandoff = StageState & { readonly upstreamHandoff?: StageHandoff };
@@ -173,6 +224,229 @@ describe("runPipelineStages", () => {
     });
     expect(executor.requests[0]?.priorFindings).toBeUndefined();
     expect(executor.requests[0]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("persists review and final attestations before docs and terminal done", async () => {
+    const { request, saves, attestScope } = harness(receiptStages(), [
+      okResult(),
+      okResult(),
+      okResult(),
+    ]);
+
+    const result = await runPipelineStages(request);
+
+    expect(result.status).toBe("done");
+    expect(attestScope).toHaveBeenCalledTimes(2);
+    expect(attestScope).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        phase: "review",
+        projectRoot: "/root",
+        storyId: "SH-1",
+        runId: "run-1",
+        runDefId: request.state.runDefId,
+        runDefDigest: request.state.runDefDigest,
+        qualityGate: expect.objectContaining({
+          stageId: "code-review",
+          attempt: 1,
+          status: "passed",
+        }),
+      }),
+    );
+    expect(attestScope).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        phase: "final",
+        reviewCheckpoint,
+      }),
+    );
+
+    const checkpointSave = saves.findIndex((state) => state.reviewCheckpoint !== undefined);
+    const docsStartSave = saves.findIndex(
+      (state) => state.currentStage === "docs" && state.stages["docs"]?.status === "running",
+    );
+    const receiptSave = saves.findIndex(
+      (state) => state.status !== "done" && state.finalScopeReceipt !== undefined,
+    );
+    const doneSave = saves.findIndex((state) => state.status === "done");
+
+    expect(checkpointSave).toBeGreaterThanOrEqual(0);
+    expect(docsStartSave).toBeGreaterThan(checkpointSave);
+    expect(receiptSave).toBeGreaterThan(docsStartSave);
+    expect(doneSave).toBeGreaterThan(receiptSave);
+    expect(result.state.reviewCheckpoint).toEqual(reviewCheckpoint);
+    expect(result.state.finalScopeReceipt).toEqual(finalScopeReceipt);
+    expect(Object.isFrozen(result.state.finalScopeReceipt)).toBe(true);
+    expect(Object.isFrozen(result.state.finalScopeReceipt?.docs.paths)).toBe(true);
+  });
+
+  it("reruns review and downstream docs after final attestation invalidates reviewed bytes", async () => {
+    const fixture = harness(receiptStages(), [
+      okResult(),
+      okResult(),
+      okResult(),
+      okResult(),
+      okResult(),
+    ]);
+    const refreshedCheckpoint: ReviewScopeCheckpoint = {
+      ...reviewCheckpoint,
+      reviewed: { paths: ["src/app.ts"], digest: digest("e") },
+      qualityGate: { ...reviewCheckpoint.qualityGate, attempt: 2 },
+    };
+    const refreshedReceipt: FinalScopeReceipt = {
+      ...finalScopeReceipt,
+      ...refreshedCheckpoint,
+      finalWorkingTreeDigest: digest("f"),
+    };
+    fixture.attestScope
+      .mockResolvedValueOnce({ kind: "review-checkpoint", checkpoint: reviewCheckpoint })
+      .mockResolvedValueOnce({ kind: "review-invalidated", changedPaths: ["src/app.ts"] })
+      .mockResolvedValueOnce({ kind: "review-checkpoint", checkpoint: refreshedCheckpoint })
+      .mockResolvedValueOnce({ kind: "final-receipt", receipt: refreshedReceipt });
+
+    const result = await runPipelineStages(fixture.request);
+
+    expect(result.status).toBe("done");
+    expect(fixture.executor.requests.map(({ stage }) => stage.id)).toEqual([
+      "dev-story",
+      "code-review",
+      "docs",
+      "code-review",
+      "docs",
+    ]);
+    const rerunStart = fixture.saves.find(
+      (state) =>
+        state.currentStage === "code-review" && state.stages["code-review"]?.attempts === 1,
+    );
+    expect(rerunStart?.reviewCheckpoint).toBeUndefined();
+    expect(result.state.reviewCheckpoint).toEqual(refreshedCheckpoint);
+    expect(result.state.finalScopeReceipt).toEqual(refreshedReceipt);
+  });
+
+  it("fails closed without saving done when final attestation is rejected", async () => {
+    const fixture = harness(receiptStages(), [okResult(), okResult(), okResult()]);
+    fixture.attestScope
+      .mockResolvedValueOnce({ kind: "review-checkpoint", checkpoint: reviewCheckpoint })
+      .mockResolvedValueOnce({
+        kind: "rejected",
+        reason: "Final Git scope could not be attested.",
+      });
+
+    const result = await runPipelineStages(fixture.request);
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({
+      code: "scope-attestation-failed",
+      reason: "Final Git scope could not be attested.",
+    });
+    expect(result.state.finalScopeReceipt).toBeUndefined();
+    expect(fixture.saves.some((state) => state.status === "done")).toBe(false);
+    expect(fixture.saves.at(-1)?.status).toBe("needs-attention");
+  });
+
+  it("resumes interrupted preterminal finalization without rerunning stages", async () => {
+    const fixture = harness(receiptStages(), []);
+    const resumedStages = Object.fromEntries(
+      Object.entries(fixture.request.state.stages).map(([id, state]) => [
+        id,
+        { ...state, status: "passed" as const },
+      ]),
+    );
+    const state: PipelineState = {
+      ...fixture.request.state,
+      status: "running",
+      currentStage: null,
+      stages: resumedStages,
+      reviewCheckpoint,
+    };
+
+    const result = await runPipelineStages({ ...fixture.request, state });
+
+    expect(result.status).toBe("done");
+    expect(result.stagesRun).toEqual([]);
+    expect(fixture.executor.requests).toEqual([]);
+    expect(fixture.attestScope).toHaveBeenCalledOnce();
+    expect(fixture.attestScope).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "final", reviewCheckpoint }),
+    );
+    const receiptSave = fixture.saves.findIndex(
+      (saved) => saved.status !== "done" && saved.finalScopeReceipt !== undefined,
+    );
+    const doneSave = fixture.saves.findIndex((saved) => saved.status === "done");
+    expect(receiptSave).toBeGreaterThanOrEqual(0);
+    expect(doneSave).toBeGreaterThan(receiptSave);
+  });
+
+  it("reruns a passed legacy review before docs when its checkpoint was never persisted", async () => {
+    const fixture = harness(receiptStages(), [okResult(), okResult()]);
+    const passedStage = (state: StageState): StageState => ({
+      ...state,
+      status: "passed",
+      attempts: 1,
+      startedAt: T0,
+      finishedAt: T0,
+      history: [
+        {
+          attempt: 1,
+          status: "passed",
+          startedAt: T0,
+          finishedAt: T0,
+          durationMs: 1,
+          exitCode: 0,
+          reason: "passed before checkpoint persistence failed",
+        },
+      ],
+    });
+    const legacyState: PipelineState = {
+      ...fixture.request.state,
+      runnerFeatureVersion: 1,
+      status: "running",
+      currentStage: "code-review",
+      stages: {
+        ...fixture.request.state.stages,
+        "dev-story": passedStage(fixture.request.state.stages["dev-story"]!),
+        "code-review": passedStage(fixture.request.state.stages["code-review"]!),
+      },
+    };
+    fixture.attestScope.mockImplementation(async (request) => {
+      if (request.phase === "review") {
+        return {
+          kind: "review-checkpoint",
+          checkpoint: {
+            ...reviewCheckpoint,
+            runId: request.runId,
+            runDefId: request.runDefId,
+            runDefDigest: request.runDefDigest,
+            qualityGate: request.qualityGate,
+          },
+        };
+      }
+      return {
+        kind: "final-receipt",
+        receipt: {
+          ...finalScopeReceipt,
+          ...request.reviewCheckpoint,
+          runId: request.runId,
+          runDefId: request.runDefId,
+          runDefDigest: request.runDefDigest,
+          qualityGate: request.qualityGate,
+        },
+      };
+    });
+
+    const result = await runPipelineStages({ ...fixture.request, state: legacyState });
+
+    expect(result.status).toBe("done");
+    expect(fixture.executor.requests.map(({ stage: executedStage }) => executedStage.id)).toEqual([
+      "code-review",
+      "docs",
+    ]);
+    expect(fixture.attestScope.mock.calls.map(([request]) => request.phase)).toEqual([
+      "review",
+      "final",
+    ]);
+    expect(result.state.runnerFeatureVersion).toBe(2);
+    expect(result.state.reviewCheckpoint?.qualityGate.attempt).toBe(2);
   });
 
   it("persists an agent payload on its normal successor and forwards the exact handoff", async () => {
@@ -686,7 +960,9 @@ describe("runPipelineStages", () => {
         },
       },
       saveState: async (state) => {
-        events.push(`save:${state.status}:${String(state.currentStage)}`);
+        events.push(
+          `save:${state.status}:${String(state.currentStage)}:${String(state.finalScopeReceipt !== undefined)}`,
+        );
       },
       observer: {
         onStageStarted: (info) => events.push(`started:${info.stage.id}:${info.attempt}`),
@@ -702,11 +978,12 @@ describe("runPipelineStages", () => {
     expect(result.status).toBe("done");
     expect(events).toEqual([
       "started:a:1",
-      "save:running:a",
+      "save:running:a:false",
       "execute:a",
-      "save:running:a",
+      "save:running:a:false",
       "finished:a:passed:complete:0",
-      "save:done:null",
+      "save:running:a:true",
+      "save:done:null:true",
     ]);
   });
 

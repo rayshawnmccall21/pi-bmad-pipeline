@@ -15,6 +15,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import { createGitScopeAttestor } from "./git-scope-attestor.js";
 import { executeStages, preparePipeline } from "./run-pipeline-execution.js";
 import {
   emitMinimalResult,
@@ -22,7 +23,7 @@ import {
   settleFsmFailure,
   finishAction,
 } from "./run-pipeline-settlement.js";
-import { runPipelineStages, type RunBudget } from "../core/index.js";
+import { runPipelineStages, type RunBudget, type ScopeAttestor } from "../core/index.js";
 import { errorMessage } from "../core/runner-evaluation.js";
 import {
   createPipelineEventEmitter,
@@ -90,6 +91,9 @@ export interface RunPipelineActionDeps {
 
   /** Builds the workflow executor for resolved model config. */
   readonly createExecutor: (options: CreateStageExecutorOptions) => WorkflowExecutor;
+
+  /** Attests trusted Git scope before review and terminal transitions. */
+  readonly attestScope: ScopeAttestor;
 
   /** Runs compiled stages to a terminal outcome. */
   readonly runStages: typeof runPipelineStages;
@@ -172,6 +176,7 @@ export const defaultRunPipelineActionDeps: RunPipelineActionDeps = Object.freeze
   resolveModel: resolveModelConfig,
   createExecutor: (options: CreateStageExecutorOptions): WorkflowExecutor =>
     new StageExecutorDispatcher(new PiCliWorkflowExecutor(options), new LocalCodeExecutor()),
+  attestScope: createGitScopeAttestor(),
   runStages: runPipelineStages,
   createRunId: (): string => randomUUID(),
 } satisfies RunPipelineActionDeps);
@@ -207,7 +212,7 @@ export async function runPipelineAction(request: RunPipelineActionRequest): Prom
     return settleLockHeld(context);
   }
   try {
-    return await runLockedPipeline(context);
+    return await runLockedPipeline(context, lock.info.runId);
   } catch (error) {
     return settleThrow(context, error);
   } finally {
@@ -246,13 +251,16 @@ const createActionContext = (request: RunPipelineActionRequest): PipelineActionC
   });
 };
 
-const runLockedPipeline = async (context: PipelineActionContext): Promise<RunResult> => {
+const runLockedPipeline = async (
+  context: PipelineActionContext,
+  runId: string,
+): Promise<RunResult> => {
   context.emitter.emit("run.started", {
     rundefId: context.request.rundefId,
     specFile: context.request.specFile,
   });
   const prepared = await preparePipeline(context);
-  const fsm = await executeStages(context, prepared);
+  const fsm = await executeStages(context, prepared, runId);
   const settled = fsm.status === "done" ? settleDone(fsm) : settleFsmFailure(fsm);
   return finishAction(context, prepared, settled);
 };

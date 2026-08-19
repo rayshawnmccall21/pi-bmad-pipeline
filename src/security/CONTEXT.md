@@ -14,6 +14,7 @@
 - `createStageHandoff` accepts only finite JSON primitives and acyclic plain arrays/objects, redacts before compact serialization, and rejects values above the 32 KiB UTF-8 ceiling without truncation.
 - `sanitizeStageHandoff` re-parses persisted or prompt-bound strings through the same normalization boundary; accepted handoffs are canonical branded strings.
 - CLI failures, local-code diagnostics, events, debug logs, durable state, and successor prompts reuse this module as the shared redaction source.
+- Final scope receipts canonicalize repository-relative paths, hash exact bytes deterministically, bind review and exact durable quality-attempt identity, permit only fixed-policy documentation after review, and freeze every returned structure.
 
 ## Gotchas
 
@@ -22,6 +23,7 @@
 - Bounds are measured after redaction and UTF-8 serialization. Never truncate JSON, and never move the cap check to character length.
 - Normalization fails closed on accessors that throw, cycles, non-finite numbers, non-plain prototypes, malformed JSON, and non-canonical persisted strings.
 - This module no longer owns evidence commands, evidence storage, or audit assertions.
+- Scope constructors consume only trusted Git snapshots supplied by the action boundary; snapshots include committed base-to-`HEAD` and dirty scope, while prompts, skills, specs, configuration/workflows, and executable instruction Markdown are never docs-only. Model handoffs remain untrusted and never authorize repository paths.
 
 ## Learnings
 

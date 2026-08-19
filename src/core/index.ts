@@ -29,6 +29,14 @@ export type {
 } from "./pipeline-runner.js";
 
 export type {
+  FinalScopeAttestationRequest,
+  ReviewScopeAttestationRequest,
+  ScopeAttestationRequest,
+  ScopeAttestationResult,
+  ScopeAttestor,
+} from "./scope-attestation.js";
+
+export type {
   EvaluateStageExecutionRequest,
   StageEvaluation,
   StageFailureOutcome,

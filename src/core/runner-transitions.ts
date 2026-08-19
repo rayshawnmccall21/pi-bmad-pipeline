@@ -1,3 +1,4 @@
+/* eslint-disable max-lines, jsdoc/require-param, jsdoc/require-returns, jsdoc/require-throws, @typescript-eslint/no-unsafe-assignment -- Cohesive frozen structural transitions preserve dynamic stage records and atomic receipt migration. */
 /**
  * Pure durable-state transition constructors for the pipeline FSM.
  *
@@ -10,9 +11,12 @@
  */
 
 import {
+  RUNNER_FEATURE_VERSION,
   createInitialStageState,
+  type FinalScopeReceipt,
   type PipelineState,
   type PipelineStatus,
+  type ReviewScopeCheckpoint,
   type RunEconomicsSummary,
   type StageAttemptState,
   type StageState,
@@ -207,6 +211,46 @@ export const applyExecutorError = (
 };
 
 /**
+ * Attaches a review checkpoint and removes any stale final receipt.
+ *
+ * @param state - Current durable state.
+ * @param checkpoint - Trusted review checkpoint.
+ *
+ * @returns Frozen state containing only the current review attestation.
+ */
+export const attachReviewCheckpoint = (
+  state: PipelineState,
+  checkpoint: ReviewScopeCheckpoint,
+): PipelineState => {
+  const withoutReceipt = structuredClone(state);
+  Reflect.deleteProperty(withoutReceipt, "finalScopeReceipt");
+  return cloneFrozenState({
+    ...withoutReceipt,
+    runnerFeatureVersion: scopeAttachmentFeatureVersion(state),
+    reviewCheckpoint: checkpoint,
+  });
+};
+
+/**
+ * Attaches a final receipt, deriving its matching checkpoint when necessary.
+ *
+ * @param state - Current durable state.
+ * @param receipt - Trusted final scope receipt.
+ *
+ * @returns Frozen receipt-bearing preterminal state.
+ */
+export const attachFinalScopeReceipt = (
+  state: PipelineState,
+  receipt: FinalScopeReceipt,
+): PipelineState =>
+  cloneFrozenState({
+    ...state,
+    runnerFeatureVersion: scopeAttachmentFeatureVersion(state),
+    reviewCheckpoint: state.reviewCheckpoint ?? checkpointOf(receipt),
+    finalScopeReceipt: receipt,
+  });
+
+/**
  * Builds the frozen terminal state for a finished run.
  *
  * @param state - Durable pipeline state.
@@ -214,6 +258,8 @@ export const applyExecutorError = (
  * @param finishedAt - ISO timestamp when the run finished.
  *
  * @returns New frozen terminal state.
+ *
+ * @throws TypeError When terminal success has no final scope receipt.
  *
  * @example
  * ```ts
@@ -224,14 +270,70 @@ export const finalizeState = (
   state: PipelineState,
   status: PipelineStatus,
   finishedAt: string,
-): PipelineState =>
-  Object.freeze({
+): PipelineState => {
+  if (status === "done" && state.finalScopeReceipt === undefined) {
+    throw new TypeError("A final scope receipt is required before terminal success.");
+  }
+  return Object.freeze({
     ...state,
     status,
     currentStage: null,
     startedAt: state.startedAt ?? finishedAt,
     finishedAt,
   });
+};
+
+/** Clears scope approval and resets review plus downstream without consuming regression budget. */
+export const resetReviewAndDownstream = (
+  state: PipelineState,
+  orderedStageIds: readonly string[],
+  reviewStageId: string,
+): PipelineState => {
+  const reviewIndex = orderedStageIds.indexOf(reviewStageId);
+  if (reviewIndex < 0) {
+    throw new RangeError(`Review stage "${reviewStageId}" is not in the compiled pipeline.`);
+  }
+  const stages = Object.fromEntries(
+    Object.entries(state.stages).map(([stageId, stageState]) => {
+      const stageIndex = orderedStageIds.indexOf(stageId);
+      return stageIndex < reviewIndex
+        ? [stageId, stageState]
+        : [
+            stageId,
+            Object.freeze({
+              id: stageState.id,
+              status: "pending" as const,
+              attempts: stageState.attempts,
+              startedAt: null,
+              finishedAt: null,
+              history: stageState.history,
+            }),
+          ];
+    }),
+  );
+  const withoutApproval = structuredClone(state);
+  Reflect.deleteProperty(withoutApproval, "reviewCheckpoint");
+  Reflect.deleteProperty(withoutApproval, "finalScopeReceipt");
+  return cloneFrozenState({
+    ...withoutApproval,
+    status: "running",
+    currentStage: null,
+    stages,
+    finishedAt: null,
+  });
+};
+
+/** Clears stale scope approval and consumes one regression before rerun. */
+export const invalidateReviewApproval = (
+  state: PipelineState,
+  orderedStageIds: readonly string[],
+  reviewStageId: string,
+): PipelineState =>
+  resetReviewAndDownstream(
+    { ...state, regressions: state.regressions + 1 },
+    orderedStageIds,
+    reviewStageId,
+  );
 
 /**
  * Adds attempt usage onto aggregated run economics.
@@ -360,6 +462,28 @@ const resetRegressionTarget = (
     }),
   );
 };
+
+const scopeAttachmentFeatureVersion = (state: PipelineState): number =>
+  (state.status === "pending" || state.status === "running") &&
+  Number.isInteger(state.runnerFeatureVersion) &&
+  state.runnerFeatureVersion >= 0 &&
+  state.runnerFeatureVersion < RUNNER_FEATURE_VERSION &&
+  state.reviewCheckpoint === undefined &&
+  state.finalScopeReceipt === undefined
+    ? RUNNER_FEATURE_VERSION
+    : state.runnerFeatureVersion;
+
+const checkpointOf = (receipt: FinalScopeReceipt): ReviewScopeCheckpoint => ({
+  version: receipt.version,
+  storyId: receipt.storyId,
+  runId: receipt.runId,
+  runDefId: receipt.runDefId,
+  runDefDigest: receipt.runDefDigest,
+  branch: receipt.branch,
+  baseOid: receipt.baseOid,
+  reviewed: receipt.reviewed,
+  qualityGate: receipt.qualityGate,
+});
 
 const deepFreeze = <T>(value: T): T => {
   if (value !== null && typeof value === "object") {

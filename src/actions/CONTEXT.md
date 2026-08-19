@@ -14,6 +14,7 @@
 - The dispatch lock is released in `finally`, and state persistence/event effects enter through injected dependencies.
 - Agent and code stages share the ordinary lifecycle events; payload-gate events are emitted only for agent stages.
 - Settlement emits one terminal result event and preserves durable state as the authoritative run record.
+- The composition root injects the fixed-argv Git scope attestor only after lock acquisition and binds observations to the exact project root and authenticated run identity; final retry uses the durable checkpoint run identity rather than a fresh lock invocation ID.
 
 ## Gotchas
 
@@ -21,6 +22,7 @@
 - Resume identity includes the RunDef digest, so code command/argv changes cannot reuse prior state.
 - `projectRoot` is passed unchanged as the exact executor cwd; actions do not create a worktree.
 - Register payload gates before compiling YAML that references them.
+- Never accept child/model filenames as mutation authority; the default attestor derives canonical base-to-`HEAD` committed plus dirty paths and bytes from Git and physically confined repository reads. Its fixed docs classifier excludes prompts, skills, specs, workflow/configuration, hidden instruction trees, and executable context Markdown.
 
 ## Learnings
 

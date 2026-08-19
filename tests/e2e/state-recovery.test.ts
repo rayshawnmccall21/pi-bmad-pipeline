@@ -4,12 +4,17 @@
  * Covers resume identity binding, reconciliation after interruption, dispatch
  * lock contention and staleness, and the exactly-one-result invariant.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { computeRunDefDigest, loadRunDefFile } from "../../src/rundef/index.js";
+import { createCanonicalRepositoryScope } from "../../src/security/final-scope-receipt.js";
+import { createStageHandoff } from "../../src/security/stage-handoff.js";
+import { getPipelineStateInvalidReason } from "../../src/state/fs-state-validation.js";
+import type { PipelineState, StageState } from "../../src/state/index.js";
 import {
   HAPPY_PIPELINE,
   builtCliPath,
@@ -24,6 +29,66 @@ import {
   statePath,
   writePipeline,
 } from "./harness.js";
+
+const LEGACY_REVIEW_PIPELINE = `
+id: legacy-review-recovery
+stages:
+  - id: dev-story
+    kind: agent
+    workflow: dev-story
+    agent: dev
+    timeout: 60
+  - id: code-review
+    kind: agent
+    workflow: code-review
+    agent: dev
+    gate: code-review
+    onFail: dev-story
+    timeout: 60
+  - id: docs
+    kind: agent
+    workflow: docs
+    agent: architect
+    timeout: 60
+`;
+const LEGACY_STORY_ID = "C7-LEGACY-REVIEW";
+const LEGACY_BRANCH = "sty-144/recovery-e2e";
+const PRIOR_TIME = "2026-08-19T00:00:00.000Z";
+
+interface StageSpawnTrace {
+  readonly workflow: string;
+  readonly attempt: number;
+  readonly state: PipelineState;
+}
+
+const passedStage = (id: string, tokens: number): StageState => ({
+  id,
+  status: "passed",
+  attempts: 1,
+  startedAt: PRIOR_TIME,
+  finishedAt: PRIOR_TIME,
+  history: [
+    {
+      attempt: 1,
+      status: "passed",
+      startedAt: PRIOR_TIME,
+      finishedAt: PRIOR_TIME,
+      durationMs: 1,
+      exitCode: 0,
+      reason: `Prior ${id} pass.`,
+      usage: { tokens, dollars: tokens / 10 },
+    },
+  ],
+  reason: `Prior ${id} pass.`,
+});
+
+const runGit = (root: string, args: readonly string[]): string => {
+  const result = spawnSync("git", [...args], { cwd: root, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+  }
+  return result.stdout.trim();
+};
 
 const waitUntil = async (predicate: () => boolean, timeoutMs = 10_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -70,6 +135,147 @@ describe("durable state, recovery, and concurrency", () => {
     expect(again.stderr, again.stderr).toBe("");
     expect(again.status).toBe(0);
     expect(singleResult(again)).toMatchObject({ status: "passed" });
+  });
+
+  it("reruns a durably passed legacy review before docs in a fresh process", async () => {
+    const root = makeProject();
+    runGit(root, ["switch", "-c", LEGACY_BRANCH]);
+    writePipeline(root, "legacy-review-recovery", LEGACY_REVIEW_PIPELINE);
+    mkdirSync(join(root, "src"), { recursive: true });
+    const pipelinePath = ".pi/bmad/pipelines/legacy-review-recovery.yaml";
+    const sourcePath = "src/current.ts";
+    const priorSource = 'export const recoveryIdentity = "prior-review";\n';
+    const currentSource = 'export const recoveryIdentity = "newly-reviewed";\n';
+    writeFileSync(join(root, sourcePath), priorSource, "utf8");
+    runGit(root, ["add", "--", pipelinePath, sourcePath]);
+    runGit(root, ["commit", "-m", "seed previously reviewed bytes"]);
+
+    const discovered = await loadRunDefFile(join(root, pipelinePath));
+    const runDefDigest = computeRunDefDigest(discovered.runDef);
+    const pipelineBytes = readFileSync(join(root, pipelinePath));
+    const priorScope = createCanonicalRepositoryScope([
+      { path: pipelinePath, bytes: pipelineBytes },
+      { path: sourcePath, bytes: Buffer.from(priorSource) },
+    ]);
+    writeFileSync(join(root, sourcePath), currentSource, "utf8");
+    const currentScope = createCanonicalRepositoryScope([
+      { path: pipelinePath, bytes: pipelineBytes },
+      { path: sourcePath, bytes: Buffer.from(currentSource) },
+    ]);
+    expect(currentScope.digest).not.toBe(priorScope.digest);
+
+    const staleHandoff = createStageHandoff({ reviewed: priorScope, runId: "old-run" });
+    expect(staleHandoff).toBeDefined();
+    const economics = { tokens: 7, dollars: 0.7 };
+    const seedState: PipelineState = {
+      runnerFeatureVersion: 1,
+      storyId: LEGACY_STORY_ID,
+      runDefId: "legacy-review-recovery",
+      runDefDigest,
+      specFile: "spec.md",
+      status: "running",
+      currentStage: "code-review",
+      stages: {
+        "dev-story": passedStage("dev-story", 2),
+        "code-review": passedStage("code-review", 5),
+        docs: {
+          id: "docs",
+          status: "pending",
+          attempts: 0,
+          startedAt: null,
+          finishedAt: null,
+          history: [],
+          upstreamHandoff: staleHandoff,
+        },
+      },
+      regressions: 2,
+      model: "gpt-5",
+      thinking: "low",
+      startedAt: PRIOR_TIME,
+      finishedAt: null,
+      economics,
+    };
+    expect(getPipelineStateInvalidReason(seedState)).toBeUndefined();
+    expect(seedState).not.toHaveProperty("reviewCheckpoint");
+    expect(seedState).not.toHaveProperty("finalScopeReceipt");
+    mkdirSync(join(root, ".pi", "pipeline", "state"), { recursive: true });
+    writeFileSync(statePath(root, LEGACY_STORY_ID), `${JSON.stringify(seedState, null, 2)}\n`);
+    const tracePath = join(root, ".pi", "pipeline", "stage-trace.jsonl");
+
+    const outcome = runCli(root, "legacy-review-recovery", LEGACY_STORY_ID, {
+      E2E_STAGE_TRACE: tracePath,
+    });
+
+    expect(outcome.status, `${outcome.stdout}\n${outcome.stderr}`).toBe(0);
+    expect(singleResult(outcome)).toMatchObject({
+      status: "passed",
+      stagesRun: ["code-review", "docs"],
+      regressions: 2,
+    });
+    const traces = readFileSync(tracePath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as StageSpawnTrace);
+    expect(traces.map(({ workflow, attempt }) => ({ workflow, attempt }))).toEqual([
+      { workflow: "code-review", attempt: 2 },
+      { workflow: "docs", attempt: 1 },
+    ]);
+
+    const reviewStart = traces[0]!.state;
+    expect(reviewStart).toMatchObject({
+      storyId: seedState.storyId,
+      runDefId: seedState.runDefId,
+      runDefDigest: seedState.runDefDigest,
+      specFile: seedState.specFile,
+      model: seedState.model,
+      thinking: seedState.thinking,
+      regressions: 2,
+      economics,
+      runnerFeatureVersion: 1,
+      status: "running",
+      currentStage: "code-review",
+    });
+    expect(reviewStart.stages["dev-story"]).toEqual(seedState.stages["dev-story"]);
+    expect(reviewStart.stages["code-review"]?.history).toEqual(
+      seedState.stages["code-review"]?.history,
+    );
+    expect(reviewStart.stages.docs).not.toHaveProperty("upstreamHandoff");
+    expect(reviewStart).not.toHaveProperty("reviewCheckpoint");
+
+    const docsStart = traces[1]!.state;
+    expect(docsStart.runnerFeatureVersion).toBe(2);
+    expect(docsStart.regressions).toBe(2);
+    expect(docsStart.economics).toEqual(economics);
+    expect(docsStart.reviewCheckpoint).toMatchObject({
+      storyId: LEGACY_STORY_ID,
+      runDefId: "legacy-review-recovery",
+      runDefDigest,
+      branch: LEGACY_BRANCH,
+      baseOid: runGit(root, ["rev-parse", "main"]),
+      reviewed: currentScope,
+      qualityGate: { stageId: "code-review", attempt: 2, status: "passed" },
+    });
+    expect(docsStart.reviewCheckpoint?.reviewed.digest).not.toBe(priorScope.digest);
+    expect(docsStart.reviewCheckpoint?.runId).not.toBe("old-run");
+
+    const finalState = JSON.parse(
+      readFileSync(statePath(root, LEGACY_STORY_ID), "utf8"),
+    ) as PipelineState;
+    expect(finalState).toMatchObject({
+      status: "done",
+      runnerFeatureVersion: 2,
+      regressions: 2,
+      economics,
+      storyId: seedState.storyId,
+      runDefId: seedState.runDefId,
+      runDefDigest: seedState.runDefDigest,
+    });
+    expect(finalState.stages["code-review"]?.attempts).toBe(2);
+    expect(finalState.stages["code-review"]?.history[0]).toEqual(
+      seedState.stages["code-review"]?.history[0],
+    );
+    expect(finalState.reviewCheckpoint).toEqual(docsStart.reviewCheckpoint);
+    expect(finalState.finalScopeReceipt?.reviewed).toEqual(currentScope);
   });
 
   it("fails closed on resume identity mismatch without spawning a child", () => {

@@ -1,3 +1,4 @@
+/* eslint-disable max-lines, @typescript-eslint/no-unnecessary-condition -- The FSM loop explicitly sequences durable attestation and bounded review rerouting. */
 /**
  * Durable pipeline FSM: a thin imperative shell over the pure stage kernel.
  *
@@ -28,10 +29,25 @@ import {
   applyStageOutcome,
   cloneFrozenState,
   finalizeState,
+  invalidateReviewApproval,
   markStageRunning,
+  resetReviewAndDownstream,
   stageStateOf,
 } from "./runner-transitions.js";
-import { getFirstIncompleteStageId, type PipelineState } from "../state/index.js";
+import {
+  finalScopeFailureStageId,
+  isCodeReviewStage,
+  persistFinalScopeAttestation,
+  persistPassedReviewAttestation,
+  type ScopeAttestor,
+} from "./scope-attestation.js";
+import { getPipelineStateInvalidReason } from "../state/fs-state-validation.js";
+import {
+  RUNNER_FEATURE_VERSION,
+  getFirstIncompleteStageId,
+  isTerminalPipelineStatus,
+  type PipelineState,
+} from "../state/index.js";
 import { createStageHandoff } from "../security/stage-handoff.js";
 
 import type { RunBudget } from "./budgets.js";
@@ -44,6 +60,7 @@ export type {
   PipelineRunFailureCode,
   PipelineRunStatus,
 } from "./runner-evaluation.js";
+export type { ScopeAttestor } from "./scope-attestation.js";
 
 /** Default number of gate-triggered regressions allowed before failing closed. */
 export const DEFAULT_MAX_REGRESSIONS = 3;
@@ -94,6 +111,12 @@ export interface RunPipelineStagesRequest {
 
   /** Story id being supervised. */
   readonly storyId: string;
+
+  /** Authenticated runner invocation id. */
+  readonly runId: string;
+
+  /** Trusted repository-scope attestation effect. */
+  readonly attestScope: ScopeAttestor;
 
   /** Story or spec file path provided to the run. */
   readonly specFile: string;
@@ -208,15 +231,86 @@ const createRunContext = (request: RunPipelineStagesRequest): RunContext => ({
 
 const runLoop = async (context: RunContext): Promise<RunOutcome> => {
   const stages = context.request.stages;
+  await persistLegacyReviewRecovery(context);
   let stage = stageForId(stages, getFirstIncompleteStageId(context.state, stages));
-  while (stage !== null) {
-    const step = await runStageStep(context, stage);
+  while (true) {
+    const step =
+      stage === null ? await runFinalScopeStep(context) : await runStageStep(context, stage);
     if (step.kind === "outcome") {
       return step.outcome;
     }
     stage = step.next;
   }
-  return { status: "done" };
+};
+
+const persistLegacyReviewRecovery = async (context: RunContext): Promise<void> => {
+  const reviewStageId = legacyPassedReviewStageId(context);
+  if (reviewStageId === undefined) {
+    return;
+  }
+  await transition(
+    context,
+    resetReviewAndDownstream(
+      context.state,
+      context.request.stages.map(({ id }) => id),
+      reviewStageId,
+    ),
+  );
+};
+
+const legacyPassedReviewStageId = (context: RunContext): string | undefined =>
+  isRecoverableLegacyState(context.state)
+    ? context.request.stages.find(
+        (stage) => isCodeReviewStage(stage) && context.state.stages[stage.id]?.status === "passed",
+      )?.id
+    : undefined;
+
+const isRecoverableLegacyState = (state: PipelineState): boolean =>
+  getPipelineStateInvalidReason(state) === undefined &&
+  state.runnerFeatureVersion < RUNNER_FEATURE_VERSION &&
+  !isTerminalPipelineStatus(state.status) &&
+  state.reviewCheckpoint === undefined &&
+  state.finalScopeReceipt === undefined;
+
+const runFinalScopeStep = async (context: RunContext): Promise<StageStep> => {
+  const finalScope = await persistFinalScopeAttestation(context);
+  if (finalScope.kind === "attested") {
+    return { kind: "outcome", outcome: { status: "done" } };
+  }
+  if (finalScope.kind === "rejected") {
+    return outcomeStep(
+      "needs-attention",
+      failureOf("scope-attestation-failed", finalScope.reason, finalScopeFailureStageId(context)),
+    );
+  }
+  return reviewInvalidationStep(context, finalScope.changedPaths);
+};
+
+const reviewInvalidationStep = async (
+  context: RunContext,
+  changedPaths: readonly string[],
+): Promise<StageStep> => {
+  const reviewStageId = context.state.reviewCheckpoint?.qualityGate.stageId;
+  if (reviewStageId === undefined || context.state.regressions >= context.maxRegressions) {
+    return outcomeStep(
+      "needs-attention",
+      failureOf(
+        "scope-attestation-failed",
+        `Reviewed scope changed after approval: ${changedPaths.join(", ")}.`,
+        reviewStageId ?? finalScopeFailureStageId(context),
+      ),
+    );
+  }
+  const stages = context.request.stages;
+  await transition(
+    context,
+    invalidateReviewApproval(
+      context.state,
+      stages.map(({ id }) => id),
+      reviewStageId,
+    ),
+  );
+  return { kind: "advance", next: stageForId(stages, reviewStageId) };
 };
 
 const runStageStep = async (context: RunContext, stage: CompiledStageDef): Promise<StageStep> => {
@@ -289,7 +383,18 @@ const settleExecution = async (context: RunContext, input: SettleInput): Promise
     }),
   );
   context.stagesRun.push(input.stage.id);
-  return concludeStep(context, evaluated, input.stage);
+  const attestationFailure = await persistPassedReviewAttestation(context, {
+    stage: input.stage,
+    attempt: input.attempt,
+    passed: evaluated.decision.passed,
+    finishedAt: context.state.stages[input.stage.id]?.finishedAt ?? isoTime(context),
+  });
+  return attestationFailure === undefined
+    ? concludeStep(context, evaluated, input.stage)
+    : outcomeStep(
+        "needs-attention",
+        failureOf("scope-attestation-failed", attestationFailure, input.stage.id),
+      );
 };
 
 const stateAfterOutcome = (

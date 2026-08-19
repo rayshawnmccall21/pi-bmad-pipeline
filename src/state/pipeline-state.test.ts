@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   RUNNER_FEATURE_VERSION,
@@ -11,7 +11,13 @@ import {
 } from "./pipeline-state.js";
 
 import type { CompiledStageDef } from "../rundef/index.js";
-import type { PipelineStatus, StageStatus } from "./pipeline-state.js";
+import type {
+  FinalScopeReceipt,
+  PipelineState,
+  PipelineStatus,
+  ReviewScopeCheckpoint,
+  StageStatus,
+} from "./pipeline-state.js";
 
 const stage = (id: string, index: number): CompiledStageDef =>
   Object.freeze({
@@ -99,6 +105,26 @@ describe("pipeline state contracts", () => {
       thinking: "high",
       economics: { tokens: 0, dollars: 0 },
     });
+  });
+
+  it("versions receipt-aware state while initial state has no attestation", () => {
+    const state = createInitialPipelineState({
+      storyId: "STORY-123",
+      specFile: "./specs/story-123.md",
+      stages: twoStages(),
+      model: "gpt-5.5-pro",
+      thinking: "medium",
+    });
+
+    expect(RUNNER_FEATURE_VERSION).toBe(2);
+    expect(state).not.toHaveProperty("reviewCheckpoint");
+    expect(state).not.toHaveProperty("finalScopeReceipt");
+    expectTypeOf<PipelineState["reviewCheckpoint"]>().toEqualTypeOf<
+      ReviewScopeCheckpoint | undefined
+    >();
+    expectTypeOf<PipelineState["finalScopeReceipt"]>().toEqualTypeOf<
+      FinalScopeReceipt | undefined
+    >();
   });
 
   it("defaults initial pipeline startedAt to null", () => {
