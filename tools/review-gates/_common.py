@@ -34,7 +34,30 @@ FINDINGS_MAX_COUNT = 50
 FINDINGS_MAX_ITEM_CHARS = 2048
 FINDINGS_MAX_TOTAL_CHARS = 65536
 
-DISPOSITIONS = ("fix", "false_positive", "outdated_fixed", "duplicate", "needs_human")
+DISPOSITIONS = ("fix", "false_positive", "outdated_fixed", "duplicate",
+                "defer", "needs_human")
+
+# Rulings from a human arrive as PR-thread replies; these markers make every
+# machine-authored comment self-identifying and every write idempotent.
+RULING_REQUEST_MARKER_PREFIX = "<!-- review-gates:ruling-request:"
+
+
+def ruling_request_marker(fingerprint: str, head: str) -> str:
+    return f"{RULING_REQUEST_MARKER_PREFIX}{fingerprint}:{head} -->"
+
+
+def reply_marker(fingerprint: str, head: str, reply_text: str) -> str:
+    """Keyed by (fingerprint, reviewed head, content digest): a retry never
+    reposts the SAME reply, but a different reply (e.g. a human ruling after
+    a machine FP claim at the same head) is never suppressed."""
+    digest = hashlib.sha256(reply_text.encode()).hexdigest()[:8]
+    return f"<!-- review-gates:reply:{fingerprint}:{head}:{digest} -->"
+
+
+def strip_mentions(text: str) -> str:
+    """Neutralize @-mentions in GitHub-bound interpolated text — an ask must
+    never summon a bot via a quoted excerpt."""
+    return re.sub(r"@(?=[A-Za-z0-9])", "", text)
 
 
 class GhError(RuntimeError):
@@ -98,6 +121,40 @@ def sanitize_text(text: str, limit: int) -> str:
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     cleaned = cleaned.replace("\r", "")
     return cleaned[:limit]
+
+
+# ------------------------------------------------------------- thread nodes
+
+NODES_QUERY = """query($ids:[ID!]!){ rateLimit{cost remaining}
+nodes(ids:$ids){ ... on PullRequestReviewThread {
+id isResolved isOutdated resolvedBy{login}
+comments(last:50){ totalCount nodes{
+databaseId isMinimized authorAssociation body createdAt lastEditedAt
+author{ login __typename ... on User { databaseId } } } } } } }"""
+
+
+def fetch_thread_nodes(fingerprints: list[str]) -> dict[str, dict]:
+    """Batched node(ids:) fetch — 1 rate-limit point per <=100 threads.
+    Returns {threadId: node}; unknown ids are silently absent (fail closed
+    at the caller: an absent thread can never satisfy anything). Only real
+    thread ids are sent: a synthetic fingerprint (od:…) in a batch would
+    error the whole GraphQL call and starve the valid threads beside it."""
+    thread_ids = [f for f in fingerprints if f.startswith("PRRT_")]
+    nodes: dict[str, dict] = {}
+    for i in range(0, len(thread_ids), 100):
+        chunk = thread_ids[i:i + 100]
+        args = ["api", "graphql", "-f", f"query={NODES_QUERY}"]
+        for fp in chunk:
+            args += ["-f", f"ids[]={fp}"]
+        data = gh_json(args)
+        for node in (data.get("data") or {}).get("nodes") or []:
+            if node and node.get("id"):
+                nodes[node["id"]] = node
+    return nodes
+
+
+def thread_comments(node: dict) -> list[dict]:
+    return ((node.get("comments") or {}).get("nodes")) or []
 
 
 # ---------------------------------------------------------------- loop-state

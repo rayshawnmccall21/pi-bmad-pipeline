@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-gates.escalation.v1",
+  "description": "Machine-readable side of a ruling-eligible approval-gate escalation (kind needs_human or survival). Written by approval_gate.py on exit 2, unlinked at the start of every final evaluation. request_rulings.py posts one ask per item per headSha; collect_rulings.py polls the same items.",
+  "type": "object",
+  "properties": {
+    "schema": { "const": "escalation.v1" },
+    "kind": { "enum": ["needs_human", "survival"] },
+    "generatedAt": { "type": "string" },
+    "storyId": { "type": "string" },
+    "headSha": { "type": "string" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fingerprint": { "type": "string" },
+          "path": { "type": ["string", "null"] },
+          "line": { "type": ["integer", "string", "null"] },
+          "reason": { "type": "string" },
+          "rootCommentId": { "type": ["integer", "null"] }
+        },
+        "required": ["fingerprint", "reason"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema", "kind", "generatedAt", "headSha", "items"],
+  "additionalProperties": false
+}

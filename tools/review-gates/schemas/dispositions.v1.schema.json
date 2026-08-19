@@ -35,6 +35,7 @@
               "false_positive",
               "outdated_fixed",
               "duplicate",
+              "defer",
               "needs_human"
             ]
           },
@@ -55,6 +56,19 @@
               }
             },
             "required": [],
+            "additionalProperties": false
+          },
+          "ruledBy": {
+            "description": "Present only on dispositions translated from an authenticated human /rule reply by collect_rulings.py. defer is valid only with ruledBy; a human-ruled false_positive resolves the thread.",
+            "type": "object",
+            "properties": {
+              "login": { "type": "string" },
+              "id": { "type": "integer" },
+              "commentId": { "type": "integer" },
+              "bodySha256": { "type": "string" },
+              "ruledAt": { "type": "string" }
+            },
+            "required": ["login", "id", "commentId", "bodySha256"],
             "additionalProperties": false
           }
         },

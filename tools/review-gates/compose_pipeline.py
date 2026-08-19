@@ -95,13 +95,27 @@ def review_tail(args: argparse.Namespace, scripts_dir: Path, *,
     pr_repo = ["--pr", str(args.pr), "--repo", args.repo]
     reconcile_args = ["--out", OUT_REL, "--evidence-dir", ".pi/artifacts/validation"]
     reconcile_args.append("--live" if args.live_reconcile else "--dry-run")
+    if args.auto_defer_advisory:
+        reconcile_args.append("--auto-defer-advisory")
+    classify_args = ["--out", OUT_REL,
+                     "--blocking-policy", args.blocking_policy]
+    if args.product_paths:
+        classify_args += ["--product-paths", args.product_paths]
     tail = [
+        # FIRST: clear threads whose code no longer exists, so the review
+        # requested by intake evaluates a clean slate. The reviewer only
+        # emits a verdict while reviewing and counts what is open at that
+        # instant — leftovers from earlier heads are why it never approves.
+        code_stage("review-sweep", "sweep_stale_threads.py",
+                   [*pr_repo, "--out", OUT_REL,
+                    "--live" if args.live_reconcile else "--dry-run"],
+                   timeout=600, scripts_dir=scripts_dir),
         code_stage("review-intake", "review_intake.py",
                    [*pr_repo, "--out", OUT_REL, "--story-id", args.story_id,
                     "--deadline", "1500"],
                    timeout=2400, scripts_dir=scripts_dir),
         code_stage("review-classify", "classify_findings.py",
-                   ["--out", OUT_REL], timeout=300, scripts_dir=scripts_dir),
+                   classify_args, timeout=300, scripts_dir=scripts_dir),
         code_stage("review-reconcile", "reconcile_threads.py",
                    reconcile_args, timeout=900, scripts_dir=scripts_dir),
         code_stage("review-approval-retry", "approval_gate.py",
@@ -210,6 +224,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--extensions", nargs="*", default=DEFAULT_EXTENSIONS)
     ap.add_argument("--live-reconcile", action="store_true")
+    ap.add_argument("--blocking-policy", choices=["all", "scoped"],
+                    default="all",
+                    help="scoped: block only on critical / major-in-product / "
+                         "security findings; the rest become advisory")
+    ap.add_argument("--product-paths", default=None,
+                    help="comma-separated product path prefixes (scoped policy)")
+    ap.add_argument("--auto-defer-advisory", action="store_true",
+                    help="reconcile closes advisory findings on-thread as "
+                         "accepted debt so the reviewer's queue can empty")
     ap.add_argument("--max-regressions", type=int, default=10)
     ap.add_argument("--validator",
                     default=str(REPO_ROOT / "skills/pi-bmad-pipeline-workflows/scripts/validate-rundef.mjs"))
