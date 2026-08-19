@@ -24,6 +24,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _common as c  # noqa: E402
 
+
+def gh_json_read(args: list, attempts: int = 3, backoff: float = 5.0):
+    """Read-only gh call with bounded retry — GitHub transients (404 bursts,
+    5xx, outage blips) must not spend a whole pipeline pass. Never used for
+    writes: retrying a write could duplicate replies or comments."""
+    last = None
+    for attempt in range(attempts):
+        try:
+            return c.gh_json(args)
+        except c.GhError as err:
+            last = err
+            if attempt < attempts - 1:
+                time.sleep(backoff * (attempt + 1))
+    raise last
+
 GRAPHQL_THREADS = """query($o:String!,$r:String!,$p:Int!,$c:String){
 repository(owner:$o,name:$r){pullRequest(number:$p){
 reviewThreads(first:100,after:$c){pageInfo{hasNextPage endCursor}
@@ -38,7 +53,7 @@ ACTIONABLE = re.compile(r"\*\*Actionable comments posted: (\d+)\*\*")
 
 
 def fetch_pr(repo: str, pr: int) -> dict:
-    raw = c.gh_json(["api", f"repos/{repo}/pulls/{pr}"])
+    raw = gh_json_read(["api", f"repos/{repo}/pulls/{pr}"])
     return {
         "repo": repo,
         "number": pr,
@@ -51,7 +66,7 @@ def fetch_pr(repo: str, pr: int) -> dict:
 
 
 def fetch_reviews(repo: str, pr: int) -> list[dict]:
-    pages = c.gh_json(
+    pages = gh_json_read(
         ["api", "--paginate", f"repos/{repo}/pulls/{pr}/reviews", "--slurp"]
     )
     reviews = [r for page in pages for r in page]
@@ -79,7 +94,7 @@ def fetch_threads(repo: str, pr: int) -> tuple[list[dict], int]:
                 "-f", f"o={owner}", "-f", f"r={name}", "-F", f"p={pr}"]
         if cursor:
             args += ["-f", f"c={cursor}"]
-        data = c.gh_json(args)
+        data = gh_json_read(args)
         block = data["data"]["repository"]["pullRequest"]["reviewThreads"]
         pages += 1
         for node in block["nodes"]:
@@ -201,10 +216,15 @@ def main(argv: list[str] | None = None) -> int:
             break
         # Auto-reviews pause after 5 reviewed commits; the loop is immune
         # only if it asks. Once per SHA, idempotent via loop-state.
+        #
+        # `review`, never `full review`: a full review re-scans the whole PR
+        # and resets the dedup window, so every round re-raises findings on
+        # code the round never touched (measured: 14 of 35 findings). The
+        # incremental form scopes the review to what changed.
         if (args.request_review and pr["headSha"] not in state["reRequested"]):
             try:
                 c.gh(["pr", "comment", str(args.pr), "--repo", args.repo,
-                      "--body", "@coderabbitai full review\n\n"
+                      "--body", "@coderabbitai review\n\n"
                       f"<!-- review-gates:{pr['headSha']} -->"])
                 state["reRequested"].append(pr["headSha"])
                 state["updatedAt"] = c.now_iso()
@@ -228,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- snapshot --------------------------------------------------------
     try:
-        full_review = c.gh_json(
+        full_review = gh_json_read(
             ["api", f"repos/{args.repo}/pulls/{args.pr}/reviews/{review['id']}"]
         )
         threads, pages = fetch_threads(args.repo, args.pr)

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-gates.rulings.v1",
+  "description": "Consumed-set of accepted human rulings, written only by collect_rulings.py. The ruler pin (login + immutable databaseId) is set on first acceptance and never silently changed. approval_gate.py reads it to enrich fix-ruled findings; request_rulings.py reads it to skip already-ruled threads. The append-only audit trail lives in ruling-receipts.jsonl beside it.",
+  "type": "object",
+  "properties": {
+    "schema": { "const": "rulings.v1" },
+    "ruler": {
+      "type": ["object", "null"],
+      "properties": {
+        "login": { "type": "string" },
+        "id": { "type": "integer" }
+      },
+      "required": ["login", "id"],
+      "additionalProperties": false
+    },
+    "rulings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "verb": { "enum": ["fix", "false_positive", "outdated_fixed", "duplicate", "defer"] },
+          "reason": { "type": "string" },
+          "commentId": { "type": "integer" },
+          "bodySha256": { "type": "string" },
+          "ruledAt": { "type": "string" }
+        },
+        "required": ["verb", "commentId", "bodySha256"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema", "rulings"],
+  "additionalProperties": false
+}

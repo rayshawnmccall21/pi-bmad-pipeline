@@ -74,13 +74,25 @@ def agent_stage(base: dict, story_id: str, extensions: list[str]) -> dict:
 
 def code_stage(stage_id: str, script: str, script_args: list[str], *,
                timeout: int, scripts_dir: Path,
+               shim: str | None = None,
                on_fail: str | None = None,
                findings_file: str | None = None) -> dict:
+    """Emit a code stage.
+
+    With a shim (the default for generated pipelines), the stage invokes a
+    repo-relative resolver with a bare script name, so the definition
+    carries no machine-specific path. The runner spawns code stages with
+    cwd = project root, which is what makes the relative command resolve.
+    Without one, the absolute path to scripts_dir is baked in — kept for
+    ad-hoc local generation only."""
+    command, prefix = ("uv", ["run", str(scripts_dir / script)])
+    if shim:
+        command, prefix = (shim, [script])
     stage: dict = {
         "id": stage_id,
         "kind": "code",
-        "command": "uv",
-        "args": ["run", str(scripts_dir / script), *script_args],
+        "command": command,
+        "args": [*prefix, *script_args],
         "timeout": timeout,
     }
     if on_fail is not None:
@@ -95,23 +107,39 @@ def review_tail(args: argparse.Namespace, scripts_dir: Path, *,
     pr_repo = ["--pr", str(args.pr), "--repo", args.repo]
     reconcile_args = ["--out", OUT_REL, "--evidence-dir", ".pi/artifacts/validation"]
     reconcile_args.append("--live" if args.live_reconcile else "--dry-run")
+    if args.auto_defer_advisory:
+        reconcile_args.append("--auto-defer-advisory")
+    classify_args = ["--out", OUT_REL,
+                     "--blocking-policy", args.blocking_policy]
+    if args.product_paths:
+        classify_args += ["--product-paths", args.product_paths]
     tail = [
+        # FIRST: clear threads whose code no longer exists, so the review
+        # requested by intake evaluates a clean slate. The reviewer only
+        # emits a verdict while reviewing and counts what is open at that
+        # instant — leftovers from earlier heads are why it never approves.
+        code_stage("review-sweep", "sweep_stale_threads.py",
+                   [*pr_repo, "--out", OUT_REL,
+                    "--live" if args.live_reconcile else "--dry-run"],
+                   timeout=600, scripts_dir=scripts_dir, shim=args.shim),
         code_stage("review-intake", "review_intake.py",
                    [*pr_repo, "--out", OUT_REL, "--story-id", args.story_id,
                     "--deadline", "1500"],
-                   timeout=2400, scripts_dir=scripts_dir),
+                   timeout=2400, scripts_dir=scripts_dir, shim=args.shim),
         code_stage("review-classify", "classify_findings.py",
-                   ["--out", OUT_REL], timeout=300, scripts_dir=scripts_dir),
+                   classify_args, timeout=300, scripts_dir=scripts_dir,
+                   shim=args.shim),
         code_stage("review-reconcile", "reconcile_threads.py",
-                   reconcile_args, timeout=900, scripts_dir=scripts_dir),
+                   reconcile_args, timeout=900, scripts_dir=scripts_dir,
+                   shim=args.shim),
         code_stage("review-approval-retry", "approval_gate.py",
                    [*pr_repo, "--out", OUT_REL, "--mode", "retry"],
-                   timeout=600, scripts_dir=scripts_dir,
+                   timeout=600, scripts_dir=scripts_dir, shim=args.shim,
                    on_fail="review-reconcile"),
         code_stage("review-approval", "approval_gate.py",
                    [*pr_repo, "--out", OUT_REL, "--mode", "final",
                     "--findings-out", FINDINGS_REL],
-                   timeout=1200, scripts_dir=scripts_dir,
+                   timeout=1200, scripts_dir=scripts_dir, shim=args.shim,
                    on_fail=macro_target, findings_file=FINDINGS_REL),
     ]
     if macro_target is None:
@@ -139,7 +167,7 @@ def compose(args: argparse.Namespace) -> tuple[dict, dict]:
 
     docs_verify = code_stage(
         "docs-verify", "verify_docs.py", ["--out", ".pi/artifacts/docs"],
-        timeout=300, scripts_dir=scripts_dir, on_fail="docs",
+        timeout=300, scripts_dir=scripts_dir, shim=args.shim, on_fail="docs",
         findings_file=".pi/artifacts/docs/findings.json",
     )
     # Severity-scoped bar: code-review-lenient passes on 0 critical + 0 high
@@ -209,7 +237,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scripts-dir", default=str(TOOLS_DIR))
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--extensions", nargs="*", default=DEFAULT_EXTENSIONS)
+    ap.add_argument("--shim", default=".pi/bmad/scripts/review-gate.sh",
+                    help="repo-relative resolver invoked by code stages; "
+                         "pass empty to bake absolute script paths in")
     ap.add_argument("--live-reconcile", action="store_true")
+    ap.add_argument("--blocking-policy", choices=["all", "scoped"],
+                    default="all",
+                    help="scoped: block only on critical / major-in-product / "
+                         "security findings; the rest become advisory")
+    ap.add_argument("--product-paths", default=None,
+                    help="comma-separated product path prefixes (scoped policy)")
+    ap.add_argument("--auto-defer-advisory", action="store_true",
+                    help="reconcile closes advisory findings on-thread as "
+                         "accepted debt so the reviewer's queue can empty")
     ap.add_argument("--max-regressions", type=int, default=10)
     ap.add_argument("--validator",
                     default=str(REPO_ROOT / "skills/pi-bmad-pipeline-workflows/scripts/validate-rundef.mjs"))

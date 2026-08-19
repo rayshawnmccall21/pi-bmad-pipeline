@@ -22,6 +22,56 @@ def load(name: str):
     return json.loads((FIX / name).read_text())
 
 
+def record(name: str, obj) -> None:
+    with open(FIX / name, "a") as fh:
+        fh.write(json.dumps(obj) + "\n")
+
+
+# --- ruling-loop seams (must precede the generic handlers) -------------------
+
+if args[:2] == ["api", "graphql"] and "resolveReviewThread" in joined:
+    thread_id = next((a.split("=", 1)[1] for a in args if a.startswith("t=")), "")
+    record("resolved.jsonl", {"threadId": thread_id})
+    out({"data": {"resolveReviewThread":
+                  {"thread": {"id": thread_id, "isResolved": True}}}})
+
+if args[:2] == ["api", "graphql"] and "nodes(ids:" in joined:
+    ids = [a.split("=", 1)[1] for a in args if a.startswith("ids[]=")]
+    table = load("node-threads.json")
+    nodes = []
+    for i in ids:
+        t = table.get(i)
+        if t is None:
+            nodes.append(None)
+            continue
+        comments = t.get("comments", [])
+        nodes.append({
+            "id": i,
+            "isResolved": t.get("isResolved", False),
+            "isOutdated": t.get("isOutdated", False),
+            "resolvedBy": t.get("resolvedBy"),
+            "comments": {"totalCount": len(comments), "nodes": comments},
+        })
+    out({"data": {"rateLimit": {"cost": 1, "remaining": 4999}, "nodes": nodes}})
+
+if (args[:1] == ["api"] and len(args) > 1 and "/pulls/" in args[1]
+        and args[1].endswith("/comments")
+        and any(a.startswith("body=") for a in args)):
+    body = next(a[5:] for a in args if a.startswith("body="))
+    reply_to = next((a.split("=", 1)[1] for a in args
+                     if a.startswith("in_reply_to=")), None)
+    prior = FIX / "posted-comments.jsonl"
+    n = sum(1 for _ in prior.open()) if prior.exists() else 0
+    record("posted-comments.jsonl", {"body": body, "in_reply_to": reply_to})
+    out({"id": 990000 + n, "body": body})
+
+if args[:2] == ["pr", "comment"]:
+    record("pr-comments.jsonl", {"args": args})
+    out("")
+
+if args[:1] == ["api"] and len(args) > 1 and args[1].startswith("users/"):
+    out(load("ruler.json"))
+
 if args[:1] == ["api"] and "graphql" in args:
     # reviewThreads page — single page from fixture, GraphQL node shape.
     data = load("threads.json")

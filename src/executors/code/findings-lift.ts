@@ -16,13 +16,13 @@ import { resolve as resolvePath } from "node:path";
 import type { CompiledCodeStage } from "../../rundef/index.js";
 
 /** Maximum findings lifted from one file. */
-export const FINDINGS_MAX_COUNT = 50;
+const FINDINGS_MAX_COUNT = 50;
 
 /** Maximum characters per formatted finding. */
-export const FINDINGS_MAX_ITEM_CHARS = 2048;
+const FINDINGS_MAX_ITEM_CHARS = 2048;
 
 /** Maximum total characters across all lifted findings. */
-export const FINDINGS_MAX_TOTAL_CHARS = 65536;
+const FINDINGS_MAX_TOTAL_CHARS = 65536;
 
 /** Raw-file ceiling before parsing is attempted (guards memory, not content). */
 const RAW_FILE_CEILING_MULTIPLIER = 4;
@@ -65,16 +65,31 @@ export interface LiftFindingsRequest {
  * ```
  */
 export const liftFindings = (request: LiftFindingsRequest): readonly string[] | undefined => {
-  const file = request.stage.findingsFile;
-  if (file === undefined || request.exitCode !== 1 || request.timedOut || request.aborted) {
+  const file = liftablePath(request);
+  if (file === undefined) {
     return undefined;
   }
   const entries = readFindingEntries(resolvePath(request.projectRoot, file));
-  if (entries === undefined) {
+  const lifted = entries === undefined ? [] : collectFormatted(entries);
+  return lifted.length === 0 ? undefined : Object.freeze(lifted);
+};
+
+/**
+ * The findings file this settle may lift from.
+ *
+ * Only a clean gate-failure lifts: exit 1 with a declared file. A timeout
+ * or an abort means the stage never reached a verdict, so whatever the file
+ * holds describes an earlier run and must not reach a prompt.
+ *
+ * @param request - Stage, project root, and settle flags.
+ *
+ * @returns The declared findings path, or undefined when nothing may lift.
+ */
+const liftablePath = (request: LiftFindingsRequest): string | undefined => {
+  if (request.exitCode !== 1 || request.timedOut || request.aborted) {
     return undefined;
   }
-  const lifted = collectFormatted(entries);
-  return lifted.length === 0 ? undefined : Object.freeze(lifted);
+  return request.stage.findingsFile;
 };
 
 const readFindingEntries = (path: string): readonly unknown[] | undefined => {
@@ -131,5 +146,4 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
-const sanitize = (text: string): string =>
-  text.replace(CONTROL_CHARS, "").replace(/\r/g, "");
+const sanitize = (text: string): string => text.replace(CONTROL_CHARS, "").replace(/\r/g, "");

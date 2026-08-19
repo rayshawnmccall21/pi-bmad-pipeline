@@ -34,19 +34,10 @@
           "type": "boolean"
         },
         "mergeableState": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         }
       },
-      "required": [
-        "repo",
-        "number",
-        "headSha",
-        "state",
-        "isDraft"
-      ],
+      "required": ["repo", "number", "headSha", "state", "isDraft"],
       "additionalProperties": false
     },
     "review": {
@@ -62,27 +53,16 @@
           "type": "string"
         },
         "submittedAt": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "matchesHead": {
           "type": "boolean"
         },
         "advertisedActionable": {
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": ["integer", "null"]
         }
       },
-      "required": [
-        "id",
-        "state",
-        "commitId",
-        "matchesHead"
-      ],
+      "required": ["id", "state", "commitId", "matchesHead"],
       "additionalProperties": false
     },
     "threads": {
@@ -100,22 +80,13 @@
             "type": "boolean"
           },
           "path": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           },
           "line": {
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": ["integer", "null"]
           },
           "author": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           },
           "excerpt": {
             "type": "string"
@@ -127,11 +98,7 @@
             }
           }
         },
-        "required": [
-          "fingerprint",
-          "isResolved",
-          "isOutdated"
-        ],
+        "required": ["fingerprint", "isResolved", "isOutdated"],
         "additionalProperties": false
       }
     },
@@ -156,10 +123,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "fingerprint",
-          "file"
-        ],
+        "required": ["fingerprint", "file"],
         "additionalProperties": false
       }
     },
@@ -179,22 +143,10 @@
           "type": "integer"
         }
       },
-      "required": [
-        "threads",
-        "unresolved",
-        "outsideDiff",
-        "pages"
-      ],
+      "required": ["threads", "unresolved", "outsideDiff", "pages"],
       "additionalProperties": false
     }
   },
-  "required": [
-    "schema",
-    "pr",
-    "review",
-    "threads",
-    "outsideDiff",
-    "counts"
-  ],
+  "required": ["schema", "pr", "review", "threads", "outsideDiff", "counts"],
   "additionalProperties": false
 }

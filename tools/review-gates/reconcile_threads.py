@@ -64,16 +64,89 @@ def test_ran_green(test_id: str, evidence_dir: Path) -> bool:
     return False
 
 
-def plan_actions(queue: dict, dispositions: list[dict],
-                 evidence_dir: Path) -> list[dict]:
+AUTO_DEFER_REPLY = (
+    "Recorded as accepted debt by the review policy — this finding has **not "
+    "been fixed** and has not been judged incorrect.\n\n"
+    "It falls below the merge-blocking bar for this repository "
+    "({reason}). Blocking is scoped to critical defects, major defects in "
+    "product code, and anything in the security category; everything else "
+    "is tracked as debt rather than gating the merge.\n\n"
+    "Reopen this thread or reply `/rule fix — <instruction>` if you want it "
+    "addressed in this PR."
+)
+
+
+def plan_auto_defer(queue: dict, covered: set[str],
+                    roots: dict[str, int]) -> list[dict]:
+    """Close advisory findings on-thread as accepted debt.
+
+    Deliberately honest: the reply claims neither a fix nor a false
+    positive, so the audit trail says exactly what happened. Findings the
+    human already ruled are skipped — a ruling outranks the policy."""
+    actions = []
+    for item in queue.get("advisory") or []:
+        fp = item["fingerprint"]
+        if fp in covered or not fp.startswith("PRRT_"):
+            continue
+        entry = {
+            "fingerprint": fp,
+            "action": "auto_defer",
+            "reason": item.get("advisoryReason", "below the blocking bar"),
+            "reply": AUTO_DEFER_REPLY.format(
+                reason=item.get("advisoryReason", "below the blocking bar")),
+        }
+        if roots.get(fp):
+            entry["commentId"] = roots[fp]
+        actions.append(entry)
+    return actions
+
+
+def plan_actions(queue: dict, dispositions: list[dict], evidence_dir: Path,
+                 root_comments: dict[str, int] | None = None) -> list[dict]:
     blocking = {i["fingerprint"]: i for i in queue["blocking"]}
+    # A disposition is honoured for any finding the reviewer raised, not just
+    # the blocking subset — the owner may rule on an advisory finding, and a
+    # ruling always outranks the policy that demoted it.
+    adjudicable = dict(blocking)
+    adjudicable.update({i["fingerprint"]: i
+                        for i in queue.get("advisory") or []})
+    roots = root_comments or {}
     covered: set[str] = set()
     actions: list[dict] = []
+
+    # Fingerprints a machine `duplicate` may point at: already non-blocking,
+    # closed by a verified claim in this batch, or closed by a human ruling.
+    # Without this check, dispositioning everything `duplicate` of a bogus
+    # canonical would resolve every thread with zero evidence.
+    non_blocking_fps = {i["fingerprint"]
+                        for i in queue.get("nonBlocking") or []}
+    verified_closers: set[str] = set()
+    for d in dispositions:
+        dfp, dkind = d.get("fingerprint"), d.get("disposition")
+        dev = d.get("evidence") or {}
+        if d.get("ruledBy") and dkind in ("false_positive", "outdated_fixed",
+                                          "duplicate", "defer"):
+            verified_closers.add(dfp)
+        elif dkind == "fix" and commit_exists(dev.get("commitSha", "")) \
+                and test_ran_green(dev.get("testId", ""), evidence_dir):
+            verified_closers.add(dfp)
+        elif dkind == "outdated_fixed" and (
+                test_ran_green(dev.get("testId", ""), evidence_dir)
+                or commit_exists(dev.get("commitSha", ""))):
+            verified_closers.add(dfp)
+
+    def act(fp: str, **fields) -> None:
+        entry = {"fingerprint": fp, **fields}
+        if "reply" in entry and roots.get(fp):
+            entry["commentId"] = roots[fp]
+        actions.append(entry)
+
     for d in dispositions:
         fp = d.get("fingerprint")
         kind = d.get("disposition")
         ev = d.get("evidence") or {}
-        if fp not in blocking or fp in covered or kind not in c.DISPOSITIONS:
+        ruled = d.get("ruledBy")
+        if fp not in adjudicable or fp in covered or kind not in c.DISPOSITIONS:
             actions.append({"fingerprint": fp, "action": "skip_unknown",
                             "reason": "not a blocking fingerprint or bad kind"})
             continue
@@ -81,29 +154,62 @@ def plan_actions(queue: dict, dispositions: list[dict],
         if kind == "fix":
             ok = commit_exists(ev.get("commitSha", "")) and \
                 test_ran_green(ev.get("testId", ""), evidence_dir)
-            actions.append({
-                "fingerprint": fp,
-                "action": "reply_and_resolve" if ok else "skip_unverified",
-                "reason": None if ok else "commit or green-test evidence failed",
-                "reply": f"Fixed in {ev.get('commitSha', '')[:10]} — regression "
-                         f"test `{ev.get('testId')}` executed green this cycle.",
-            })
+            act(fp,
+                action="reply_and_resolve" if ok else "skip_unverified",
+                reason=None if ok else "commit or green-test evidence failed",
+                reply=f"Fixed in {ev.get('commitSha', '')[:10]} — regression "
+                      f"test `{ev.get('testId')}` executed green this cycle.")
         elif kind == "false_positive":
-            actions.append({
-                "fingerprint": fp, "action": "reply_without_resolve",
-                "reply": f"We believe this is a false positive: {ev.get('rationale', '')} "
-                         "@coderabbitai please re-verify and resolve if you agree.",
-            })
+            if ruled:
+                # The owner is the final arbiter: a human FP ruling closes
+                # the thread; only machine FPs stay open for the bot.
+                act(fp, action="reply_and_resolve",
+                    reply="Human ruling: false positive — "
+                          f"{ev.get('rationale', '')}")
+            else:
+                act(fp, action="reply_without_resolve",
+                    reply="We believe this is a false positive: "
+                          f"{ev.get('rationale', '')} "
+                          "@coderabbitai please re-verify and resolve "
+                          "if you agree.")
         elif kind == "outdated_fixed":
-            actions.append({
-                "fingerprint": fp, "action": "reply_and_resolve",
-                "reply": f"Already absent at current head: {ev.get('rationale', '')}",
-            })
+            if ruled:
+                act(fp, action="reply_and_resolve",
+                    reply="Human ruling: outdated/fixed — "
+                          f"{ev.get('rationale', '')}")
+            else:
+                ok = test_ran_green(ev.get("testId", ""), evidence_dir) \
+                    or commit_exists(ev.get("commitSha", ""))
+                act(fp,
+                    action="reply_and_resolve" if ok else "skip_unverified",
+                    reason=None if ok else "outdated_fixed needs a green "
+                                          "testId or commitSha evidence",
+                    reply=f"Already absent at current head: "
+                          f"{ev.get('rationale', '')}")
         elif kind == "duplicate":
-            actions.append({
-                "fingerprint": fp, "action": "reply_and_resolve",
-                "reply": f"Duplicate of {ev.get('canonicalFingerprint', '?')}.",
-            })
+            canon = ev.get("canonicalFingerprint", "")
+            if ruled:
+                act(fp, action="reply_and_resolve",
+                    reply="Human ruling: duplicate of "
+                          f"{canon or ev.get('rationale', '?')}.")
+            else:
+                ok = bool(canon) and (canon in non_blocking_fps
+                                      or canon in verified_closers)
+                act(fp,
+                    action="reply_and_resolve" if ok else "skip_unverified",
+                    reason=None if ok else "duplicate canonical is not a "
+                                          "covered or resolved fingerprint",
+                    reply=f"Duplicate of {canon or '?'}.")
+        elif kind == "defer":
+            if ruled:
+                act(fp, action="reply_and_resolve",
+                    reply="Human ruling: deferred — "
+                          f"{ev.get('rationale', '')} (recorded as debt).")
+            else:
+                # defer is human-only; a model shelving its homework is a
+                # human question, not a resolution.
+                actions.append({"fingerprint": fp, "action": "needs_human",
+                                "reason": "defer is a human-only disposition"})
         else:  # needs_human
             actions.append({"fingerprint": fp, "action": "needs_human",
                             "reason": ev.get("rationale", "")})
@@ -113,22 +219,54 @@ def plan_actions(queue: dict, dispositions: list[dict],
     return actions
 
 
-def apply_live(actions: list[dict], state: dict, repo: str, pr: int) -> list[str]:
+def apply_live(actions: list[dict], state: dict, repo: str, pr: int,
+               head: str = "") -> list[str]:
     """Apply reply/resolve actions. Returns fingerprints that FAILED to
-    apply (they become pendingUnapplied — the retry gate's territory)."""
+    apply (they become pendingUnapplied — the retry gate's territory).
+
+    Replies carry an idempotence marker keyed by (fingerprint, reviewed
+    head): a retry after a partial failure re-verifies resolution but never
+    posts the same reply twice. The reviewed head (queue.headSha) is used —
+    NOT expectedHead, which the re-request step advances after a push."""
+    actionable = [a for a in actions
+                  if a["action"] in {"reply_and_resolve",
+                                     "reply_without_resolve", "auto_defer"}]
+    already_replied: set[str] = set()
+    with_root = [a for a in actionable if a.get("commentId")]
+    if with_root:
+        try:
+            nodes = c.fetch_thread_nodes([a["fingerprint"] for a in with_root])
+        except c.GhError as err:
+            print(f"review-gates: reply precheck failed ({err}) — "
+                  "failing closed, no replies this pass", file=sys.stderr)
+            return [a["fingerprint"] for a in actionable]
+        for a in with_root:
+            marker = c.reply_marker(a["fingerprint"], head, a["reply"])
+            comments = c.thread_comments(nodes.get(a["fingerprint"]) or {})
+            if any(marker in (cm.get("body") or "") for cm in comments):
+                already_replied.add(a["fingerprint"])
+
     failed: list[str] = []
-    for action in actions:
+    for action in actionable:
         fp = action["fingerprint"]
         kind = action["action"]
-        if kind not in {"reply_and_resolve", "reply_without_resolve"}:
+        comment_id = action.get("commentId")
+        if not comment_id:
+            # No known root comment: refusing to resolve (or FP-reply)
+            # without the on-thread evidence text is the fail-closed side
+            # of reply-then-resolve.
+            print(f"review-gates: no root comment known for {fp[:20]} — "
+                  "refusing to act without a reply", file=sys.stderr)
+            failed.append(fp)
             continue
         try:
-            comment_id = action.get("commentId")
-            if comment_id:
+            if fp not in already_replied:
+                body = (f"{action['reply']}\n\n"
+                        f"{c.reply_marker(fp, head, action['reply'])}")
                 c.gh(["api", f"repos/{repo}/pulls/{pr}/comments",
-                      "-f", f"body={action['reply']}",
+                      "-f", f"body={body}",
                       "-F", f"in_reply_to={comment_id}"])
-            if kind == "reply_and_resolve":
+            if kind in {"reply_and_resolve", "auto_defer"}:
                 out = c.gh_json(["api", "graphql",
                                  "-f", f"query={RESOLVE_MUTATION}",
                                  "-f", f"t={fp}"])
@@ -167,6 +305,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dispositions", default=None)
     ap.add_argument("--evidence-dir", default=".pi/artifacts/validation")
     ap.add_argument("--allow-detached", action="store_true")
+    ap.add_argument("--auto-defer-advisory", action="store_true",
+                    help="close advisory findings on-thread as accepted debt "
+                         "(off by default: machine-resolving threads is "
+                         "opt-in)")
     args = ap.parse_args(argv)
     out_dir = Path(args.out)
 
@@ -183,9 +325,24 @@ def main(argv: list[str] | None = None) -> int:
         except SystemExit as err:
             return int(err.code)
 
+    roots: dict[str, int] = {}
+    ledger_path = out_dir / "ledger.json"
+    if ledger_path.exists():
+        try:
+            ledger = json.loads(ledger_path.read_text())
+            roots = {t["fingerprint"]: (t.get("commentIds") or [None])[0]
+                     for t in ledger.get("threads") or []
+                     if (t.get("commentIds") or [None])[0]}
+        except (json.JSONDecodeError, KeyError, TypeError):
+            roots = {}
+
     disp_path = Path(args.dispositions or out_dir / "dispositions.json")
     if not disp_path.exists():
         cycles = (state.get("reviewCycles") or {}).get("count", 0) if state else 0
+        # Advisory findings are policy-determined, not disposition-determined:
+        # they are cleared on every pass, including the cycle-0 one.
+        defers = (plan_auto_defer(queue, set(), roots)
+                  if args.auto_defer_advisory else [])
         if cycles == 0:
             # First entry into the tail: dev-story has never regressed, so
             # no dispositions can exist yet. Nothing to reconcile — the
@@ -194,18 +351,27 @@ def main(argv: list[str] | None = None) -> int:
             plan = {
                 "schema": "reconcile-plan.v1",
                 "generatedAt": c.now_iso(),
-                "dryRun": True,
+                "dryRun": args.dry_run,
+                "queueRef": c.content_ref(queue_path),
                 "actions": [{"fingerprint": i["fingerprint"],
                              "action": "uncovered"}
-                            for i in queue["blocking"]],
+                            for i in queue["blocking"]] + defers,
                 "counts": {"needsHuman": 0,
-                           "uncovered": len(queue["blocking"])},
+                           "uncovered": len(queue["blocking"]),
+                           "autoDeferred": len(defers)},
             }
             c.write_json_atomic(out_dir / "reconcile-plan.json", plan)
             print("review-gates: cycle 0 — no dispositions expected yet; "
                   f"{len(queue['blocking'])} findings await the first "
-                  "regression")
-            return c.EXIT_OK
+                  f"regression ({len(defers)} advisory auto-deferred)")
+            if args.dry_run or not defers:
+                return c.EXIT_OK
+            failed = apply_live(defers, state, state["repo"], state["pr"],
+                                head=queue.get("headSha", ""))
+            state["pendingUnapplied"] = failed
+            state["updatedAt"] = c.now_iso()
+            c.loop_state_save(out_dir, state)
+            return c.EXIT_ESCALATE if failed else c.EXIT_OK
         # Cycle >= 1: dev-story ran and owed us dispositions. Fail closed.
         plan = {
             "schema": "reconcile-plan.v1",
@@ -213,8 +379,9 @@ def main(argv: list[str] | None = None) -> int:
             "dryRun": True,
             "actions": [{"fingerprint": i["fingerprint"], "action": "needs_human",
                          "reason": "no dispositions.json"}
-                        for i in queue["blocking"]],
-            "counts": {"needsHuman": len(queue["blocking"]), "uncovered": 0},
+                        for i in queue["blocking"]] + defers,
+            "counts": {"needsHuman": len(queue["blocking"]), "uncovered": 0,
+                       "autoDeferred": len(defers)},
         }
         c.write_json_atomic(out_dir / "reconcile-plan.json", plan)
         print("review-gates: dispositions.json missing — all blocking findings "
@@ -230,13 +397,20 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return c.EXIT_FAIL
 
-    actions = plan_actions(queue, dispositions, Path(args.evidence_dir))
+    actions = plan_actions(queue, dispositions, Path(args.evidence_dir), roots)
+    if args.auto_defer_advisory:
+        # A human ruling outranks the policy: never auto-defer a finding the
+        # owner already dispositioned.
+        ruled = {a["fingerprint"] for a in actions
+                 if a["action"] != "uncovered"}
+        actions += plan_auto_defer(queue, ruled, roots)
     counts = {
         "replyAndResolve": sum(1 for a in actions if a["action"] == "reply_and_resolve"),
         "replyWithoutResolve": sum(1 for a in actions if a["action"] == "reply_without_resolve"),
         "skippedUnverified": sum(1 for a in actions if a["action"] == "skip_unverified"),
         "needsHuman": sum(1 for a in actions if a["action"] == "needs_human"),
         "uncovered": sum(1 for a in actions if a["action"] == "uncovered"),
+        "autoDeferred": sum(1 for a in actions if a["action"] == "auto_defer"),
     }
     plan = {
         "schema": "reconcile-plan.v1",
@@ -251,7 +425,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         return c.EXIT_OK
 
-    failed = apply_live(actions, state, state["repo"], state["pr"])
+    failed = apply_live(actions, state, state["repo"], state["pr"],
+                        head=queue.get("headSha", ""))
     state["pendingUnapplied"] = failed
     state["updatedAt"] = c.now_iso()
     if not fenced_push(state):
@@ -261,10 +436,20 @@ def main(argv: list[str] | None = None) -> int:
         return c.EXIT_ESCALATE
     code, head = c.git(["rev-parse", "HEAD"])
     if code == 0 and head not in state["reRequested"]:
-        c.gh(["pr", "comment", str(state["pr"]), "--repo", state["repo"],
-              "--body", f"@coderabbitai full review\n\n<!-- review-gates:{head} -->"])
-        state["reRequested"].append(head)
-        state["expectedHead"] = head
+        try:
+            c.gh(["pr", "comment", str(state["pr"]), "--repo", state["repo"],
+                  "--body",
+                  f"@coderabbitai review\n\n<!-- review-gates:{head} -->"])
+            state["reRequested"].append(head)
+            state["expectedHead"] = head
+        except c.GhError as err:
+            # Persist what already happened (pendingUnapplied, reRequested)
+            # before surfacing the failure — an uncaught error here would
+            # lose the ledger of applied writes AND repeat this comment.
+            print(f"review-gates: re-review request failed: {err}",
+                  file=sys.stderr)
+            c.loop_state_save(out_dir, state)
+            return c.EXIT_ESCALATE
     c.loop_state_save(out_dir, state)
     return c.EXIT_ESCALATE if failed else c.EXIT_OK
 

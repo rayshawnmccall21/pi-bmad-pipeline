@@ -33,26 +33,17 @@
             "type": "string"
           },
           "path": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           },
           "line": {},
           "excerpt": {
             "type": "string"
           },
           "author": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           }
         },
-        "required": [
-          "fingerprint",
-          "rule"
-        ],
+        "required": ["fingerprint", "rule"],
         "additionalProperties": false
       }
     },
@@ -74,26 +65,17 @@
             "type": "string"
           },
           "path": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           },
           "line": {},
           "excerpt": {
             "type": "string"
           },
           "author": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           }
         },
-        "required": [
-          "fingerprint",
-          "rule"
-        ],
+        "required": ["fingerprint", "rule"],
         "additionalProperties": false
       }
     },
@@ -115,26 +97,17 @@
             "type": "string"
           },
           "path": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           },
           "line": {},
           "excerpt": {
             "type": "string"
           },
           "author": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           }
         },
-        "required": [
-          "fingerprint",
-          "rule"
-        ],
+        "required": ["fingerprint", "rule"],
         "additionalProperties": false
       }
     },
@@ -156,26 +129,17 @@
             "type": "string"
           },
           "path": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           },
           "line": {},
           "excerpt": {
             "type": "string"
           },
           "author": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           }
         },
-        "required": [
-          "fingerprint",
-          "rule"
-        ],
+        "required": ["fingerprint", "rule"],
         "additionalProperties": false
       }
     },
@@ -183,10 +147,7 @@
       "type": "object",
       "properties": {
         "advertisedActionable": {
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": ["integer", "null"]
         },
         "reviewState": {
           "type": "string"

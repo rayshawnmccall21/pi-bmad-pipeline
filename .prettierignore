@@ -7,3 +7,12 @@ pr-diagram-out
 
 # Agent runtime artifacts, never formatted (owned by subagents at runtime).
 .pi-subagents/
+
+# Frozen API captures used as a test corpus — byte-for-byte fidelity to
+# what GitHub returned matters more than formatting.
+tools/review-gates/fixtures/
+
+# Local caches and tool scratch — never part of the repo.
+.pytest_cache/
+**/.pytest_cache/
+.playwright-mcp/

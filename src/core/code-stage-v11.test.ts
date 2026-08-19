@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { checkStageDecision } from "./stage-decision.js";
 
-const stageAt = <T,>(stages: readonly T[], index: number): T => {
+const stageAt = <T>(stages: readonly T[], index: number): T => {
   const stage = stages[index];
   if (stage === undefined) {
     throw new Error(`missing stage at ${String(index)}`);
@@ -198,8 +198,13 @@ describe("v1.1 executor: findings file lift on exit 1", () => {
     const result = await runStage({
       schema: "stage-findings.v1",
       findings: [
-        { fingerprint: "PRRT_x", severity: "high", file: "src/plan.ts", line: 214,
-          text: "race in updatePlan" },
+        {
+          fingerprint: "PRRT_x",
+          severity: "high",
+          file: "src/plan.ts",
+          line: 214,
+          text: "race in updatePlan",
+        },
       ],
     });
     expect(result.exitCode).toBe(1);
@@ -221,7 +226,10 @@ describe("v1.1 executor: findings file lift on exit 1", () => {
 
   it("does not lift on exit 0", async () => {
     const result = await runStage(
-      { schema: "stage-findings.v1", findings: [{ fingerprint: "f", severity: "high", text: "x" }] },
+      {
+        schema: "stage-findings.v1",
+        findings: [{ fingerprint: "f", severity: "high", text: "x" }],
+      },
       0,
     );
     expect(result.exitCode).toBe(0);
@@ -232,7 +240,9 @@ describe("v1.1 executor: findings file lift on exit 1", () => {
     const result = await runStage({
       schema: "stage-findings.v1",
       findings: Array.from({ length: 80 }, (_, i) => ({
-        fingerprint: `f${String(i)}`, severity: "high", text: `finding ${String(i)}`,
+        fingerprint: `f${String(i)}`,
+        severity: "high",
+        text: `finding ${String(i)}`,
       })),
     });
     expect(result.findings).toHaveLength(50);
