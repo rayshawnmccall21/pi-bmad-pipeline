@@ -14,6 +14,10 @@ import {
   type PayloadGateContext,
   type PayloadGateResult,
 } from "../rundef/index.js";
+import {
+  CODE_REVIEW_CRITICAL_ONLY_GATE_NAME,
+  codeReviewCriticalOnlyGate,
+} from "./code-review-critical-only.js";
 import { codeReviewLenientGate } from "./code-review-lenient.js";
 
 /** Built-in payload gate name for E2E verification. */
@@ -119,6 +123,7 @@ export function registerBmadPayloadGates(): RegisterBmadPayloadGatesResult {
   // Register lenient code-review gate — passes on 0 critical + 0 high
   // Use gate: code-review-lenient in pipeline YAML to use this instead of the strict gate
   registerPayloadGate("code-review-lenient", codeReviewLenientGate);
+  registerPayloadGate(CODE_REVIEW_CRITICAL_ONLY_GATE_NAME, codeReviewCriticalOnlyGate);
   return Object.freeze({
     registered: Object.freeze([E2E_VERIFY_PAYLOAD_GATE_NAME, CODE_REVIEW_PAYLOAD_GATE_NAME]),
   });
@@ -156,7 +161,7 @@ const codeReviewApprovalResult = (payload: Record<string, unknown>): PayloadGate
   const contradictory =
     !isRecord(counts) ||
     CODE_REVIEW_SEVERITIES.some((severity) => countOf(counts, severity) !== 0) ||
-    stringList(payload, "findings").length !== 0;
+    (Array.isArray(payload["findings"]) && payload["findings"].length !== 0);
   return contradictory
     ? failedResult("Code review approval contradicts reported findings.", severityFindings(payload))
     : Object.freeze({ passed: true, reason: "Code review approved." });
@@ -199,6 +204,36 @@ const CODE_REVIEW_V2_PAYLOAD_KEYS = Object.freeze([
   "payloadVersion",
 ] as const);
 
+interface StructuredFindingLocation {
+  readonly path: string;
+  readonly line: number;
+}
+
+interface StructuredFinding {
+  readonly id: string;
+  readonly severity: (typeof CODE_REVIEW_SEVERITIES)[number];
+  readonly title: string;
+  readonly locations: readonly StructuredFindingLocation[];
+  readonly requiredAction: string;
+}
+
+const STRUCTURED_FINDING_KEYS = Object.freeze([
+  "id",
+  "severity",
+  "title",
+  "locations",
+  "requiredAction",
+] as const);
+const STRUCTURED_FINDING_LOCATION_KEYS = Object.freeze(["path", "line"] as const);
+const MAX_STRUCTURED_FINDINGS = 50;
+const MAX_STRUCTURED_FINDING_LOCATIONS = 20;
+const MAX_STRUCTURED_FINDING_TITLE_CODE_POINTS = 1024;
+const MAX_STRUCTURED_FINDING_REQUIRED_ACTION_CODE_POINTS = 2048;
+const MAX_STRUCTURED_FINDING_LOCATION_PATH_CODE_POINTS = 512;
+const MAX_STRUCTURED_FINDING_TITLE_UTF8_BYTES = 2048;
+const MAX_STRUCTURED_FINDING_REQUIRED_ACTION_UTF8_BYTES = 4096;
+const MAX_CODE_REVIEW_V2_SERIALIZED_UTF8_BYTES = 262_144;
+
 const isValidE2ePassPayload = (payload: Record<string, unknown>): boolean =>
   hasExactKeys(payload, E2E_VERIFY_PAYLOAD_KEYS) &&
   isNonEmptyString(payload["storyId"]) &&
@@ -215,7 +250,8 @@ const isValidCodeReviewApprovalPayload = (payload: Record<string, unknown>): boo
     typeof payload["autoFixed"] === "boolean" &&
     isRecord(counts) &&
     hasExactKeys(counts, CODE_REVIEW_SEVERITIES) &&
-    CODE_REVIEW_SEVERITIES.every((severity) => isNonNegativeInteger(counts[severity]))
+    CODE_REVIEW_SEVERITIES.every((severity) => isNonNegativeInteger(counts[severity])) &&
+    structuredFindingsMatchCounts(payload, counts)
   );
 };
 
@@ -225,7 +261,7 @@ const isValidCodeReviewApprovalPayload = (payload: Record<string, unknown>): boo
  * @param payload - Validated code-review workflow payload.
  *
  * @returns True for the exact v1 four-key shape or the exact v2 six-key
- * shape with the canonical version stamp and a string-list findings field.
+ * shape with the canonical version stamp and bounded structured findings.
  */
 const isApprovalShape = (payload: Record<string, unknown>): boolean => {
   if (hasExactKeys(payload, CODE_REVIEW_PAYLOAD_KEYS)) {
@@ -234,7 +270,83 @@ const isApprovalShape = (payload: Record<string, unknown>): boolean => {
   return (
     hasExactKeys(payload, CODE_REVIEW_V2_PAYLOAD_KEYS) &&
     payload["payloadVersion"] === CODE_REVIEW_PAYLOAD_VERSION_V2 &&
-    isStringList(payload["findings"])
+    hasProducerV2Bounds(payload)
+  );
+};
+
+const isBoundedString = (value: unknown, maximumCodePoints: number): value is string =>
+  typeof value === "string" && Array.from(value).length <= maximumCodePoints;
+
+const isStructuredFindingLocation = (value: unknown): value is StructuredFindingLocation =>
+  isRecord(value) &&
+  hasExactKeys(value, STRUCTURED_FINDING_LOCATION_KEYS) &&
+  isBoundedString(value["path"], MAX_STRUCTURED_FINDING_LOCATION_PATH_CODE_POINTS) &&
+  typeof value["line"] === "number" &&
+  Number.isInteger(value["line"]) &&
+  value["line"] >= 1;
+
+const isUnknownList = (value: unknown): value is readonly unknown[] => Array.isArray(value);
+
+const hasStructuredFindingFields = (value: Record<string, unknown>): boolean =>
+  typeof value["id"] === "string" &&
+  CODE_REVIEW_SEVERITIES.some((severity) => value["severity"] === severity) &&
+  isBoundedString(value["title"], MAX_STRUCTURED_FINDING_TITLE_CODE_POINTS) &&
+  isBoundedString(value["requiredAction"], MAX_STRUCTURED_FINDING_REQUIRED_ACTION_CODE_POINTS);
+
+const hasStructuredFindingLocations = (value: Record<string, unknown>): boolean => {
+  const locations = value["locations"];
+  return (
+    isUnknownList(locations) &&
+    locations.length <= MAX_STRUCTURED_FINDING_LOCATIONS &&
+    [...locations].every(isStructuredFindingLocation)
+  );
+};
+
+const isStructuredFinding = (value: unknown): value is StructuredFinding =>
+  isRecord(value) &&
+  hasExactKeys(value, STRUCTURED_FINDING_KEYS) &&
+  hasStructuredFindingFields(value) &&
+  hasStructuredFindingLocations(value);
+
+const isStructuredFindingList = (value: unknown): value is readonly StructuredFinding[] =>
+  isUnknownList(value) &&
+  value.length <= MAX_STRUCTURED_FINDINGS &&
+  [...value].every(isStructuredFinding);
+
+const hasProducerV2Bounds = (payload: Record<string, unknown>): boolean => {
+  const findings = payload["findings"];
+  if (!isStructuredFindingList(findings)) {
+    return false;
+  }
+  try {
+    return (
+      findings.every(
+        (finding) =>
+          Buffer.byteLength(finding.title, "utf8") <= MAX_STRUCTURED_FINDING_TITLE_UTF8_BYTES &&
+          Buffer.byteLength(finding.requiredAction, "utf8") <=
+            MAX_STRUCTURED_FINDING_REQUIRED_ACTION_UTF8_BYTES,
+      ) &&
+      Buffer.byteLength(JSON.stringify(payload), "utf8") <= MAX_CODE_REVIEW_V2_SERIALIZED_UTF8_BYTES
+    );
+  } catch {
+    return false;
+  }
+};
+
+const structuredFindingsMatchCounts = (
+  payload: Record<string, unknown>,
+  counts: Record<string, unknown>,
+): boolean => {
+  if (!hasExactKeys(payload, CODE_REVIEW_V2_PAYLOAD_KEYS)) {
+    return true;
+  }
+  const findings = payload["findings"];
+  return (
+    isStructuredFindingList(findings) &&
+    CODE_REVIEW_SEVERITIES.every(
+      (severity) =>
+        findings.filter((finding) => finding.severity === severity).length === counts[severity],
+    )
   );
 };
 

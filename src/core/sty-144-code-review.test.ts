@@ -84,12 +84,21 @@ describe("STY-144 code review regressions", () => {
   it("invalidates review when a committed source byte changes with a clean worktree", async () => {
     let sourceRead = 0;
     const runGit = async (_projectRoot: string, args: readonly string[]) => {
-      if (args[0] === "symbolic-ref") return "sty-139/landing-integrity\n";
-      if (args[0] === "rev-parse" && args[1] === "main") return `${baseOid}\n`;
+      const command = args.join(" ");
+      if (command === "symbolic-ref --quiet --short HEAD") return "sty-139/landing-integrity\n";
+      if (command === "symbolic-ref --quiet refs/remotes/origin/HEAD") {
+        return "refs/remotes/origin/main\n";
+      }
+      if (
+        command === "rev-parse --verify refs/heads/main" ||
+        command === "rev-parse --verify refs/remotes/origin/main"
+      ) {
+        return `${baseOid}\n`;
+      }
       if (args[0] === "status") return "";
       if (args[0] === "diff") return "src/app.ts\0";
-      if (args[0] === "rev-parse" && args[1] === "HEAD") return `${"f".repeat(40)}\n`;
-      throw new Error(`Unexpected git command: ${args.join(" ")}`);
+      if (command === "rev-parse HEAD") return `${"f".repeat(40)}\n`;
+      throw new Error(`Unexpected git command: ${command}`);
     };
     const attestScope = createGitScopeAttestor({
       runGit,
@@ -121,10 +130,20 @@ describe("STY-144 code review regressions", () => {
     const skillPath = "skills/pi-bmad-pipeline-workflows/SKILL.md";
     const attestScope = createGitScopeAttestor({
       runGit: async (_projectRoot, args) => {
-        if (args[0] === "symbolic-ref") return "feature\n";
-        if (args[0] === "rev-parse") return `${baseOid}\n`;
+        const command = args.join(" ");
+        if (command === "symbolic-ref --quiet --short HEAD") return "feature\n";
+        if (command === "symbolic-ref --quiet refs/remotes/origin/HEAD") {
+          return "refs/remotes/origin/main\n";
+        }
+        if (
+          command === "rev-parse --verify refs/heads/main" ||
+          command === "rev-parse --verify refs/remotes/origin/main" ||
+          command === "rev-parse HEAD"
+        ) {
+          return `${baseOid}\n`;
+        }
         if (args[0] === "status") return ` M ${skillPath}\0`;
-        throw new Error(`Unexpected git command: ${args.join(" ")}`);
+        throw new Error(`Unexpected git command: ${command}`);
       },
       readBytes: async () => encode(skillRead++ === 0 ? "reviewed skill\n" : "changed skill\n"),
     });
