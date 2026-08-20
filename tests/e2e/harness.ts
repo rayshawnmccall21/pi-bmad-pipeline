@@ -128,6 +128,8 @@ export const makeProject = (): string => {
     ["config", "user.name", "Pipeline E2E"],
     ["add", "spec.md"],
     ["commit", "-m", "seed"],
+    ["update-ref", "refs/remotes/origin/main", "HEAD"],
+    ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
   ]) {
     const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
     if (result.status !== 0) {

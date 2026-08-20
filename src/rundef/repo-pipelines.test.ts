@@ -48,6 +48,33 @@ describe("repository pipeline catalog", () => {
     }
   });
 
+  it("regresses the reusable implementation pipeline only through the critical-only gate", async () => {
+    registerBmadPayloadGates();
+    const discovered = await discoverRunDefs(projectRoot);
+    const pipeline = discovered.find(
+      (entry) => entry.id === "create-story-dev-story-code-review-docs",
+    );
+    const review = pipeline?.runDef.stages.find((stage) => stage.id === "code-review");
+    const criticalOnlyConsumers = discovered.flatMap((entry) =>
+      entry.runDef.stages
+        .filter((stage) => "gate" in stage && stage.gate === "code-review-critical-only")
+        .map((stage) => `${entry.id}:${stage.id}`),
+    );
+    const strictReviewConsumers = discovered.flatMap((entry) =>
+      entry.runDef.stages
+        .filter((stage) => "gate" in stage && stage.gate === "code-review")
+        .map((stage) => `${entry.id}:${stage.id}`),
+    );
+
+    expect(review).toMatchObject({
+      kind: "agent",
+      gate: "code-review-critical-only",
+      onFail: "dev-story",
+    });
+    expect(criticalOnlyConsumers).toEqual(["create-story-dev-story-code-review-docs:code-review"]);
+    expect(strictReviewConsumers).toEqual(["sdlc:code-review", "strip:code-review"]);
+  });
+
   it("loads the quality guard in every self-supervision agent stage", async () => {
     const discovered = await discoverRunDefs(projectRoot);
     const pipeline = discovered.find(

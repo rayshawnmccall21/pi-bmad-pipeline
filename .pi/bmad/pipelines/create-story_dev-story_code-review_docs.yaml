@@ -43,7 +43,7 @@ stages:
     kind: agent
     workflow: code-review
     agent: dev
-    gate: code-review
+    gate: code-review-critical-only
     onFail: dev-story
     thinking: high
     timeout: 2400

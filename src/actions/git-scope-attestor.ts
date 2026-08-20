@@ -7,7 +7,9 @@ import {
   compareFinalScopeToReview,
   createFinalScopeReceipt,
   createReviewScopeCheckpoint,
+  redactText,
 } from "../security/index.js";
+import { observeSynchronizedDefaultBaseOid } from "./git-default-base.js";
 
 import type {
   ScopeAttestationRequest,
@@ -51,7 +53,7 @@ const observeGitScope = async (
   const branch = (
     await dependencies.runGit(request.projectRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"])
   ).trim();
-  const baseOid = (await dependencies.runGit(request.projectRoot, ["rev-parse", "main"])).trim();
+  const baseOid = await observeSynchronizedDefaultBaseOid(dependencies.runGit, request.projectRoot);
   const committedPaths = await observeCommittedPaths(dependencies, request.projectRoot, baseOid);
   const dirtyPaths = parseChangedPaths(
     await dependencies.runGit(request.projectRoot, [
@@ -118,7 +120,10 @@ const attestObservedScope = async (
   } catch (error) {
     return {
       kind: "rejected",
-      reason: error instanceof Error ? error.message : "Git scope attestation failed.",
+      reason:
+        error instanceof Error
+          ? redactText(error.message).value.slice(0, 1024)
+          : "Git scope attestation failed.",
     };
   }
 };
@@ -137,18 +142,31 @@ const observeCommittedPaths = async (
   );
 };
 
+const SUPPORTED_CHANGED_PATH_STATUSES = Object.freeze([" M", "M ", "MM", "??"] as const);
+
+const requireSupportedChangedPathStatus = (status: string): void => {
+  if (/[DRC]/u.test(status)) {
+    throw new TypeError(
+      "Deleted, renamed, or copied paths cannot be attested by this receipt version.",
+    );
+  }
+  if (!SUPPORTED_CHANGED_PATH_STATUSES.some((supportedStatus) => supportedStatus === status)) {
+    throw new TypeError("Unsupported Git porcelain scope status.");
+  }
+};
+
 const parseChangedPaths = (porcelain: string): string[] => {
+  const entries = porcelain.split("\0");
+  const terminalRecord = entries.pop();
+  if ([terminalRecord !== "", entries.some((entry) => entry.length === 0)].some(Boolean)) {
+    throw new TypeError("Malformed Git porcelain scope output.");
+  }
   const paths: string[] = [];
-  for (const entry of porcelain.split("\0").filter((value) => value.length > 0)) {
+  for (const entry of entries) {
     if (entry.length < 4 || entry[2] !== " ") {
       throw new TypeError("Malformed Git porcelain scope entry.");
     }
-    const status = entry.slice(0, 2);
-    if (/[DRC]/u.test(status)) {
-      throw new TypeError(
-        "Deleted, renamed, or copied paths cannot be attested by this receipt version.",
-      );
-    }
+    requireSupportedChangedPathStatus(entry.slice(0, 2));
     const path = entry.slice(3);
     if (!path.startsWith(".pi/pipeline/")) {
       paths.push(path);
