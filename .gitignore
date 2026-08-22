@@ -16,7 +16,7 @@ final-implementation-agent-plan.md
 
 # Self-supervision durable state, locks, and worktrees
 .pi/pipeline/
-.trees/
+/.trees/
 
 # Local agent settings
 .claude/

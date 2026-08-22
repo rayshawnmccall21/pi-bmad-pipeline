@@ -1,8 +1,9 @@
 id: create-story-dev-story-code-review-docs
 description: >
   Reusable implementation pipeline for pure library/mechanism stories with no UI
-  or E2E surface: create-story -> dev-story -> code-review (regresses to
-  dev-story on gate failure) -> docs. Drops e2e-plan and e2e-verify; npm run
+  or E2E surface: create-story -> dev-story -> code-review (only Critical
+  findings regress; lower severities remain visible and nonblocking) -> docs.
+  Drops e2e-plan and e2e-verify; npm run
   check is the deterministic gate inside dev-story. The rundef id uses hyphens
   because the identifier schema forbids underscores. Each agent stage loads the
   project quality guard plus pi-observability, pi-subagents, and pi-mcp-adapter
@@ -10,6 +11,10 @@ description: >
   declare (the supervisor otherwise runs --no-extensions). Observability pool
   is a constant project label; per-story
   pooling needs supervisor ${storyId} interpolation (not yet implemented).
+  Every agent stage also loads pi-pi so the query_experts research team
+  (including the project pi-bmad and pi-bmad-pipeline experts) is available
+  mid-stage; pi-pi appends its experts note to the stage persona instead of
+  replacing it in headless runs.
 stages:
   - id: create-story
     kind: agent
@@ -21,9 +26,10 @@ stages:
     oTag: create-story
     extensions:
       - .pi/extensions/quality-guard.ts
-      - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
-      - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
-      - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
+      - ~/.pi/agent/extensions/pi-observability/index.ts
+      - npm:pi-subagents
+      - npm:pi-mcp-adapter
+      - ~/.pi/agent/extensions/pi-pi.ts
 
   - id: dev-story
     kind: agent
@@ -35,9 +41,10 @@ stages:
     oTag: dev-story
     extensions:
       - .pi/extensions/quality-guard.ts
-      - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
-      - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
-      - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
+      - ~/.pi/agent/extensions/pi-observability/index.ts
+      - npm:pi-subagents
+      - npm:pi-mcp-adapter
+      - ~/.pi/agent/extensions/pi-pi.ts
 
   - id: code-review
     kind: agent
@@ -52,9 +59,10 @@ stages:
     oTag: code-review
     extensions:
       - .pi/extensions/quality-guard.ts
-      - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
-      - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
-      - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
+      - ~/.pi/agent/extensions/pi-observability/index.ts
+      - npm:pi-subagents
+      - npm:pi-mcp-adapter
+      - ~/.pi/agent/extensions/pi-pi.ts
 
   - id: docs
     kind: agent
@@ -67,6 +75,7 @@ stages:
     oTag: docs
     extensions:
       - .pi/extensions/quality-guard.ts
-      - /Users/Apple/.pi/agent/extensions/pi-observability/index.ts
-      - /Users/Apple/.pi/agent/npm/node_modules/pi-subagents/index.ts
-      - /Users/Apple/.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts
+      - ~/.pi/agent/extensions/pi-observability/index.ts
+      - npm:pi-subagents
+      - npm:pi-mcp-adapter
+      - ~/.pi/agent/extensions/pi-pi.ts
