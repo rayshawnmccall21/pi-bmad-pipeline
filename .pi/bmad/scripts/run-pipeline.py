@@ -167,7 +167,11 @@ def resolve_issue(identifier: str) -> tuple[str, str | None]:
     if issue:
         issue_id = issue.get("id")
         team = issue.get("team")
-        if isinstance(issue_id, str) and (team is None or isinstance(team, dict)):
+        if (
+            isinstance(issue_id, str)
+            and issue.get("identifier") == identifier
+            and (team is None or isinstance(team, dict))
+        ):
             team_id = team.get("id") if team else None
             if team_id is None or isinstance(team_id, str):
                 log(f"📋 {identifier}: {issue.get('title', '?')} (team {team_id or '?'})")
@@ -257,6 +261,7 @@ MAX_SAFE_INTEGER = 2**53 - 1
 # (the supervisor legitimately emits findings up to 2048 chars).
 EVENT_MAX_STRING_LENGTH = 1000
 EVENT_MAX_LIST_COUNT = 1000
+EVENT_MAX_RAW_LINE_BYTES = 1_000_000
 DIAGNOSTIC_PREFIX = "📝 "
 
 
@@ -266,11 +271,13 @@ def bounded_diagnostic(line: str) -> str:
 
 
 def _bounded_event_value(value: object) -> object:
-    """Truncate strings and lists so event side effects stay bounded."""
+    """Recursively truncate event containers so side effects stay bounded."""
     if isinstance(value, str):
         return value[:EVENT_MAX_STRING_LENGTH]
     if isinstance(value, list):
         return [_bounded_event_value(item) for item in value[:EVENT_MAX_LIST_COUNT]]
+    if isinstance(value, dict):
+        return {key: _bounded_event_value(item) for key, item in value.items()}
     return value
 
 
@@ -313,6 +320,56 @@ def valid_event(event: object) -> bool:
         and all(is_string(item) for item in value)
     )
     event_type = event["event"]
+    allowed_keys = {
+        "run.started": {"event", "ts", "storyId", "rundefId", "specFile"},
+        "stage.started": {"event", "ts", "storyId", "stageId", "attempt"},
+        "stage.finished": {
+            "event",
+            "ts",
+            "storyId",
+            "stageId",
+            "attempt",
+            "kind",
+            "passed",
+            "exitCode",
+            "durationMs",
+            "reason",
+        },
+        "gate.decision": {
+            "event",
+            "ts",
+            "storyId",
+            "stageId",
+            "gate",
+            "passed",
+            "reason",
+            "findings",
+        },
+        "budget.decision": {
+            "event",
+            "ts",
+            "storyId",
+            "scope",
+            "stageId",
+            "withinBudget",
+            "reason",
+        },
+        "progress": {"event", "ts", "storyId", "message"},
+        "result": {
+            "event",
+            "ts",
+            "storyId",
+            "status",
+            "stagesRun",
+            "regressions",
+            "durationMs",
+            "error",
+        },
+        "error": {"event", "ts", "storyId", "code", "message"},
+    }
+    if not event.keys() <= allowed_keys.get(event_type, set()):
+        return False
+
     validators = {
         "run.started": lambda: is_string(event.get("rundefId"))
         and is_string(event.get("specFile")),
@@ -394,8 +451,8 @@ def handle_event(ev: dict, story_id: str, issue_id: str, team_id: str | None) ->
             f"- Duration: {duration}"
             + (f"\n- Error: {error}" if error else ""),
         )
-        if team_id:
-            update_status(issue_id, team_id, "Done" if status == "passed" else "In Review")
+        if team_id and status != "passed":
+            update_status(issue_id, team_id, "In Review")
 
     elif event_type == "error":
         log(f"💥 Error: [{ev.get('code', '?')}] {ev.get('message', '?')}")
@@ -494,9 +551,11 @@ def validate_story_source_intake(story_id: str, rundef: str) -> None:
     if rundef != CREATE_STORY_RUNDEF:
         return
 
-    intake_path = PROJECT_ROOT / STORY_SOURCE_INTAKE_PATH
+    if _contains_symlink(STORY_SOURCE_INTAKE_PATH):
+        raise ValueError(f"{STORY_SOURCE_INTAKE_PATH} path must not contain symlinks")
+    source_intake_path = PROJECT_ROOT / STORY_SOURCE_INTAKE_PATH
     try:
-        intake_lines = intake_path.read_text().splitlines()
+        intake_lines = source_intake_path.read_text().splitlines()
     except (OSError, UnicodeError) as exc:
         raise ValueError(
             f"cannot read {STORY_SOURCE_INTAKE_PATH}: {type(exc).__name__}"
@@ -610,6 +669,13 @@ def validate_parent_model(model: str) -> str:
     return model
 
 
+def validate_max_regressions(max_regressions: int) -> int:
+    """Require an exact nonnegative integer within JSON's safe range."""
+    if not is_regressions(max_regressions):
+        raise ValueError(f"max regressions must be an integer from 0 to {MAX_SAFE_INTEGER}")
+    return max_regressions
+
+
 def build_pipeline_command(args: argparse.Namespace) -> list[str]:
     spec_file = str(
         Path(".pi")
@@ -649,6 +715,7 @@ def main() -> int:
     try:
         args.story_id = validate_story_id(args.story_id)
         args.model = validate_parent_model(args.model)
+        args.max_regressions = validate_max_regressions(args.max_regressions)
         args.pipeline = resolve_pipeline_id(args.pipeline)
         validate_story_source_intake(args.story_id, args.pipeline)
     except ValueError as exc:
@@ -694,9 +761,13 @@ def main() -> int:
         return 127
     log(f"🏃 Pipeline PID: {proc.pid}")
 
+    terminal_result_status: str | None = None
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
+            if len(line.encode("utf-8")) > EVENT_MAX_RAW_LINE_BYTES:
+                log(bounded_diagnostic(line))
+                continue
             line = line.strip()
             if not line:
                 continue
@@ -709,6 +780,7 @@ def main() -> int:
                 event = bound_event(event)
             if valid_event(event):
                 handle_event(event, args.story_id, issue_id, team_id)
+                terminal_result_status = event["status"] if event["event"] == "result" else None
             else:
                 log(bounded_diagnostic(line))
     except KeyboardInterrupt:
@@ -723,6 +795,10 @@ def main() -> int:
     proc.wait()
     log(f"🏁 Exited code {proc.returncode} in {format_duration((time.monotonic() - start) * 1000)}")
 
+    if proc.returncode == 0 and terminal_result_status == "passed" and team_id:
+        update_status(issue_id, team_id, "Done")
+    if proc.returncode == 0 and terminal_result_status not in (None, "passed"):
+        return 1
     return proc.returncode
 
 

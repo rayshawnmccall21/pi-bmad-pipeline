@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ const projectRoot = resolve(import.meta.dirname, "..");
 const standardAssets = [
   [
     ".pi/bmad/scripts/run-pipeline.py",
-    "66e010b0b5858c914e673fe7b99ec6037d8c7407a44aa4f44073724aaa479054",
+    "d698541121d53027e6dbf9fab17cbefa8cb3d42695862990dd687e7579b26632",
   ],
   [
     ".pi/bmad/pipelines/create-story_dev-story_code-review_docs.yaml",
@@ -16,10 +16,17 @@ const standardAssets = [
   ],
 ] as const;
 
+const readRegularFile = (relativePath: string): Buffer => {
+  const path = resolve(projectRoot, relativePath);
+  const stats = lstatSync(path);
+
+  expect(stats.isFile()).toBe(true);
+  expect(stats.isSymbolicLink()).toBe(false);
+  return readFileSync(path);
+};
+
 const sha256 = (relativePath: string): string =>
-  createHash("sha256")
-    .update(readFileSync(resolve(projectRoot, relativePath)))
-    .digest("hex");
+  createHash("sha256").update(readRegularFile(relativePath)).digest("hex");
 
 describe("repository standard assets", () => {
   it.each(standardAssets)("%s matches the reviewed SHA-256", (relativePath, expectedHash) => {
@@ -27,11 +34,21 @@ describe("repository standard assets", () => {
   });
 
   it("has exactly one root-anchored worktree ignore rule", () => {
-    const worktreeRules = readFileSync(resolve(projectRoot, ".gitignore"), "utf8")
+    const worktreeRules = readRegularFile(".gitignore")
+      .toString("utf8")
       .split(/\r?\n/u)
-      .map((line) => line.trim())
       .filter((line) => line.includes(".trees") && !line.startsWith("#"));
 
     expect(worktreeRules).toEqual(["/.trees/"]);
+  });
+
+  it("keeps file-type and ignore-line checks source-exact", () => {
+    const testSource = readFileSync(
+      resolve(import.meta.dirname, "standard-assets.test.ts"),
+      "utf8",
+    );
+
+    expect(testSource).toMatch(/\blstatSync\(/u);
+    expect(testSource).not.toMatch(/\bline\.trim\(\)/u);
   });
 });
