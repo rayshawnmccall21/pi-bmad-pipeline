@@ -47,7 +47,8 @@
     "knip": "knip",
     "conformance": "vitest run --config vitest.conformance.config.ts",
     "check:pi-bmad": "node scripts/check-pi-bmad-freshness.mjs",
-    "check": "npm run check:pi-bmad && npm run typecheck && npm run format:check && npm run lint && npm run test:coverage && npm run crap && npm run conformance && npm run test:e2e && npm run knip"
+    "check:review-gate-locks": "node scripts/check-review-gate-locks.mjs",
+    "check": "npm run check:pi-bmad && npm run check:review-gate-locks && npm run typecheck && npm run format:check && npm run lint && npm run test:coverage && npm run crap && npm run conformance && npm run test:e2e && npm run knip"
   },
   "keywords": [
     "pi-package",
