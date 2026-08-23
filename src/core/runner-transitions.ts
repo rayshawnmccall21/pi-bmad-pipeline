@@ -444,8 +444,13 @@ const resetRegressionTarget = (
   request: ResetRegressionTargetRequest,
 ): PipelineState => {
   const previous = stageStateOf(state, request.targetId);
+  // Any regression can mutate reviewed bytes. Drop stale approval before the
+  // target runs so a later review may transition from passed back to running.
+  const withoutApproval = structuredClone(state);
+  Reflect.deleteProperty(withoutApproval, "reviewCheckpoint");
+  Reflect.deleteProperty(withoutApproval, "finalScopeReceipt");
   return withStage(
-    state,
+    withoutApproval,
     Object.freeze({
       id: request.targetId,
       status: "pending",
