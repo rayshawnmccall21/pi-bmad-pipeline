@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_MAX_REGRESSIONS, runPipelineStages } from "./index.js";
 import { createInitialPipelineState } from "../state/index.js";
+import { getPipelineStateInvalidReason } from "../state/fs-state-validation.js";
 import {
   MAX_STAGE_HANDOFF_BYTES,
   createStageHandoff,
@@ -321,6 +322,108 @@ describe("runPipelineStages", () => {
     expect(rerunStart?.reviewCheckpoint).toBeUndefined();
     expect(result.state.reviewCheckpoint).toEqual(refreshedCheckpoint);
     expect(result.state.finalScopeReceipt).toEqual(refreshedReceipt);
+  });
+
+  it("clears prior review approval when final PR review regresses through development", async () => {
+    const stages: readonly CompiledStageDef[] = [
+      stage("dev-story", 0),
+      stage("e2e-verify", 1),
+      stage("code-review", 2, {
+        workflow: "code-review",
+        payloadGate: okGate,
+        payloadGateName: "code-review-critical-only",
+        onFail: "dev-story",
+      }),
+      stage("docs", 3),
+      stage("update-pr", 4),
+      stage("pr-review", 5, {
+        workflow: "code-review",
+        payloadGate: okGate,
+        payloadGateName: "code-review-critical-only",
+        onFail: "dev-story",
+      }),
+    ];
+    const attestScope: ScopeAttestor = async (request) => {
+      if (request.phase === "review") {
+        return {
+          kind: "review-checkpoint",
+          checkpoint: {
+            ...reviewCheckpoint,
+            runId: request.runId,
+            runDefId: request.runDefId,
+            runDefDigest: request.runDefDigest,
+            qualityGate: request.qualityGate,
+          },
+        };
+      }
+      return {
+        kind: "final-receipt",
+        receipt: {
+          ...finalScopeReceipt,
+          ...request.reviewCheckpoint,
+          docs: { paths: ["README.md"], digest: digest("c") },
+          finalWorkingTreeDigest: digest("d"),
+        },
+      };
+    };
+    const fixture = harness(
+      stages,
+      [
+        okResult(),
+        okResult(),
+        okResult(),
+        okResult(),
+        okResult(),
+        gateFailResult(["critical finding"]),
+        okResult(),
+        okResult(),
+        okResult(),
+        okResult(),
+        okResult(),
+        okResult(),
+      ],
+      { attestScope },
+    );
+    const invalidReasons: (string | undefined)[] = [];
+    const result = await runPipelineStages({
+      ...fixture.request,
+      state: {
+        ...fixture.request.state,
+        runDefId: "sdlc-critical-only",
+        runDefDigest: digest("a"),
+      },
+      attestScope,
+      saveState: async (state) => {
+        const reason = getPipelineStateInvalidReason(state);
+        invalidReasons.push(reason);
+        if (reason !== undefined) {
+          throw new Error(reason);
+        }
+        fixture.saves.push(state);
+      },
+    });
+
+    expect(result.status).toBe("done");
+    expect(invalidReasons.every((reason) => reason === undefined)).toBe(true);
+    expect(fixture.executor.requests.map(({ stage: executedStage }) => executedStage.id)).toEqual([
+      "dev-story",
+      "e2e-verify",
+      "code-review",
+      "docs",
+      "update-pr",
+      "pr-review",
+      "dev-story",
+      "e2e-verify",
+      "code-review",
+      "docs",
+      "update-pr",
+      "pr-review",
+    ]);
+    const regressionSave = fixture.saves.find(
+      (state) => state.regressions === 1 && state.stages["dev-story"]?.status === "pending",
+    );
+    expect(regressionSave).not.toHaveProperty("reviewCheckpoint");
+    expect(regressionSave).not.toHaveProperty("finalScopeReceipt");
   });
 
   it("fails closed without saving done when final attestation is rejected", async () => {

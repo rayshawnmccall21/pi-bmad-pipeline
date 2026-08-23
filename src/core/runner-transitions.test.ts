@@ -12,7 +12,12 @@ import {
   freezePipelineState,
   getPipelineStateInvalidReason,
 } from "../state/fs-state-validation.js";
-import { attachFinalScopeReceipt, attachReviewCheckpoint } from "./runner-transitions.js";
+import {
+  applyStageOutcome,
+  attachFinalScopeReceipt,
+  attachReviewCheckpoint,
+  markStageRunning,
+} from "./runner-transitions.js";
 
 const finishedAt = "2026-08-19T00:00:00.000Z";
 const digest = (character: string): string => character.repeat(64);
@@ -133,6 +138,37 @@ describe("runner scope attachment transitions", () => {
     expect(Object.isFrozen(attached.reviewCheckpoint)).toBe(true);
     expect(Object.isFrozen(attached.finalScopeReceipt)).toBe(true);
     expect(Object.isFrozen(attached.finalScopeReceipt?.docs.paths)).toBe(true);
+  });
+
+  it("clears stale scope approval when a later review regresses to development", () => {
+    const state = legacyReviewedState();
+    const approved = attachFinalScopeReceipt(state, receiptFor(state));
+
+    const regressed = applyStageOutcome(approved, {
+      stageId: "pr-review",
+      attempt: 1,
+      decision: {
+        stageId: "pr-review",
+        kind: "gate-failed",
+        passed: false,
+        reason: "Critical PR review finding.",
+        findings: ["critical finding"],
+      },
+      execution: { output: null, exitCode: 0, durationMs: 1 },
+      regressions: 1,
+      successorId: "dev-story",
+      regressionTargetId: "dev-story",
+      finishedAt,
+    });
+
+    expect(regressed).not.toHaveProperty("reviewCheckpoint");
+    expect(regressed).not.toHaveProperty("finalScopeReceipt");
+    expect(regressed.stages["dev-story"]?.status).toBe("pending");
+    expect(getPipelineStateInvalidReason(regressed)).toBeUndefined();
+
+    const reviewRerun = markStageRunning(regressed, "code-review", finishedAt);
+    expect(reviewRerun.stages["code-review"]?.status).toBe("running");
+    expect(getPipelineStateInvalidReason(reviewRerun)).toBeUndefined();
   });
 
   it.each([
