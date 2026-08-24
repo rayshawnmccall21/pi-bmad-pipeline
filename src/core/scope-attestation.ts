@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Trusted scope sequencing remains cohesive at one finalization seam. */
 /** Trusted repository-scope attestation adapter for the durable FSM. */
 
 import { errorMessage } from "./runner-evaluation.js";
@@ -260,21 +261,17 @@ type FinalScopePersistenceResult =
 export const persistFinalScopeAttestation = async (
   context: RunnerScopeAttestationContext,
 ): Promise<FinalScopePersistenceResult> => {
-  if (passedReviewLacksCheckpoint(context)) {
-    return {
-      kind: "rejected",
-      reason: "Passed code review is missing its durable repository-scope checkpoint.",
-    };
+  const backfillFailure = await backfillReviewCheckpoint(context);
+  if (backfillFailure !== undefined) {
+    return backfillFailure;
   }
+
   const result = await attestFinalScope(
     identityOf(context),
     context.state,
     context.request.attestScope,
   );
-  if (result.kind === "rejected") {
-    return result;
-  }
-  if (result.kind === "review-invalidated") {
+  if (result.kind !== "attested") {
     return result;
   }
   if (result.changed) {
@@ -282,6 +279,54 @@ export const persistFinalScopeAttestation = async (
   }
   return { kind: "attested" };
 };
+
+const backfillReviewCheckpoint = async (
+  context: RunnerScopeAttestationContext,
+): Promise<FinalScopePersistenceResult | undefined> => {
+  if (!needsReviewCheckpointBackfill(context)) {
+    return undefined;
+  }
+  const qualityGate = passedReviewQualityGate(context);
+  if (qualityGate === undefined) {
+    return rejectFinal("Passed code review is missing its durable repository-scope checkpoint.");
+  }
+  const reviewResult = await attestReviewScope({
+    identity: identityOf(context),
+    state: context.state,
+    qualityGate,
+    attestScope: context.request.attestScope,
+  });
+  if (reviewResult.kind !== "attested") {
+    return reviewBackfillFailure(reviewResult);
+  }
+  return persistBackfilledCheckpoint(context, reviewResult.state);
+};
+
+const persistBackfilledCheckpoint = async (
+  context: RunnerScopeAttestationContext,
+  checkpointState: PipelineState,
+): Promise<FinalScopePersistenceResult | undefined> => {
+  const stateBeforeBackfill = context.state;
+  try {
+    await persist(context, checkpointState);
+    return undefined;
+  } catch (error) {
+    context.state = stateBeforeBackfill;
+    return rejectFinal(errorMessage(error));
+  }
+};
+
+const needsReviewCheckpointBackfill = (context: RunnerScopeAttestationContext): boolean =>
+  context.state.reviewCheckpoint === undefined && context.request.stages.some(isCodeReviewStage);
+
+const reviewBackfillFailure = (
+  result: Exclude<AppliedScopeAttestation, { readonly kind: "attested" }>,
+): FinalScopePersistenceResult =>
+  result.kind === "rejected"
+    ? result
+    : rejectFinal("Review scope attestation cannot invalidate before a checkpoint exists.");
+
+const rejectFinal = (reason: string): FinalScopePersistenceResult => ({ kind: "rejected", reason });
 
 /**
  * Returns the stage id used for a final attestation failure.
@@ -332,11 +377,40 @@ const finalAttestationIdentity = (
 ): ScopeAttestationIdentity =>
   checkpoint === undefined ? identity : { ...identity, runId: checkpoint.runId };
 
-const passedReviewLacksCheckpoint = (context: RunnerScopeAttestationContext): boolean =>
-  context.state.reviewCheckpoint === undefined &&
-  context.request.stages.some(
-    (stage) => isCodeReviewStage(stage) && context.state.stages[stage.id]?.status === "passed",
+const passedReviewQualityGate = (
+  context: RunnerScopeAttestationContext,
+): QualityGateReceipt | undefined => {
+  const [stage, duplicate] = context.request.stages.filter((candidate) =>
+    isDurablyPassedReview(context, candidate),
   );
+  if (stage === undefined || duplicate !== undefined) {
+    return undefined;
+  }
+
+  const durableStage = context.state.stages[stage.id];
+  if (!hasCompleteReviewIdentity(durableStage)) {
+    return undefined;
+  }
+  return {
+    stageId: stage.id,
+    attempt: durableStage.attempts,
+    status: "passed",
+    finishedAt: durableStage.finishedAt,
+  };
+};
+
+const isDurablyPassedReview = (
+  context: RunnerScopeAttestationContext,
+  stage: CompiledStageDef,
+): boolean => isCodeReviewStage(stage) && context.state.stages[stage.id]?.status === "passed";
+
+const hasCompleteReviewIdentity = (
+  stage: PipelineState["stages"][string] | undefined,
+): stage is PipelineState["stages"][string] & { readonly finishedAt: string } =>
+  stage !== undefined &&
+  Number.isInteger(stage.attempts) &&
+  stage.attempts > 0 &&
+  stage.finishedAt !== null;
 
 export const isCodeReviewStage = (stage: CompiledStageDef): boolean =>
   stage.kind === "agent" && stage.payloadGateName?.startsWith("code-review") === true;

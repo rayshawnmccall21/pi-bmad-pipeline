@@ -19,7 +19,8 @@
 
 ## Gotchas
 
-- Resume normally starts at the first incomplete compiled stage. Before that selection, only a valid older nonterminal state with a durably passed code-review stage and no checkpoint/receipt persists a budget-neutral reset of review plus downstream; malformed, newer, terminal, and checkpoint-bearing states do not enter this recovery.
+- Resume normally starts at the first incomplete compiled stage. Before that selection, only a valid legacy nonterminal state with a durably passed code-review stage and no checkpoint/receipt persists a budget-neutral reset of review plus downstream and reruns those stages; malformed, newer, terminal, and checkpoint-bearing states do not enter this legacy recovery.
+- Separately, a current-version all-passed state missing its review checkpoint can use guarded zero-stage recovery. Core derives the exact durable review identity from the unique passed compiled review stage's recorded stage ID, positive attempt, and finish time, invokes trusted review attestation to backfill the missing review checkpoint, saves that checkpoint, and then performs the fresh final comparison without re-running pipeline stages. Missing or ambiguous identity, Git or attestor rejection, and persistence failure fail closed; state is never hand-edited.
 - Stage decisions are kind-aware: agent stages require validated authenticated output, while code stages pass on exit `0` with `output: null` and never fabricate a payload.
 - Code exit semantics fail closed: exit `1` with valid nonempty lifted findings becomes a routable `gate-failed` outcome, exit `1` without findings is terminal, and exit `>= 2` or null is terminal. Any attached diagnostic is already bounded and redacted before core sees it.
 - An agent payload can pass only after process/output validation and any configured gate both pass; handoff acceptance is downstream of pass/fail and routing evaluation.
@@ -33,3 +34,4 @@
 - 2026-08-14 — A stage-kind-neutral FSM still needs kind-aware decision semantics because authenticated output is mandatory for agents but intentionally absent for successful code stages.
 - 2026-08-15 — Treating StageHandoff as successor state keeps replay deterministic and preserves the existing gate and regression-summary rails.
 - 2026-08-20 — Final settlement must be receipt-driven: a durable preterminal receipt is recovery evidence, not permission to skip fresh scope observation.
+- 2026-08-24 — Passed-stage settlement and review-checkpoint persistence are separate durable boundaries; current-version recovery must save a trusted exact-identity checkpoint before fresh final comparison.

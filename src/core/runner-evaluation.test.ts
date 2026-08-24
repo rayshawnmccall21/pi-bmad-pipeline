@@ -46,4 +46,22 @@ describe("runner-evaluation", () => {
   it("extracts messages from Error values", () => {
     expect(errorMessage(new Error("bad"))).toBe("bad");
   });
+
+  it("normalizes every unknown thrown value to a nonblank message", () => {
+    const circularValue: Record<string, unknown> = {};
+    circularValue["self"] = circularValue;
+    const hostileValue = {
+      toJSON: () => {
+        throw new TypeError("cannot serialize");
+      },
+      toString: () => {
+        throw new TypeError("cannot stringify");
+      },
+    };
+
+    for (const thrownValue of [1n, undefined, circularValue, hostileValue]) {
+      expect(() => errorMessage(thrownValue)).not.toThrow();
+      expect(errorMessage(thrownValue).length).toBeGreaterThan(0);
+    }
+  });
 });

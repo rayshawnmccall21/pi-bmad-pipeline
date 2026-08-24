@@ -6,10 +6,13 @@ import { getPipelineStateInvalidReason } from "../state/fs-state-validation.js";
 import { createInitialPipelineState } from "../state/pipeline-state.js";
 import { persistFinalScopeAttestation } from "./scope-attestation.js";
 
+import type { ScopeAttestationResult, ScopeAttestor } from "./scope-attestation.js";
+
 import type { CompiledAgentStage } from "../rundef/index.js";
 import type {
   FinalScopeReceipt,
   PipelineState,
+  QualityGateReceipt,
   ReviewScopeCheckpoint,
 } from "../state/pipeline-state.js";
 
@@ -52,6 +55,19 @@ const receipt = (reviewCheckpoint = checkpoint()): FinalScopeReceipt => ({
   finalWorkingTreeDigest: digest("e"),
 });
 
+const T1 = "2026-08-18T12:34:56.789Z";
+
+const passedAttemptHistory = (attempts: number, finishedAt: string) =>
+  Array.from({ length: attempts }, (_, attemptIndex) => ({
+    attempt: attemptIndex + 1,
+    status: "passed" as const,
+    startedAt: T0,
+    finishedAt: attemptIndex + 1 === attempts ? finishedAt : T0,
+    durationMs: 1,
+    exitCode: 0,
+    reason: "approved",
+  }));
+
 const passedState = (reviewCheckpoint?: ReviewScopeCheckpoint): PipelineState => {
   const initial = createInitialPipelineState({
     storyId: "STY-144",
@@ -73,12 +89,54 @@ const passedState = (reviewCheckpoint?: ReviewScopeCheckpoint): PipelineState =>
         attempts: 1,
         startedAt: T0,
         finishedAt: T0,
+        history: passedAttemptHistory(1, T0),
         reason: "approved",
       },
     },
     ...(reviewCheckpoint === undefined ? {} : { reviewCheckpoint }),
   };
 };
+
+const distinctivePassedState = (): PipelineState => {
+  const state = passedState();
+  return {
+    ...state,
+    stages: {
+      "code-review": {
+        ...state.stages["code-review"]!,
+        attempts: 7,
+        finishedAt: T1,
+        history: passedAttemptHistory(7, T1),
+      },
+    },
+  };
+};
+
+const checkpointFor = (
+  qualityGate: QualityGateReceipt,
+  runId = "run-new",
+): ReviewScopeCheckpoint => ({
+  ...checkpoint(runId),
+  qualityGate,
+});
+
+const backfillContext = (
+  attestScope: ScopeAttestor,
+  state: PipelineState = distinctivePassedState(),
+  stages: readonly CompiledAgentStage[] = [reviewStage],
+) => ({
+  state,
+  request: {
+    projectRoot: "/repo",
+    storyId: "STY-144",
+    runId: "run-new",
+    stages,
+    attestScope,
+    saveState: vi.fn(async (stateToSave: PipelineState) => {
+      void stateToSave;
+    }),
+  },
+});
 
 describe("STY-144 code review regressions", () => {
   it("invalidates review when a committed source byte changes with a clean worktree", async () => {
@@ -96,7 +154,10 @@ describe("STY-144 code review regressions", () => {
         return `${baseOid}\n`;
       }
       if (args[0] === "status") return "";
-      if (args[0] === "diff") return "src/app.ts\0";
+      if (command === `merge-base --all ${baseOid} ${"f".repeat(40)}`) return `${baseOid}\n`;
+      if (command === `diff --name-status -z --no-renames ${baseOid} ${"f".repeat(40)} --`) {
+        return "M\0src/app.ts\0";
+      }
       if (command === "rev-parse HEAD") return `${"f".repeat(40)}\n`;
       throw new Error(`Unexpected git command: ${command}`);
     };
@@ -195,27 +256,183 @@ describe("STY-144 code review regressions", () => {
     await expect(persistFinalScopeAttestation(context)).resolves.toEqual({ kind: "attested" });
   });
 
-  it("fails closed when a passed review stage has no durable review checkpoint", async () => {
-    const attestScope = vi.fn(async () => ({
-      kind: "final-receipt" as const,
-      receipt: receipt(checkpoint("run-new")),
-    }));
-    const context = {
-      state: passedState(),
-      request: {
-        projectRoot: "/repo",
-        storyId: "STY-144",
-        runId: "run-new",
-        stages: [reviewStage],
-        attestScope,
-        saveState: async () => undefined,
+  it("backfills from the exact durable review identity before final attestation", async () => {
+    const attestScope = vi.fn<ScopeAttestor>(async (request) => {
+      if (request.phase === "review") {
+        return {
+          kind: "review-checkpoint",
+          checkpoint: checkpointFor(request.qualityGate),
+        };
+      }
+      if (request.reviewCheckpoint === undefined) {
+        throw new Error("final review checkpoint is required");
+      }
+      return {
+        kind: "final-receipt",
+        receipt: receipt(request.reviewCheckpoint),
+      };
+    });
+    const context = backfillContext(attestScope);
+    expect(getPipelineStateInvalidReason(context.state)).toBeUndefined();
+
+    await expect(persistFinalScopeAttestation(context)).resolves.toEqual({ kind: "attested" });
+
+    expect(attestScope.mock.calls.map(([request]) => request.phase)).toEqual(["review", "final"]);
+    expect(attestScope.mock.calls.at(0)?.[0]).toEqual({
+      phase: "review",
+      projectRoot: "/repo",
+      storyId: "STY-144",
+      runId: "run-new",
+      runDefId: "review-docs",
+      runDefDigest: digest("a"),
+      qualityGate: {
+        stageId: "code-review",
+        attempt: 7,
+        status: "passed",
+        finishedAt: T1,
+      },
+    });
+    expect(context.request.saveState).toHaveBeenCalledTimes(2);
+    const checkpointState = context.request.saveState.mock.calls.at(0)?.[0];
+    const receiptState = context.request.saveState.mock.calls.at(1)?.[0];
+    expect(checkpointState?.reviewCheckpoint?.qualityGate).toEqual({
+      stageId: "code-review",
+      attempt: 7,
+      status: "passed",
+      finishedAt: T1,
+    });
+    expect(checkpointState?.finalScopeReceipt).toBeUndefined();
+    expect(receiptState?.finalScopeReceipt).toBeDefined();
+    expect(
+      context.request.saveState.mock.calls.every(
+        ([savedState]) => getPipelineStateInvalidReason(savedState) === undefined,
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["zero attempts", { attempts: 0 }],
+    ["missing finishedAt", { finishedAt: null }],
+  ])("rejects %s before invoking the attestor", async (_name, stageChanges) => {
+    const state = distinctivePassedState();
+    const malformedState: PipelineState = {
+      ...state,
+      stages: {
+        "code-review": { ...state.stages["code-review"]!, ...stageChanges },
       },
     };
+    const attestScope = vi.fn<ScopeAttestor>();
 
-    const result = await persistFinalScopeAttestation(context);
-
-    expect(result).toMatchObject({ kind: "rejected" });
+    await expect(
+      persistFinalScopeAttestation(backfillContext(attestScope, malformedState)),
+    ).resolves.toMatchObject({ kind: "rejected" });
     expect(attestScope).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing durable review stage before invoking the attestor", async () => {
+    const state: PipelineState = { ...distinctivePassedState(), stages: {} };
+    const attestScope = vi.fn<ScopeAttestor>();
+
+    await expect(
+      persistFinalScopeAttestation(backfillContext(attestScope, state)),
+    ).resolves.toMatchObject({ kind: "rejected" });
+    expect(attestScope).not.toHaveBeenCalled();
+  });
+
+  it("rejects multiple passed compiled review stages before invoking the attestor", async () => {
+    const state = distinctivePassedState();
+    const secondaryReview = { ...reviewStage, id: "code-review-secondary", index: 1 };
+    const ambiguousState: PipelineState = {
+      ...state,
+      stages: {
+        ...state.stages,
+        "code-review-secondary": {
+          ...state.stages["code-review"]!,
+          id: "code-review-secondary",
+        },
+      },
+    };
+    const attestScope = vi.fn<ScopeAttestor>();
+
+    await expect(
+      persistFinalScopeAttestation(
+        backfillContext(attestScope, ambiguousState, [reviewStage, secondaryReview]),
+      ),
+    ).resolves.toMatchObject({ kind: "rejected" });
+    expect(attestScope).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["typed rejection", async () => ({ kind: "rejected", reason: "ambiguous Git" })],
+    [
+      "throw",
+      async () => {
+        throw new Error("Git failed");
+      },
+    ],
+    [
+      "wrong result kind",
+      async () => ({ kind: "final-receipt", receipt: receipt(checkpoint("run-new")) }),
+    ],
+    [
+      "mismatched run identity",
+      async (qualityGate: QualityGateReceipt) => ({
+        kind: "review-checkpoint",
+        checkpoint: checkpointFor(qualityGate, "wrong-run"),
+      }),
+    ],
+  ] as const)(
+    "%s during review backfill never invokes final attestation",
+    async (_name, resultFor) => {
+      const attestScope = vi.fn<ScopeAttestor>(
+        async (request) => resultFor(request.qualityGate) as Promise<ScopeAttestationResult>,
+      );
+      const context = backfillContext(attestScope);
+
+      await expect(persistFinalScopeAttestation(context)).resolves.toMatchObject({
+        kind: "rejected",
+      });
+      expect(attestScope).toHaveBeenCalledOnce();
+      expect(attestScope.mock.calls.at(0)?.[0]).toMatchObject({ phase: "review" });
+      expect(context.request.saveState).not.toHaveBeenCalled();
+    },
+  );
+
+  it("normalizes non-JSON attestor throws during review backfill", async () => {
+    const attestScope = vi.fn<ScopeAttestor>(async () => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- adversarial unknown throw.
+      throw 1n;
+    });
+    const context = backfillContext(attestScope);
+
+    await expect(persistFinalScopeAttestation(context)).resolves.toMatchObject({
+      kind: "rejected",
+    });
+    expect(context.state.reviewCheckpoint).toBeUndefined();
+    expect(context.request.saveState).not.toHaveBeenCalled();
+  });
+
+  it("normalizes non-JSON persistence throws during review backfill", async () => {
+    const attestScope = vi.fn<ScopeAttestor>(async (request) => {
+      if (request.phase !== "review") {
+        throw new Error("final attestation must not run");
+      }
+      return {
+        kind: "review-checkpoint",
+        checkpoint: checkpointFor(request.qualityGate),
+      };
+    });
+    const context = backfillContext(attestScope);
+    context.request.saveState.mockImplementationOnce(async () => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- adversarial unknown throw.
+      throw 1n;
+    });
+
+    await expect(persistFinalScopeAttestation(context)).resolves.toMatchObject({
+      kind: "rejected",
+    });
+    expect(attestScope).toHaveBeenCalledOnce();
+    expect(context.state.reviewCheckpoint).toBeUndefined();
   });
 
   it("rejects a persisted quality receipt that names no real passed stage attempt", () => {

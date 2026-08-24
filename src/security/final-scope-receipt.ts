@@ -10,14 +10,28 @@ import type {
 /** Current schema version for review checkpoints and final scope receipts. */
 export const FINAL_SCOPE_RECEIPT_VERSION = 1 as const;
 
-/** Repository file bytes supplied to scope construction. */
-export interface RepositoryFileSnapshot {
-  /** Canonical repository-relative path. */
-  readonly path: string;
+/** Present or absent repository file supplied to scope construction. */
+export type RepositoryFileSnapshot =
+  | {
+      /** Canonical repository-relative path. */
+      readonly path: string;
 
-  /** Raw file bytes. */
-  readonly bytes: Uint8Array;
-}
+      /** Raw file bytes. */
+      readonly bytes: Uint8Array;
+
+      /** Present snapshots cannot also be absent. */
+      readonly absent?: never;
+    }
+  | {
+      /** Canonical repository-relative path. */
+      readonly path: string;
+
+      /** Marks a repository file that is absent. */
+      readonly absent: true;
+
+      /** Absent snapshots cannot also contain bytes. */
+      readonly bytes?: never;
+    };
 
 /** Input for constructing a review scope checkpoint. */
 export interface CreateReviewScopeCheckpointInput {
@@ -223,6 +237,11 @@ const canonicalizeFiles = (
   const seen = new Set<string>();
   const canonical = files.map((file) => {
     validateRepositoryPath(file.path);
+    const hasBytes = Reflect.has(file, "bytes");
+    const hasAbsent = Reflect.has(file, "absent");
+    if (hasBytes === hasAbsent || (hasAbsent && Reflect.get(file, "absent") !== true)) {
+      throw new TypeError("Repository snapshot must be either present or absent.");
+    }
     if (seen.has(file.path)) {
       throw new TypeError(`duplicate repository path: "${file.path}".`);
     }
@@ -256,7 +275,11 @@ const createScope = (files: readonly RepositoryFileSnapshot[]): RepositoryScope 
   for (const file of files) {
     const pathBytes = Buffer.from(file.path, "utf8");
     hash.update(String(pathBytes.byteLength)).update(":").update(pathBytes);
-    hash.update(String(file.bytes.byteLength)).update(":").update(file.bytes);
+    if (file.absent === true) {
+      hash.update("absent:");
+    } else {
+      hash.update(String(file.bytes.byteLength)).update(":").update(file.bytes);
+    }
   }
   return Object.freeze({
     paths: Object.freeze(files.map(({ path }) => path)),

@@ -4,11 +4,16 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createCanonicalRepositoryScope } from "../security/index.js";
 import { createGitScopeAttestor } from "./git-scope-attestor.js";
+
+import type { ScopeAttestationResult } from "../core/scope-attestation.js";
 
 const digest = (character: string): string => character.repeat(64);
 const encoded = (value: string): Uint8Array => new TextEncoder().encode(value);
 const baseOid = "c".repeat(40);
+const headOid = "d".repeat(40);
+const mergeBaseOid = "a".repeat(40);
 
 const authenticatedRunGit = (statusResult: string | Error) =>
   vi.fn(async (_root: string, args: readonly string[]): Promise<string> => {
@@ -30,6 +35,62 @@ const authenticatedRunGit = (statusResult: string | Error) =>
     }
     throw new Error(`Unexpected git command: ${command}`);
   });
+
+const codedReadError = (code: string): Error & { readonly code: string } =>
+  Object.assign(new Error(`read failed: ${code}`), { code });
+
+const actionAwareRunGit = ({
+  mergeBaseResult = `${mergeBaseOid}\n`,
+  statuses = [""],
+  heads = [headOid],
+}: {
+  readonly mergeBaseResult?: string;
+  readonly statuses?: readonly string[];
+  readonly heads?: readonly string[];
+} = {}) => {
+  let headRead = 0;
+  let statusRead = 0;
+  const commands: string[] = [];
+  const runGit = vi.fn(async (_root: string, args: readonly string[]): Promise<string> => {
+    const command = args.join(" ");
+    commands.push(command);
+    if (command === "symbolic-ref --quiet --short HEAD") return "feature\n";
+    if (command === "symbolic-ref --quiet refs/remotes/origin/HEAD") {
+      return "refs/remotes/origin/main\n";
+    }
+    if (
+      command === "rev-parse --verify refs/heads/main" ||
+      command === "rev-parse --verify refs/remotes/origin/main"
+    ) {
+      return `${baseOid}\n`;
+    }
+    if (command === "rev-parse HEAD") {
+      const oid = heads[Math.min(headRead, heads.length - 1)] ?? headOid;
+      headRead += 1;
+      return `${oid}\n`;
+    }
+    if (command.startsWith(`merge-base --all ${baseOid} `)) return mergeBaseResult;
+    if (
+      command.startsWith(`diff --name-status -z --no-renames ${mergeBaseOid} `) &&
+      command.endsWith(" --")
+    ) {
+      return "";
+    }
+    if (command === "status --porcelain=v1 -z --untracked-files=all") {
+      const status = statuses[Math.min(statusRead, statuses.length - 1)] ?? "";
+      statusRead += 1;
+      return status;
+    }
+    throw new Error(`Unexpected git command: ${command}`);
+  });
+  return { commands, runGit };
+};
+
+const expectRejectedWithoutAuthorization = (result: ScopeAttestationResult): void => {
+  expect(result).toMatchObject({ kind: "rejected" });
+  expect(result).not.toHaveProperty("checkpoint");
+  expect(result).not.toHaveProperty("receipt");
+};
 
 let temporaryRoot: string | undefined;
 
@@ -112,6 +173,64 @@ describe("createGitScopeAttestor", () => {
     if (final.kind !== "final-receipt") expect.unreachable("final scope should attest");
     expect(final.receipt.docs.paths).toEqual(["README.md"]);
     expect(final.receipt.reviewed).toEqual(review.checkpoint.reviewed);
+  });
+
+  it("excludes default-only post-fork additions and includes branch-owned committed paths", async () => {
+    const defaultTipOid = "c".repeat(40);
+    const storyHeadOid = "d".repeat(40);
+    const forkOid = "b".repeat(40);
+    const branchOwnedPath = "src/branch-owned.ts";
+    const defaultOnlyPath = "src/default-only.ts";
+    const runGit = vi.fn(async (_root: string, args: readonly string[]) => {
+      const command = args.join(" ");
+      if (command === "symbolic-ref --quiet --short HEAD") return "feature\n";
+      if (command === "symbolic-ref --quiet refs/remotes/origin/HEAD") {
+        return "refs/remotes/origin/main\n";
+      }
+      if (
+        command === "rev-parse --verify refs/heads/main" ||
+        command === "rev-parse --verify refs/remotes/origin/main"
+      ) {
+        return `${defaultTipOid}\n`;
+      }
+      if (command === "rev-parse HEAD") return `${storyHeadOid}\n`;
+      if (command === `merge-base --all ${defaultTipOid} ${storyHeadOid}`) {
+        return `${forkOid}\n`;
+      }
+      if (command === `diff --name-status -z --no-renames ${forkOid} ${storyHeadOid} --`) {
+        return `A\0${branchOwnedPath}\0`;
+      }
+      if (command === `diff --name-only -z ${defaultTipOid} ${storyHeadOid} --`) {
+        return `${branchOwnedPath}\0${defaultOnlyPath}\0`;
+      }
+      if (command === "status --porcelain=v1 -z --untracked-files=all") return "";
+      throw new Error(`Unexpected git command: ${command}`);
+    });
+    const readBytes = vi.fn(async (_root: string, path: string) => {
+      if (path === branchOwnedPath) return encoded("branch-owned\n");
+      const error = new Error(`missing ${path}`) as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    });
+    const attest = createGitScopeAttestor({ runGit, readBytes });
+
+    const result = await attest({ phase: "review", ...identity, qualityGate });
+
+    expect(result).toMatchObject({
+      kind: "review-checkpoint",
+      checkpoint: {
+        baseOid: defaultTipOid,
+        reviewed: { paths: [branchOwnedPath] },
+      },
+    });
+    expect(runGit).toHaveBeenCalledWith("/repo", [
+      "merge-base",
+      "--all",
+      defaultTipOid,
+      storyHeadOid,
+    ]);
+    expect(readBytes).toHaveBeenCalledTimes(1);
+    expect(readBytes).toHaveBeenCalledWith("/repo", branchOwnedPath);
   });
 
   it("invalidates review when a reviewed byte changes after approval", async () => {
@@ -457,7 +576,147 @@ describe("createGitScopeAttestor", () => {
   );
 
   it.each([
-    ["deleted", " D src/deleted.ts\0"],
+    {
+      caseName: "committed",
+      headOid: "d".repeat(40),
+      committedStatus: "D\0src/deleted.ts\0",
+      porcelain: "",
+    },
+    {
+      caseName: "staged",
+      headOid: baseOid,
+      committedStatus: "",
+      porcelain: "D  src/deleted.ts\0",
+    },
+    {
+      caseName: "unstaged",
+      headOid: baseOid,
+      committedStatus: "",
+      porcelain: " D src/deleted.ts\0",
+    },
+  ])(
+    "normalizes coded ENOENT for a stable $caseName tracked deletion without aliasing empty content",
+    async ({ headOid: deletionHeadOid, committedStatus, porcelain }) => {
+      const deletedPath = "src/deleted.ts";
+      const readBytes = vi.fn(async (_root: string, path: string): Promise<Uint8Array> => {
+        expect(path).toBe(deletedPath);
+        throw Object.assign(new Error("tracked deletion is absent"), { code: "ENOENT" });
+      });
+      const attest = createGitScopeAttestor({
+        runGit: async (_root, args) => {
+          const command = args.join(" ");
+          if (command === "symbolic-ref --quiet --short HEAD") return "feature\n";
+          if (command === "symbolic-ref --quiet refs/remotes/origin/HEAD") {
+            return "refs/remotes/origin/main\n";
+          }
+          if (
+            command === "rev-parse --verify refs/heads/main" ||
+            command === "rev-parse --verify refs/remotes/origin/main"
+          ) {
+            return `${baseOid}\n`;
+          }
+          if (command === "rev-parse HEAD") return `${deletionHeadOid}\n`;
+          if (command === `merge-base --all ${baseOid} ${deletionHeadOid}`) return `${baseOid}\n`;
+          if (command === `diff --name-status -z --no-renames ${baseOid} ${deletionHeadOid} --`) {
+            return committedStatus;
+          }
+          if (command === "status --porcelain=v1 -z --untracked-files=all") return porcelain;
+          throw new Error(`Unexpected git command: ${command}`);
+        },
+        readBytes,
+      });
+
+      const result = await attest({ phase: "review", ...identity, qualityGate });
+
+      expect(result.kind).toBe("review-checkpoint");
+      if (result.kind !== "review-checkpoint") expect.unreachable("deletion should attest");
+      expect(result.checkpoint.reviewed.paths).toEqual([deletedPath]);
+      expect(result.checkpoint.reviewed.digest).not.toBe(
+        createCanonicalRepositoryScope([{ path: deletedPath, bytes: new Uint8Array() }]).digest,
+      );
+      expect(readBytes).toHaveBeenCalledWith(identity.projectRoot, deletedPath);
+    },
+  );
+
+  it.each([
+    {
+      caseName: "present-path coded ENOENT",
+      statuses: [" M src/file.ts\0"],
+      heads: [headOid],
+      readResult: codedReadError("ENOENT"),
+    },
+    {
+      caseName: "absent-path non-ENOENT",
+      statuses: [" D src/file.ts\0"],
+      heads: [headOid],
+      readResult: codedReadError("EACCES"),
+    },
+    {
+      caseName: "deletion reappearance",
+      statuses: [" D src/file.ts\0"],
+      heads: [headOid],
+      readResult: encoded("reappeared\n"),
+    },
+    {
+      caseName: "HEAD movement during absence confirmation",
+      statuses: [" D src/file.ts\0"],
+      heads: [headOid, "e".repeat(40)],
+      readResult: codedReadError("ENOENT"),
+    },
+    {
+      caseName: "status movement during absence confirmation",
+      statuses: [" D src/file.ts\0", " M src/file.ts\0"],
+      heads: [headOid],
+      readResult: codedReadError("ENOENT"),
+    },
+  ])("rejects $caseName without authorizing scope", async ({ statuses, heads, readResult }) => {
+    const { commands, runGit } = actionAwareRunGit({ statuses, heads });
+    const readBytes = vi.fn(async (): Promise<Uint8Array> => {
+      if (readResult instanceof Error) throw readResult;
+      return readResult;
+    });
+    const attest = createGitScopeAttestor({ runGit, readBytes });
+
+    const result = await attest({ phase: "review", ...identity, qualityGate });
+
+    expectRejectedWithoutAuthorization(result);
+    expect(commands).toContain(`merge-base --all ${baseOid} ${headOid}`);
+    expect(readBytes).toHaveBeenCalledOnce();
+    if (heads.length > 1) {
+      expect(commands.filter((command) => command === "rev-parse HEAD")).toHaveLength(2);
+    }
+    if (statuses.length > 1) {
+      expect(
+        commands.filter((command) => command === "status --porcelain=v1 -z --untracked-files=all"),
+      ).toHaveLength(2);
+    }
+  });
+
+  it.each([
+    { caseName: "missing", mergeBaseResult: "" },
+    { caseName: "malformed", mergeBaseResult: `not-${mergeBaseOid}\n` },
+    {
+      caseName: "multiple",
+      mergeBaseResult: `${mergeBaseOid}\n${"b".repeat(40)}\n`,
+    },
+  ])(
+    "rejects $caseName merge-base output before scope authorization",
+    async ({ mergeBaseResult }) => {
+      const { commands, runGit } = actionAwareRunGit({ mergeBaseResult });
+      const readBytes = vi.fn(async () => encoded("forbidden"));
+      const attest = createGitScopeAttestor({ runGit, readBytes });
+
+      const result = await attest({ phase: "review", ...identity, qualityGate });
+
+      expectRejectedWithoutAuthorization(result);
+      expect(commands).toContain(`merge-base --all ${baseOid} ${headOid}`);
+      expect(commands.some((command) => command.startsWith("diff "))).toBe(false);
+      expect(commands).not.toContain("status --porcelain=v1 -z --untracked-files=all");
+      expect(readBytes).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     ["renamed", "R  src/renamed.ts\0src/original.ts\0"],
     ["copied", "C  src/copied.ts\0src/original.ts\0"],
   ])("rejects %s porcelain before reading repository bytes", async (_caseName, porcelain) => {

@@ -1,4 +1,4 @@
-/* eslint-disable jsdoc/require-description, jsdoc/no-blank-blocks, jsdoc/require-param, jsdoc/require-returns, jsdoc/require-example, @typescript-eslint/no-magic-numbers -- Git porcelain parsing and fixed-argv observation are kept together at the trust boundary. */
+/* eslint-disable jsdoc/require-description, jsdoc/no-blank-blocks, jsdoc/require-param, jsdoc/require-returns, jsdoc/require-example, @typescript-eslint/no-magic-numbers, max-lines -- Git porcelain parsing and fixed-argv observation are kept together at the trust boundary. */
 import { spawn } from "node:child_process";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { relative, resolve } from "node:path";
@@ -8,6 +8,7 @@ import {
   createFinalScopeReceipt,
   createReviewScopeCheckpoint,
   redactText,
+  type RepositoryFileSnapshot,
 } from "../security/index.js";
 import { observeSynchronizedDefaultBaseOid } from "./git-default-base.js";
 
@@ -43,8 +44,61 @@ export function createGitScopeAttestor(
 interface ObservedGitScope {
   readonly branch: string;
   readonly baseOid: string;
-  readonly files: readonly { readonly path: string; readonly bytes: Uint8Array }[];
+  readonly files: readonly RepositoryFileSnapshot[];
 }
+
+type GitPathAction = "present" | "absent";
+
+interface GitPathObservation {
+  readonly path: string;
+  readonly action: GitPathAction;
+}
+
+interface CommittedScope {
+  readonly headOid: string;
+  readonly paths: readonly GitPathObservation[];
+}
+
+const STATUS_ARGS = ["status", "--porcelain=v1", "-z", "--untracked-files=all"] as const;
+
+const compareGitPaths = (left: GitPathObservation, right: GitPathObservation): number =>
+  left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+
+const mergePathObservations = (
+  committed: readonly GitPathObservation[],
+  dirty: readonly GitPathObservation[],
+): GitPathObservation[] => {
+  const paths = new Map(committed.map(({ path, action }) => [path, action]));
+  for (const { path, action } of dirty) {
+    paths.set(path, action);
+  }
+  return [...paths].map(([path, action]) => ({ path, action })).sort(compareGitPaths);
+};
+
+const isAbsentObservation = ({ action }: GitPathObservation): boolean => action === "absent";
+
+interface AbsenceConfirmation {
+  readonly observations: readonly GitPathObservation[];
+  readonly headOid: string;
+  readonly porcelain: string;
+}
+
+const confirmStableAbsence = async (
+  dependencies: GitScopeAttestorDependencies,
+  projectRoot: string,
+  confirmation: AbsenceConfirmation,
+): Promise<void> => {
+  if (!confirmation.observations.some(isAbsentObservation)) {
+    return;
+  }
+  const [confirmedHeadOid, confirmedPorcelain] = await Promise.all([
+    readHeadOid(dependencies, projectRoot),
+    dependencies.runGit(projectRoot, STATUS_ARGS),
+  ]);
+  if (confirmedHeadOid !== confirmation.headOid || confirmedPorcelain !== confirmation.porcelain) {
+    throw new TypeError("Git scope changed while confirming an absent path.");
+  }
+};
 
 const observeGitScope = async (
   dependencies: GitScopeAttestorDependencies,
@@ -54,24 +108,52 @@ const observeGitScope = async (
     await dependencies.runGit(request.projectRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"])
   ).trim();
   const baseOid = await observeSynchronizedDefaultBaseOid(dependencies.runGit, request.projectRoot);
-  const committedPaths = await observeCommittedPaths(dependencies, request.projectRoot, baseOid);
-  const dirtyPaths = parseChangedPaths(
-    await dependencies.runGit(request.projectRoot, [
-      "status",
-      "--porcelain=v1",
-      "-z",
-      "--untracked-files=all",
-    ]),
-  );
-  const paths = [...new Set([...committedPaths, ...dirtyPaths])].sort();
+  const committed = await observeCommittedScope(dependencies, request.projectRoot, baseOid);
+  const porcelain = await dependencies.runGit(request.projectRoot, STATUS_ARGS);
+  const observations = mergePathObservations(committed.paths, parseChangedPaths(porcelain));
   const files = await Promise.all(
-    paths.map(async (path) => ({
-      path,
-      bytes: await dependencies.readBytes(request.projectRoot, path),
-    })),
+    observations.map((observation) =>
+      observeRepositoryFile(dependencies, request.projectRoot, observation),
+    ),
   );
+  await confirmStableAbsence(dependencies, request.projectRoot, {
+    observations,
+    headOid: committed.headOid,
+    porcelain,
+  });
   return { branch, baseOid, files };
 };
+
+const observeAbsentRepositoryFile = async (
+  dependencies: GitScopeAttestorDependencies,
+  projectRoot: string,
+  path: string,
+): Promise<RepositoryFileSnapshot> => {
+  try {
+    await dependencies.readBytes(projectRoot, path);
+  } catch (error) {
+    if (isCodedEnoent(error)) {
+      return { path, absent: true };
+    }
+    throw error;
+  }
+  throw new TypeError("Git scope path reappeared while confirming its deletion.");
+};
+
+const observeRepositoryFile = async (
+  dependencies: GitScopeAttestorDependencies,
+  projectRoot: string,
+  observation: GitPathObservation,
+): Promise<RepositoryFileSnapshot> =>
+  observation.action === "present"
+    ? {
+        path: observation.path,
+        bytes: await dependencies.readBytes(projectRoot, observation.path),
+      }
+    : observeAbsentRepositoryFile(dependencies, projectRoot, observation.path);
+
+const isCodedEnoent = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && Reflect.get(error, "code") === "ENOENT";
 
 const checkpointForObservedScope = (request: ScopeAttestationRequest, observed: ObservedGitScope) =>
   createReviewScopeCheckpoint({
@@ -128,58 +210,100 @@ const attestObservedScope = async (
   }
 };
 
-const observeCommittedPaths = async (
+const COMMITTED_DIFF_ARGS = ["diff", "--name-status", "-z", "--no-renames"] as const;
+
+const observeCommittedScope = async (
   dependencies: GitScopeAttestorDependencies,
   projectRoot: string,
   baseOid: string,
-): Promise<string[]> => {
-  const headOid = (await dependencies.runGit(projectRoot, ["rev-parse", "HEAD"])).trim();
+): Promise<CommittedScope> => {
+  const headOid = await readHeadOid(dependencies, projectRoot);
   if (headOid === baseOid) {
-    return [];
+    return { headOid, paths: [] };
   }
-  return parseCommittedPaths(
-    await dependencies.runGit(projectRoot, ["diff", "--name-only", "-z", baseOid, headOid, "--"]),
+  const mergeBase = parseMergeBase(
+    await dependencies.runGit(projectRoot, ["merge-base", "--all", baseOid, headOid]),
   );
+  return {
+    headOid,
+    paths: parseCommittedPaths(
+      await dependencies.runGit(projectRoot, [...COMMITTED_DIFF_ARGS, mergeBase, headOid, "--"]),
+    ),
+  };
 };
 
-const SUPPORTED_CHANGED_PATH_STATUSES = Object.freeze([" M", "M ", "MM", "??"] as const);
+const readHeadOid = async (
+  dependencies: GitScopeAttestorDependencies,
+  projectRoot: string,
+): Promise<string> => parseObjectId(await dependencies.runGit(projectRoot, ["rev-parse", "HEAD"]));
 
-const requireSupportedChangedPathStatus = (status: string): void => {
-  if (/[DRC]/u.test(status)) {
-    throw new TypeError(
-      "Deleted, renamed, or copied paths cannot be attested by this receipt version.",
-    );
+const parseObjectId = (output: string): string => {
+  if (!/^[0-9a-f]{40}\n?$/u.test(output)) {
+    throw new TypeError("Git scope requires a lowercase 40-character HEAD OID.");
   }
-  if (!SUPPORTED_CHANGED_PATH_STATUSES.some((supportedStatus) => supportedStatus === status)) {
-    throw new TypeError("Unsupported Git porcelain scope status.");
-  }
+  return output.replace(/\n$/u, "");
 };
 
-const parseChangedPaths = (porcelain: string): string[] => {
+const parseMergeBase = (output: string): string => {
+  if (!/^[0-9a-f]{40}\n?$/u.test(output)) {
+    throw new TypeError("Git scope requires exactly one merge base.");
+  }
+  return output.replace(/\n$/u, "");
+};
+
+const CHANGED_PATH_ACTIONS = new Map<string, GitPathAction>([
+  [" M", "present"],
+  ["M ", "present"],
+  ["MM", "present"],
+  ["??", "present"],
+  ["D ", "absent"],
+  [" D", "absent"],
+]);
+
+const parseChangedPaths = (porcelain: string): GitPathObservation[] => {
   const entries = porcelain.split("\0");
   const terminalRecord = entries.pop();
   if ([terminalRecord !== "", entries.some((entry) => entry.length === 0)].some(Boolean)) {
     throw new TypeError("Malformed Git porcelain scope output.");
   }
-  const paths: string[] = [];
+  const paths: GitPathObservation[] = [];
   for (const entry of entries) {
     if (entry.length < 4 || entry[2] !== " ") {
       throw new TypeError("Malformed Git porcelain scope entry.");
     }
-    requireSupportedChangedPathStatus(entry.slice(0, 2));
+    const action = CHANGED_PATH_ACTIONS.get(entry.slice(0, 2));
+    if (action === undefined) {
+      throw new TypeError("Unsupported Git porcelain scope status.");
+    }
     const path = entry.slice(3);
     if (!path.startsWith(".pi/pipeline/")) {
-      paths.push(path);
+      paths.push({ path, action });
     }
   }
   return paths;
 };
 
-const parseCommittedPaths = (output: string): string[] => {
-  if (output.length > 0 && !output.endsWith("\0")) {
-    throw new TypeError("Malformed Git committed scope output.");
+const areSupportedCommittedFields = (fields: readonly string[]): boolean =>
+  fields.length % 2 === 0 &&
+  fields.every((field, index) => field !== "" && (index % 2 === 1 || /^[AMD]$/u.test(field)));
+
+const parseCommittedPaths = (output: string): GitPathObservation[] => {
+  if (output === "") {
+    return [];
   }
-  return output.split("\0").filter((path) => path.length > 0 && !path.startsWith(".pi/pipeline/"));
+  const fields = output.split("\0");
+  if (fields.pop() !== "" || !areSupportedCommittedFields(fields)) {
+    throw new TypeError("Unsupported or malformed Git committed scope output.");
+  }
+  const paths: GitPathObservation[] = [];
+  for (let index = 0; index < fields.length; index += 2) {
+    const action = fields[index] === "D" ? "absent" : "present";
+    const path = fields[index + 1] ?? "";
+    if (!path.startsWith(".pi/pipeline/")) {
+      paths.push({ path, action });
+    }
+  }
+  return paths;
 };
 
 const documentationFileNames = new Set([
