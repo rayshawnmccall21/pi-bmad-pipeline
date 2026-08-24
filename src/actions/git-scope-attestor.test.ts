@@ -268,6 +268,40 @@ describe("createGitScopeAttestor", () => {
     ).resolves.toEqual({ kind: "review-invalidated", changedPaths: ["src/app.ts"] });
   });
 
+  it.each([
+    "docs/agent-guide.md",
+    "docs/command-reference.md",
+    "docs/config-guide.md",
+    "docs/context-reference.md",
+    "docs/instruction-guide.md",
+    "docs/prompt-guide.md",
+    "docs/skill-reference.md",
+    "docs/spec-guide.md",
+    "docs/workflow-overview.md",
+  ])(
+    "keeps instruction-bearing near-miss %s in reviewed scope so deletion invalidates approval",
+    async (path) => {
+      const { runGit } = actionAwareRunGit({
+        statuses: [` M ${path}\0`, ` D ${path}\0`, ` D ${path}\0`],
+      });
+      let readCount = 0;
+      const attest = createGitScopeAttestor({
+        runGit,
+        readBytes: async () => {
+          readCount += 1;
+          if (readCount === 1) return encoded("executable instructions\n");
+          throw codedReadError("ENOENT");
+        },
+      });
+      const review = await attest({ phase: "review", ...identity, qualityGate });
+      if (review.kind !== "review-checkpoint") expect.unreachable("review should attest");
+
+      await expect(
+        attest({ phase: "final", ...identity, reviewCheckpoint: review.checkpoint, qualityGate }),
+      ).resolves.toEqual({ kind: "review-invalidated", changedPaths: [path] });
+    },
+  );
+
   it.each(["main", "master"] as const)(
     "authenticates synchronized %s as the exact receipt base",
     async (defaultBranch) => {
@@ -554,6 +588,157 @@ describe("createGitScopeAttestor", () => {
 
     expect(result).toMatchObject({ kind: "rejected" });
     expect(readBytes).not.toHaveBeenCalled();
+  });
+
+  it("rejects conflicting duplicate porcelain records before reading or authorizing scope", async () => {
+    const path = "src/app.ts";
+    const readBytes = vi.fn(async () => encoded("forbidden"));
+    const attest = createGitScopeAttestor({
+      runGit: authenticatedRunGit(`D  ${path}\0 M ${path}\0`),
+      readBytes,
+    });
+
+    const result = await attest({ phase: "review", ...identity, qualityGate });
+
+    expectRejectedWithoutAuthorization(result);
+    expect(readBytes).not.toHaveBeenCalled();
+  });
+
+  it("rejects conflicting duplicate committed records before status, bytes, or authorization", async () => {
+    const path = "src/app.ts";
+    const commands: string[] = [];
+    const readBytes = vi.fn(async () => encoded("forbidden"));
+    const attest = createGitScopeAttestor({
+      runGit: async (_root, args) => {
+        const command = args.join(" ");
+        commands.push(command);
+        if (command === "symbolic-ref --quiet --short HEAD") return "feature\n";
+        if (command === "symbolic-ref --quiet refs/remotes/origin/HEAD") {
+          return "refs/remotes/origin/main\n";
+        }
+        if (
+          command === "rev-parse --verify refs/heads/main" ||
+          command === "rev-parse --verify refs/remotes/origin/main"
+        ) {
+          return `${baseOid}\n`;
+        }
+        if (command === "rev-parse HEAD") return `${headOid}\n`;
+        if (command === `merge-base --all ${baseOid} ${headOid}`) {
+          return `${mergeBaseOid}\n`;
+        }
+        if (command === `diff --name-status -z --no-renames ${mergeBaseOid} ${headOid} --`) {
+          return `A\0${path}\0D\0${path}\0`;
+        }
+        if (command === "status --porcelain=v1 -z --untracked-files=all") return "";
+        throw new Error(`Unexpected git command: ${command}`);
+      },
+      readBytes,
+    });
+
+    const result = await attest({ phase: "review", ...identity, qualityGate });
+
+    expectRejectedWithoutAuthorization(result);
+    expect(commands).not.toContain("status --porcelain=v1 -z --untracked-files=all");
+    expect(readBytes).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["same-action ordinary", " M src/app.ts\0 M src/app.ts\0"],
+    ["duplicate excluded", " M .pi/pipeline/state/run.json\0 M .pi/pipeline/state/run.json\0"],
+  ] as const)(
+    "rejects %s duplicate porcelain paths before authorization",
+    async (_caseName, status) => {
+      const readBytes = vi.fn(async () => encoded("forbidden"));
+      const attest = createGitScopeAttestor({
+        runGit: authenticatedRunGit(status),
+        readBytes,
+      });
+
+      const result = await attest({ phase: "review", ...identity, qualityGate });
+
+      expectRejectedWithoutAuthorization(result);
+      expect(readBytes).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["same-action ordinary", "A\0src/app.ts\0A\0src/app.ts\0"],
+    ["duplicate excluded", "A\0.pi/pipeline/state/run.json\0A\0.pi/pipeline/state/run.json\0"],
+  ] as const)(
+    "rejects %s duplicate committed paths before dirty evidence or authorization",
+    async (_caseName, committedOutput) => {
+      const commands: string[] = [];
+      const readBytes = vi.fn(async () => encoded("forbidden"));
+      const attest = createGitScopeAttestor({
+        runGit: async (_root, args) => {
+          const command = args.join(" ");
+          commands.push(command);
+          if (command === "symbolic-ref --quiet --short HEAD") return "feature\n";
+          if (command === "symbolic-ref --quiet refs/remotes/origin/HEAD") {
+            return "refs/remotes/origin/main\n";
+          }
+          if (
+            command === "rev-parse --verify refs/heads/main" ||
+            command === "rev-parse --verify refs/remotes/origin/main"
+          ) {
+            return `${baseOid}\n`;
+          }
+          if (command === "rev-parse HEAD") return `${headOid}\n`;
+          if (command === `merge-base --all ${baseOid} ${headOid}`) {
+            return `${mergeBaseOid}\n`;
+          }
+          if (command === `diff --name-status -z --no-renames ${mergeBaseOid} ${headOid} --`) {
+            return committedOutput;
+          }
+          throw new Error(`Unexpected git command: ${command}`);
+        },
+        readBytes,
+      });
+
+      const result = await attest({ phase: "review", ...identity, qualityGate });
+
+      expectRejectedWithoutAuthorization(result);
+      expect(commands).not.toContain("status --porcelain=v1 -z --untracked-files=all");
+      expect(readBytes).not.toHaveBeenCalled();
+    },
+  );
+
+  it("lets dirty evidence override one committed observation of the same path", async () => {
+    const path = "src/app.ts";
+    const readBytes = vi.fn(async () => encoded("dirty file is present\n"));
+    const attest = createGitScopeAttestor({
+      runGit: async (_root, args) => {
+        const command = args.join(" ");
+        if (command === "symbolic-ref --quiet --short HEAD") return "feature\n";
+        if (command === "symbolic-ref --quiet refs/remotes/origin/HEAD") {
+          return "refs/remotes/origin/main\n";
+        }
+        if (
+          command === "rev-parse --verify refs/heads/main" ||
+          command === "rev-parse --verify refs/remotes/origin/main"
+        ) {
+          return `${baseOid}\n`;
+        }
+        if (command === "rev-parse HEAD") return `${headOid}\n`;
+        if (command === `merge-base --all ${baseOid} ${headOid}`) return `${mergeBaseOid}\n`;
+        if (command === `diff --name-status -z --no-renames ${mergeBaseOid} ${headOid} --`) {
+          return `D\0${path}\0`;
+        }
+        if (command === "status --porcelain=v1 -z --untracked-files=all") {
+          return ` M ${path}\0`;
+        }
+        throw new Error(`Unexpected git command: ${command}`);
+      },
+      readBytes,
+    });
+
+    const result = await attest({ phase: "review", ...identity, qualityGate });
+
+    expect(result).toMatchObject({
+      kind: "review-checkpoint",
+      checkpoint: { reviewed: { paths: [path] } },
+    });
+    expect(readBytes).toHaveBeenCalledOnce();
   });
 
   it.each([

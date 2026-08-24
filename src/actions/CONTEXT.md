@@ -17,7 +17,7 @@
 - Settlement emits one terminal result event and preserves durable state as the authoritative run record.
 - The composition root invokes the fixed-argv Git scope attestor only during locked FSM execution and binds observations to the exact project root and authenticated run identity; final retry uses the durable checkpoint run identity rather than a fresh lock invocation ID.
 - Git attestation accepts only an `origin/HEAD` default of `main` or `master`, requires matching local/remote refs at one lowercase 40-hex OID, and re-reads that identity to reject a base that moves during authentication.
-- Canonical observed scope combines unique merge-base-to-`HEAD` committed actions with dirty actions and deliberately excludes `.pi/pipeline/` durable runner state. The unique merge base identifies the story fork, while the authenticated synchronized current default tip remains the receipt `baseOid` trust anchor; default-only post-fork paths are excluded and never read or tombstoned.
+- Canonical observed scope combines unique merge-base-to-`HEAD` committed actions with dirty actions and deliberately excludes `.pi/pipeline/` durable runner state. Each Git evidence source must name every path at most once before exclusions or byte reads; one dirty observation may override one committed observation of the same path. The unique merge base identifies the story fork, while the authenticated synchronized current default tip remains the receipt `baseOid` trust anchor; default-only post-fork paths are excluded and never read or tombstoned.
 
 ## Gotchas
 
@@ -25,7 +25,7 @@
 - Resume identity includes the RunDef digest, so code command/argv changes cannot reuse prior state.
 - `projectRoot` is passed unchanged as the exact executor cwd; actions do not create a worktree.
 - Register payload gates before compiling YAML that references them.
-- Never accept child/model filenames as mutation authority; the default attestor derives canonical merge-base-to-`HEAD` committed plus dirty observations from Git and physically confined repository reads. Its fixed docs classifier excludes prompts, skills, specs, workflow/configuration, hidden instruction trees, and executable context Markdown.
+- Never accept child/model filenames as mutation authority; the default attestor derives canonical merge-base-to-`HEAD` committed plus dirty observations from Git and physically confined repository reads. Its fixed docs classifier excludes prompts, skills, specs, workflow/configuration, hidden instruction trees, and executable context Markdown; protected instruction tokens anywhere in a Markdown basename remain non-documentation even when followed by a suffix.
 - A committed or exact staged/unstaged tracked deletion is a deterministic tombstone, distinct from a present empty or zero-byte file. Rename, copy, unmerged, mixed, malformed, and unsupported statuses remain rejected.
 - A coded `ENOENT` is normalized only when stable, unchanged Git evidence confirms deletion absence. Attestation rejects and fails closed on ambiguous evidence or topology, a reappearance or read race, and any unrelated read error; none can authorize a checkpoint or receipt.
 
@@ -33,3 +33,4 @@
 
 - 2026-08-14 — Mixed-stage composition belongs at the existing executor factory seam; the action and FSM can keep one injected executor contract.
 - 2026-08-20 — Default-base authentication must bind symbolic default-branch policy, local/remote object identity, and a second read against movement before repository bytes can authorize a receipt.
+- 2026-08-24 — Duplicate paths inside either Git evidence stream are ambiguous and must reject before exclusions or reads; cross-stream dirty evidence still legitimately overrides committed evidence.

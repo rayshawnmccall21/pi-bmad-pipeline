@@ -260,6 +260,23 @@ const CHANGED_PATH_ACTIONS = new Map<string, GitPathAction>([
   [" D", "absent"],
 ]);
 
+const assertUniqueGitPath = (observedPaths: Set<string>, path: string, source: string): void => {
+  if (observedPaths.has(path)) {
+    throw new TypeError(`Duplicate Git ${source} scope path.`);
+  }
+  observedPaths.add(path);
+};
+
+const appendAttestedObservation = (
+  paths: GitPathObservation[],
+  path: string,
+  action: GitPathAction,
+): void => {
+  if (!path.startsWith(".pi/pipeline/")) {
+    paths.push({ path, action });
+  }
+};
+
 const parseChangedPaths = (porcelain: string): GitPathObservation[] => {
   const entries = porcelain.split("\0");
   const terminalRecord = entries.pop();
@@ -267,6 +284,7 @@ const parseChangedPaths = (porcelain: string): GitPathObservation[] => {
     throw new TypeError("Malformed Git porcelain scope output.");
   }
   const paths: GitPathObservation[] = [];
+  const observedPaths = new Set<string>();
   for (const entry of entries) {
     if (entry.length < 4 || entry[2] !== " ") {
       throw new TypeError("Malformed Git porcelain scope entry.");
@@ -276,9 +294,8 @@ const parseChangedPaths = (porcelain: string): GitPathObservation[] => {
       throw new TypeError("Unsupported Git porcelain scope status.");
     }
     const path = entry.slice(3);
-    if (!path.startsWith(".pi/pipeline/")) {
-      paths.push({ path, action });
-    }
+    assertUniqueGitPath(observedPaths, path, "porcelain");
+    appendAttestedObservation(paths, path, action);
   }
   return paths;
 };
@@ -287,21 +304,20 @@ const areSupportedCommittedFields = (fields: readonly string[]): boolean =>
   fields.length % 2 === 0 &&
   fields.every((field, index) => field !== "" && (index % 2 === 1 || /^[AMD]$/u.test(field)));
 
+const committedPathAction = (status: string): GitPathAction =>
+  status === "D" ? "absent" : "present";
+
 const parseCommittedPaths = (output: string): GitPathObservation[] => {
-  if (output === "") {
-    return [];
-  }
   const fields = output.split("\0");
   if (fields.pop() !== "" || !areSupportedCommittedFields(fields)) {
     throw new TypeError("Unsupported or malformed Git committed scope output.");
   }
   const paths: GitPathObservation[] = [];
+  const observedPaths = new Set<string>();
   for (let index = 0; index < fields.length; index += 2) {
-    const action = fields[index] === "D" ? "absent" : "present";
     const path = fields[index + 1] ?? "";
-    if (!path.startsWith(".pi/pipeline/")) {
-      paths.push({ path, action });
-    }
+    assertUniqueGitPath(observedPaths, path, "committed");
+    appendAttestedObservation(paths, path, committedPathAction(fields[index] ?? ""));
   }
   return paths;
 };
@@ -362,7 +378,7 @@ const isExecutableDocumentation = (
     executableInstructionNames.has(lowerFileName),
     lowerSegments.some((segment) => nonDocumentationSegments.has(segment)),
     lowerSegments.slice(0, -1).some((segment) => segment.startsWith(".")),
-    /(?:^|[._-])(?:agents?|commands?|config(?:uration)?|contexts?|instructions?|prompts?|skills?|spec(?:ification)?s?|workflows?)\.md$/u.test(
+    /(?:^|[._-])(?:agents?|commands?|config(?:uration)?|contexts?|instructions?|prompts?|skills?|spec(?:ification)?s?|workflows?)(?:[._-].*)?\.md$/u.test(
       lowerFileName,
     ),
   ].some(Boolean);
