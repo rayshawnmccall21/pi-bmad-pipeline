@@ -149,17 +149,50 @@ describe("durable state, recovery, and concurrency", () => {
 
   it("backfills a current-version missing review checkpoint without spawning a stage", async () => {
     const root = makeProject();
+    const pipelinePath = ".pi/bmad/pipelines/legacy-review-recovery.yaml";
+    const reviewedPath = "src/reviewed.ts";
+    const deletedPaths = ["src/deleted-source.ts", "tests/deleted-source.test.ts"];
+    const defaultOnlyPath = ".pi/extensions/experts.ts";
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, "tests"), { recursive: true });
+    for (const path of deletedPaths) {
+      writeFileSync(join(root, path), `export const victim = ${JSON.stringify(path)};\n`, "utf8");
+    }
+    runGit(root, ["add", "--", ...deletedPaths]);
+    runGit(root, ["commit", "-m", "seed tracked files before story fork"]);
+    const forkOid = runGit(root, ["rev-parse", "HEAD"]);
+    runGit(root, ["update-ref", "refs/remotes/origin/main", forkOid]);
+
     runGit(root, ["switch", "-c", CURRENT_REVIEW_BRANCH]);
     writePipeline(root, "legacy-review-recovery", LEGACY_REVIEW_PIPELINE);
-    const pipelinePath = ".pi/bmad/pipelines/legacy-review-recovery.yaml";
-    mkdirSync(join(root, "src"), { recursive: true });
-    writeFileSync(join(root, "src", "reviewed.ts"), 'export const reviewed = "stable";\n', "utf8");
-    runGit(root, ["add", "--", pipelinePath, "src/reviewed.ts"]);
+    writeFileSync(join(root, reviewedPath), 'export const reviewed = "stable";\n', "utf8");
+    runGit(root, ["add", "--", pipelinePath, reviewedPath]);
     runGit(root, ["commit", "-m", "seed current-version reviewed scope"]);
+    const featureHeadOid = runGit(root, ["rev-parse", "HEAD"]);
+
+    runGit(root, ["switch", "main"]);
+    mkdirSync(join(root, ".pi", "extensions"), { recursive: true });
+    writeFileSync(join(root, defaultOnlyPath), 'export const defaultOnly = "later";\n', "utf8");
+    runGit(root, ["add", "--", defaultOnlyPath]);
+    runGit(root, ["commit", "-m", "advance default after story fork"]);
+    const authenticatedDefaultTip = runGit(root, ["rev-parse", "HEAD"]);
+    runGit(root, ["update-ref", "refs/remotes/origin/main", authenticatedDefaultTip]);
+    expect(authenticatedDefaultTip).not.toBe(forkOid);
+    expect(runGit(root, ["rev-parse", "refs/remotes/origin/main"])).toBe(authenticatedDefaultTip);
+    expect(runGit(root, ["merge-base", authenticatedDefaultTip, featureHeadOid])).toBe(forkOid);
+
+    runGit(root, ["switch", CURRENT_REVIEW_BRANCH]);
+    runGit(root, ["rm", "--", ...deletedPaths]);
 
     const discovered = await loadRunDefFile(join(root, pipelinePath));
     const runDefDigest = computeRunDefDigest(discovered.runDef);
     const economics = { tokens: 18, dollars: 1.8 };
+    const qualityGate = {
+      stageId: "code-review",
+      attempt: 3,
+      status: "passed" as const,
+      finishedAt: DISTINCTIVE_REVIEW_TIME,
+    };
     const seedState: PipelineState = {
       runnerFeatureVersion: RUNNER_FEATURE_VERSION,
       storyId: CURRENT_REVIEW_STORY_ID,
@@ -196,7 +229,7 @@ describe("durable state, recovery, and concurrency", () => {
     expect(singleResult(outcome)).toMatchObject({
       status: "passed",
       stagesRun: [],
-      regressions: 2,
+      regressions: seedState.regressions,
     });
     expect(existsSync(tracePath)).toBe(false);
     const finalState = readState(root, CURRENT_REVIEW_STORY_ID);
@@ -204,21 +237,33 @@ describe("durable state, recovery, and concurrency", () => {
     expect(finalState).toMatchObject({
       status: "done",
       runnerFeatureVersion: RUNNER_FEATURE_VERSION,
-      regressions: 2,
-      economics,
     });
     expect(finalState.stages).toEqual(seedState.stages);
-    expect(finalState.reviewCheckpoint?.qualityGate).toEqual({
-      stageId: "code-review",
-      attempt: 3,
-      status: "passed",
-      finishedAt: DISTINCTIVE_REVIEW_TIME,
+    expect(finalState.regressions).toBe(seedState.regressions);
+    expect(finalState.economics).toEqual(seedState.economics);
+    expect(finalState.reviewCheckpoint).toMatchObject({
+      storyId: CURRENT_REVIEW_STORY_ID,
+      runDefId: "legacy-review-recovery",
+      runDefDigest,
+      branch: CURRENT_REVIEW_BRANCH,
+      baseOid: authenticatedDefaultTip,
+      qualityGate,
     });
-    expect(finalState.finalScopeReceipt?.qualityGate).toEqual(
-      finalState.reviewCheckpoint?.qualityGate,
+    expect(finalState.reviewCheckpoint?.qualityGate).toEqual(qualityGate);
+    expect(finalState.reviewCheckpoint?.reviewed.paths).toEqual(
+      [pipelinePath, reviewedPath, ...deletedPaths].sort(),
     );
-    expect(finalState.reviewCheckpoint?.branch).toBe(CURRENT_REVIEW_BRANCH);
-    expect(finalState.reviewCheckpoint?.baseOid).toBe(runGit(root, ["rev-parse", "main"]));
+    expect(finalState.reviewCheckpoint?.reviewed.paths).not.toContain(defaultOnlyPath);
+    expect(finalState.finalScopeReceipt).toMatchObject({
+      storyId: CURRENT_REVIEW_STORY_ID,
+      runDefId: "legacy-review-recovery",
+      runDefDigest,
+      branch: CURRENT_REVIEW_BRANCH,
+      baseOid: authenticatedDefaultTip,
+      qualityGate,
+    });
+    expect(finalState.finalScopeReceipt?.qualityGate).toEqual(qualityGate);
+    expect(finalState.finalScopeReceipt?.reviewed).toEqual(finalState.reviewCheckpoint?.reviewed);
   });
 
   it("reruns a durably passed legacy review before docs in a fresh process", async () => {

@@ -154,7 +154,10 @@ describe("STY-144 code review regressions", () => {
         return `${baseOid}\n`;
       }
       if (args[0] === "status") return "";
-      if (args[0] === "diff") return "src/app.ts\0";
+      if (command === `merge-base --all ${baseOid} ${"f".repeat(40)}`) return `${baseOid}\n`;
+      if (command === `diff --name-status -z --no-renames ${baseOid} ${"f".repeat(40)} --`) {
+        return "M\0src/app.ts\0";
+      }
       if (command === "rev-parse HEAD") return `${"f".repeat(40)}\n`;
       throw new Error(`Unexpected git command: ${command}`);
     };

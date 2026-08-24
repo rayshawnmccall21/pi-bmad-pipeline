@@ -85,6 +85,86 @@ describe("narrowed mission documentation", () => {
     expect(skill).toMatch(/serializ(?:e|ed|ing) (?:default[- ]branch )?landings/iu);
   });
 
+  it("documents deletion-aware Git observation in the actions context", () => {
+    const path = "src/actions/CONTEXT.md";
+    const documentation = readProjectFile(path);
+
+    expect(documentation, path).toMatch(/tracked deletion[\s\S]{0,160}tombstone/iu);
+    expect(documentation, path).toMatch(
+      /tombstone[\s\S]{0,160}(?:distinct from|cannot alias)[\s\S]{0,80}(?:empty|zero[- ]byte)/iu,
+    );
+    expect(documentation, path).toMatch(/unique merge[- ]base[\s\S]{0,160}(?:fork|HEAD)/iu);
+    expect(documentation, path).toMatch(
+      /(?:authenticated|current|synchronized) default[- ](?:branch )?tip[\s\S]{0,160}(?:baseOid|receipt|trust anchor)/iu,
+    );
+    expect(documentation, path).toMatch(
+      /default[- ]only[\s\S]{0,160}(?:exclude|never (?:read|tombstone)|not (?:read|tombstone))/iu,
+    );
+    expect(documentation, path).toMatch(
+      /ENOENT[\s\S]{0,160}(?:stable|unchanged)[\s\S]{0,80}(?:absen|delet)/iu,
+    );
+    expect(documentation, path).toMatch(/(?:fail(?:s|ed)? closed|reject)[\s\S]{0,160}ambig/iu);
+    expect(documentation, path).toMatch(/(?:fail(?:s|ed)? closed|reject)[\s\S]{0,160}race/iu);
+    expect(documentation, path).toMatch(
+      /(?:fail(?:s|ed)? closed|reject)[\s\S]{0,160}unrelated[\s\S]{0,40}(?:read )?error/iu,
+    );
+  });
+
+  it("documents deletion and fork-skew recovery in the shipped skill", () => {
+    const path = "skills/pi-bmad-pipeline-workflows/SKILL.md";
+    const documentation = readProjectFile(path);
+
+    expect(documentation, path).toMatch(
+      /(?:genuine|tracked) (?:story )?deletion[\s\S]{0,160}tombstone[\s\S]{0,160}(?:empty|zero[- ]byte)/iu,
+    );
+    expect(documentation, path).toMatch(/unique merge[- ]base[\s\S]{0,160}(?:fork|HEAD)/iu);
+    expect(documentation, path).toMatch(
+      /default[- ]only[\s\S]{0,160}(?:exclude|never (?:read|tombstone)|not (?:read|tombstone))/iu,
+    );
+    expect(documentation, path).toMatch(
+      /ENOENT[\s\S]{0,200}(?:resume|backfill|zero[- ]stage recovery)/iu,
+    );
+    expect(documentation, path).toMatch(/fail(?:s|ed)? closed[\s\S]{0,200}ambig/iu);
+    expect(documentation, path).toMatch(/fail(?:s|ed)? closed[\s\S]{0,200}race/iu);
+    expect(documentation, path).toMatch(
+      /fail(?:s|ed)? closed[\s\S]{0,240}unrelated[\s\S]{0,40}(?:read )?error/iu,
+    );
+    expect(documentation, path).toMatch(
+      /non[- ]documentation[\s\S]{0,160}deletion[\s\S]{0,120}invalidat[\s\S]{0,80}(?:unchanged|remains)|(?:unchanged|remains)[\s\S]{0,80}non[- ]documentation[\s\S]{0,160}deletion[\s\S]{0,120}invalidat/iu,
+    );
+    expect(documentation, path).toMatch(
+      /exact[\s\S]{0,80}documentation[\s\S]{0,120}(?:path )?deletion[\s\S]{0,120}(?:allow|attest)/iu,
+    );
+    expect(documentation, path).toMatch(
+      /executable[\s\S]{0,80}Markdown[\s\S]{0,120}(?:exclude|non[- ]documentation|cannot)/iu,
+    );
+  });
+
+  it("documents compatibility-preserving tombstone framing in the security context", () => {
+    const path = "src/security/CONTEXT.md";
+    const documentation = readProjectFile(path);
+
+    expect(documentation, path).toMatch(
+      /transient[\s\S]{0,120}(?:present[\s\S]{0,40}absent|absent[\s\S]{0,40}present)[\s\S]{0,80}(?:snapshot|union)/iu,
+    );
+    expect(documentation, path).toMatch(
+      /(?:tombstone|absent record)[\s\S]{0,160}(?:fram|marker|token)/iu,
+    );
+    expect(documentation, path).toMatch(
+      /(?:tombstone|absent record)[\s\S]{0,160}(?:distinct from|cannot alias)[\s\S]{0,100}(?:empty|real (?:file )?(?:content|bytes))/iu,
+    );
+    expect(documentation, path).toMatch(
+      /(?:legacy|all[- ]present)[\s\S]{0,160}(?:digest|fram)[\s\S]{0,100}(?:unchanged|compatible|preserv)/iu,
+    );
+    expect(documentation, path).toMatch(/durable[\s\S]{0,80}(?:v1|version 1)/iu);
+    expect(documentation, path).toMatch(
+      /(?:\{\s*paths\s*,\s*digest\s*\}|paths[\s\S]{0,40}digest)/iu,
+    );
+    expect(documentation, path).toMatch(
+      /(?:key set|keys|schema)[\s\S]{0,100}(?:unchanged|no new)/iu,
+    );
+  });
+
   it("ships the claimed local-code executor module context", () => {
     const contextPath = resolve(projectRoot, "src/executors/code/CONTEXT.md");
     const moduleContext = existsSync(contextPath) ? readFileSync(contextPath, "utf8") : "";
