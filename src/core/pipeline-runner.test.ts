@@ -190,6 +190,28 @@ const receiptStages = (): readonly CompiledStageDef[] => [
   stage("docs", 2),
 ];
 
+const durablyPassedStage = (
+  state: StageState,
+  attempts: number,
+  finishedAt: string,
+): StageState => ({
+  ...state,
+  status: "passed",
+  attempts,
+  startedAt: T0,
+  finishedAt,
+  history: Array.from({ length: attempts }, (_, attemptIndex) => ({
+    attempt: attemptIndex + 1,
+    status: "passed" as const,
+    startedAt: T0,
+    finishedAt: attemptIndex + 1 === attempts ? finishedAt : T0,
+    durationMs: 1,
+    exitCode: 0,
+    reason: "durable passed attempt",
+  })),
+  reason: "durable passed attempt",
+});
+
 type StageStateWithHandoff = StageState & { readonly upstreamHandoff?: StageHandoff };
 const handoffOf = (state: StageState | undefined): StageHandoff | undefined =>
   (state as StageStateWithHandoff | undefined)?.upstreamHandoff;
@@ -478,6 +500,235 @@ describe("runPipelineStages", () => {
     const doneSave = fixture.saves.findIndex((saved) => saved.status === "done");
     expect(receiptSave).toBeGreaterThanOrEqual(0);
     expect(doneSave).toBeGreaterThan(receiptSave);
+  });
+
+  it("backfills a missing current-version review checkpoint before finalizing", async () => {
+    const fixture = harness(receiptStages(), []);
+    const reviewFinishedAt = "2026-08-04T23:47:19.321Z";
+    const state: PipelineState = {
+      ...fixture.request.state,
+      runDefId: "review-recovery",
+      runDefDigest: digest("a"),
+      status: "needs-attention",
+      currentStage: null,
+      regressions: 2,
+      stages: {
+        "dev-story": durablyPassedStage(fixture.request.state.stages["dev-story"]!, 1, T0),
+        "code-review": durablyPassedStage(
+          fixture.request.state.stages["code-review"]!,
+          3,
+          reviewFinishedAt,
+        ),
+        docs: durablyPassedStage(fixture.request.state.stages["docs"]!, 1, T0),
+      },
+    };
+    expect(getPipelineStateInvalidReason(state)).toBeUndefined();
+    const expectedQualityGate = {
+      stageId: "code-review",
+      attempt: 3,
+      status: "passed" as const,
+      finishedAt: reviewFinishedAt,
+    };
+    const events: string[] = [];
+    fixture.attestScope.mockImplementation(async (request) => {
+      events.push(request.phase);
+      if (request.phase === "review") {
+        return {
+          kind: "review-checkpoint",
+          checkpoint: {
+            ...reviewCheckpoint,
+            storyId: request.storyId,
+            runId: request.runId,
+            runDefId: request.runDefId,
+            runDefDigest: request.runDefDigest,
+            qualityGate: request.qualityGate,
+          },
+        };
+      }
+      return {
+        kind: "final-receipt",
+        receipt: {
+          ...finalScopeReceipt,
+          ...request.reviewCheckpoint,
+          qualityGate: request.qualityGate,
+        },
+      };
+    });
+
+    const result = await runPipelineStages({
+      ...fixture.request,
+      state,
+      saveState: async (saved) => {
+        fixture.saves.push(saved);
+        if (saved.reviewCheckpoint !== undefined || saved.finalScopeReceipt !== undefined) {
+          expect(getPipelineStateInvalidReason(saved)).toBeUndefined();
+        }
+        events.push(
+          saved.status === "done"
+            ? "done"
+            : saved.finalScopeReceipt !== undefined
+              ? "receipt"
+              : saved.reviewCheckpoint !== undefined
+                ? "checkpoint"
+                : "other",
+        );
+      },
+    });
+
+    expect(result.status).toBe("done");
+    expect(result.failure).toBeUndefined();
+    expect(result.stagesRun).toEqual([]);
+    expect(fixture.executor.requests).toEqual([]);
+    expect(result.regressions).toBe(2);
+    expect(result.state.regressions).toBe(2);
+    expect(
+      Object.fromEntries(
+        Object.entries(result.state.stages).map(([id, stageState]) => [id, stageState.attempts]),
+      ),
+    ).toEqual({ "dev-story": 1, "code-review": 3, docs: 1 });
+    expect(fixture.attestScope.mock.calls.map(([request]) => request.phase)).toEqual([
+      "review",
+      "final",
+    ]);
+    expect(fixture.attestScope.mock.calls[0]?.[0]).toMatchObject({
+      phase: "review",
+      qualityGate: expectedQualityGate,
+    });
+    expect(fixture.attestScope.mock.calls[1]?.[0]).toMatchObject({
+      phase: "final",
+      reviewCheckpoint: { qualityGate: expectedQualityGate },
+      qualityGate: expectedQualityGate,
+    });
+    expect(events).toEqual(["review", "checkpoint", "final", "receipt", "done"]);
+    expect(result.state.reviewCheckpoint?.qualityGate).toEqual(expectedQualityGate);
+    expect(result.state.finalScopeReceipt?.qualityGate).toEqual(expectedQualityGate);
+    expect(result.state.status).toBe("done");
+  });
+
+  it("fails closed when a backfilled checkpoint cannot be persisted", async () => {
+    const fixture = harness(receiptStages(), []);
+    const state: PipelineState = {
+      ...fixture.request.state,
+      runDefId: "review-recovery",
+      runDefDigest: digest("a"),
+      status: "needs-attention",
+      currentStage: null,
+      stages: Object.fromEntries(
+        Object.entries(fixture.request.state.stages).map(([id, stageState]) => [
+          id,
+          durablyPassedStage(stageState, 1, T0),
+        ]),
+      ),
+    };
+    expect(getPipelineStateInvalidReason(state)).toBeUndefined();
+    fixture.attestScope.mockImplementation(async (request) => {
+      if (request.phase !== "review") {
+        throw new Error("final phase must not run");
+      }
+      return {
+        kind: "review-checkpoint",
+        checkpoint: {
+          ...reviewCheckpoint,
+          storyId: request.storyId,
+          runId: request.runId,
+          runDefId: request.runDefId,
+          runDefDigest: request.runDefDigest,
+          qualityGate: request.qualityGate,
+        },
+      };
+    });
+
+    const result = await runPipelineStages({
+      ...fixture.request,
+      state,
+      saveState: async (saved) => {
+        if (saved.reviewCheckpoint !== undefined) {
+          throw new Error("checkpoint write failed");
+        }
+        fixture.saves.push(saved);
+      },
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.stagesRun).toEqual([]);
+    expect(fixture.executor.requests).toEqual([]);
+    expect(fixture.attestScope.mock.calls.map(([request]) => request.phase)).toEqual(["review"]);
+    expect(result.state.reviewCheckpoint).toBeUndefined();
+    expect(result.state.finalScopeReceipt).toBeUndefined();
+    expect(fixture.saves.some((saved) => saved.finalScopeReceipt !== undefined)).toBe(false);
+    expect(fixture.saves.some((saved) => saved.status === "done")).toBe(false);
+  });
+
+  it("reroutes unchanged after backfill when final scope invalidates non-doc bytes", async () => {
+    const fixture = harness(receiptStages(), [okResult(), okResult()]);
+    const state: PipelineState = {
+      ...fixture.request.state,
+      runDefId: "review-recovery",
+      runDefDigest: digest("a"),
+      status: "needs-attention",
+      currentStage: null,
+      stages: Object.fromEntries(
+        Object.entries(fixture.request.state.stages).map(([id, stageState]) => [
+          id,
+          durablyPassedStage(stageState, 1, T0),
+        ]),
+      ),
+    };
+    expect(getPipelineStateInvalidReason(state)).toBeUndefined();
+    const checkpointFor = (
+      request: Extract<Parameters<ScopeAttestor>[0], { phase: "review" }>,
+    ): ReviewScopeCheckpoint => ({
+      ...reviewCheckpoint,
+      storyId: request.storyId,
+      runId: request.runId,
+      runDefId: request.runDefId,
+      runDefDigest: request.runDefDigest,
+      qualityGate: request.qualityGate,
+    });
+    fixture.attestScope
+      .mockImplementationOnce(async (request) => {
+        if (request.phase !== "review") throw new Error("expected review backfill");
+        return { kind: "review-checkpoint", checkpoint: checkpointFor(request) };
+      })
+      .mockResolvedValueOnce({ kind: "review-invalidated", changedPaths: ["src/app.ts"] })
+      .mockImplementationOnce(async (request) => {
+        if (request.phase !== "review") throw new Error("expected rerun review");
+        return { kind: "review-checkpoint", checkpoint: checkpointFor(request) };
+      })
+      .mockImplementationOnce(async (request) => {
+        if (request.phase !== "final") throw new Error("expected final retry");
+        return {
+          kind: "final-receipt",
+          receipt: { ...finalScopeReceipt, ...request.reviewCheckpoint },
+        };
+      });
+
+    const result = await runPipelineStages({ ...fixture.request, state });
+
+    expect(result.status).toBe("done");
+    expect(result.stagesRun).toEqual(["code-review", "docs"]);
+    expect(fixture.executor.requests.map(({ stage: executedStage }) => executedStage.id)).toEqual([
+      "code-review",
+      "docs",
+    ]);
+    expect(fixture.attestScope.mock.calls.map(([request]) => request.phase)).toEqual([
+      "review",
+      "final",
+      "review",
+      "final",
+    ]);
+    expect(
+      fixture.saves
+        .filter(
+          (saved) => saved.reviewCheckpoint !== undefined || saved.finalScopeReceipt !== undefined,
+        )
+        .every((saved) => getPipelineStateInvalidReason(saved) === undefined),
+    ).toBe(true);
+    const invalidated = fixture.saves.find(
+      (saved) => saved.regressions === 1 && saved.stages["code-review"]?.status === "pending",
+    );
+    expect(invalidated).not.toHaveProperty("reviewCheckpoint");
+    expect(invalidated).not.toHaveProperty("finalScopeReceipt");
   });
 
   it("reruns a passed legacy review before docs when its checkpoint was never persisted", async () => {

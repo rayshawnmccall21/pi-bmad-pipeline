@@ -66,3 +66,9 @@ stages:
 - **Artifacts:** workflow files remain the artifact source of truth; pipeline state records attempts, findings, usage, exit, and duration rather than copying payloads or artifacts.
 - **Dispatch:** the runtime has exactly two delegates behind one exhaustive switch, not a registry or plugin API.
 - **Source of truth:** prefer the schema, `bmad-pipeline help`, and current gate registry over copied field tables.
+
+## Troubleshooting missing review checkpoints
+
+Concurrent default-branch movement can occur after a code-review stage is durably marked passed but before its review checkpoint is persisted. On resume, a qualifying current-version all-passed run uses guarded zero-stage recovery: it derives the exact durable passed-review identity from the recorded stage ID, attempt, and finish time, invokes the trusted scope attestor to backfill the missing review checkpoint, saves the checkpoint, and immediately performs a fresh final comparison without re-running pipeline stages. Legacy recovery remains separate: eligible older state is reset from review through downstream stages and those stages re-run.
+
+Recovery fails closed for missing or ambiguous durable identity, ambiguous Git topology, attestor rejection or error, invalid returned identity, or persistence failure. Do not hand-edit durable state. The documentation-only allowance remains unchanged, and non-documentation drift invalidation remains unchanged. If concurrent landings repeatedly hit this narrow window, serialize default-branch landings as an operational mitigation; the pipeline does not change or enforce landing behavior.

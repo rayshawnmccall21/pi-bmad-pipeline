@@ -193,10 +193,30 @@ export const failureOf = (
  * ```
  */
 export const errorMessage = (error: unknown): string => {
-  if (error instanceof Error) {
-    return error.message;
+  const knownMessage =
+    error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
+  return knownMessage ?? unknownErrorMessage(error);
+};
+
+const unknownErrorMessage = (error: unknown): string =>
+  safelySerialize(error) ?? safelyCoerce(error) ?? "Unknown thrown value.";
+
+const safelySerialize = (error: unknown): string | undefined => {
+  try {
+    const serialized: unknown = JSON.stringify(error);
+    return typeof serialized === "string" && serialized.length > 0 ? serialized : undefined;
+  } catch {
+    return undefined;
   }
-  return typeof error === "string" ? error : JSON.stringify(error);
+};
+
+const safelyCoerce = (error: unknown): string | undefined => {
+  try {
+    const coerced = String(error);
+    return coerced.length === 0 ? undefined : coerced;
+  } catch {
+    return undefined;
+  }
 };
 
 const evaluateBudgetFailure = (

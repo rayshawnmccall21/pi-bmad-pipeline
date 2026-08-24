@@ -14,7 +14,11 @@ import { computeRunDefDigest, loadRunDefFile } from "../../src/rundef/index.js";
 import { createCanonicalRepositoryScope } from "../../src/security/final-scope-receipt.js";
 import { createStageHandoff } from "../../src/security/stage-handoff.js";
 import { getPipelineStateInvalidReason } from "../../src/state/fs-state-validation.js";
-import type { PipelineState, StageState } from "../../src/state/index.js";
+import {
+  RUNNER_FEATURE_VERSION,
+  type PipelineState,
+  type StageState,
+} from "../../src/state/index.js";
 import {
   HAPPY_PIPELINE,
   builtCliPath,
@@ -53,7 +57,10 @@ stages:
 `;
 const LEGACY_STORY_ID = "C7-LEGACY-REVIEW";
 const LEGACY_BRANCH = "sty-144/recovery-e2e";
+const CURRENT_REVIEW_STORY_ID = "C7-CURRENT-REVIEW";
+const CURRENT_REVIEW_BRANCH = "sty-260/current-recovery-e2e";
 const PRIOR_TIME = "2026-08-19T00:00:00.000Z";
+const DISTINCTIVE_REVIEW_TIME = "2026-08-19T12:34:56.789Z";
 
 interface StageSpawnTrace {
   readonly workflow: string;
@@ -61,24 +68,27 @@ interface StageSpawnTrace {
   readonly state: PipelineState;
 }
 
-const passedStage = (id: string, tokens: number): StageState => ({
+const passedStage = (
+  id: string,
+  tokens: number,
+  attempts = 1,
+  finishedAt = PRIOR_TIME,
+): StageState => ({
   id,
   status: "passed",
-  attempts: 1,
+  attempts,
   startedAt: PRIOR_TIME,
-  finishedAt: PRIOR_TIME,
-  history: [
-    {
-      attempt: 1,
-      status: "passed",
-      startedAt: PRIOR_TIME,
-      finishedAt: PRIOR_TIME,
-      durationMs: 1,
-      exitCode: 0,
-      reason: `Prior ${id} pass.`,
-      usage: { tokens, dollars: tokens / 10 },
-    },
-  ],
+  finishedAt,
+  history: Array.from({ length: attempts }, (_, attemptIndex) => ({
+    attempt: attemptIndex + 1,
+    status: "passed" as const,
+    startedAt: PRIOR_TIME,
+    finishedAt: attemptIndex + 1 === attempts ? finishedAt : PRIOR_TIME,
+    durationMs: 1,
+    exitCode: 0,
+    reason: `Prior ${id} pass.`,
+    usage: { tokens, dollars: tokens / 10 },
+  })),
   reason: `Prior ${id} pass.`,
 });
 
@@ -135,6 +145,80 @@ describe("durable state, recovery, and concurrency", () => {
     expect(again.stderr, again.stderr).toBe("");
     expect(again.status).toBe(0);
     expect(singleResult(again)).toMatchObject({ status: "passed" });
+  });
+
+  it("backfills a current-version missing review checkpoint without spawning a stage", async () => {
+    const root = makeProject();
+    runGit(root, ["switch", "-c", CURRENT_REVIEW_BRANCH]);
+    writePipeline(root, "legacy-review-recovery", LEGACY_REVIEW_PIPELINE);
+    const pipelinePath = ".pi/bmad/pipelines/legacy-review-recovery.yaml";
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "reviewed.ts"), 'export const reviewed = "stable";\n', "utf8");
+    runGit(root, ["add", "--", pipelinePath, "src/reviewed.ts"]);
+    runGit(root, ["commit", "-m", "seed current-version reviewed scope"]);
+
+    const discovered = await loadRunDefFile(join(root, pipelinePath));
+    const runDefDigest = computeRunDefDigest(discovered.runDef);
+    const economics = { tokens: 18, dollars: 1.8 };
+    const seedState: PipelineState = {
+      runnerFeatureVersion: RUNNER_FEATURE_VERSION,
+      storyId: CURRENT_REVIEW_STORY_ID,
+      runDefId: "legacy-review-recovery",
+      runDefDigest,
+      specFile: "spec.md",
+      status: "needs-attention",
+      currentStage: null,
+      stages: {
+        "dev-story": passedStage("dev-story", 2),
+        "code-review": passedStage("code-review", 5, 3, DISTINCTIVE_REVIEW_TIME),
+        docs: passedStage("docs", 1),
+      },
+      regressions: 2,
+      model: "gpt-5",
+      thinking: "low",
+      startedAt: PRIOR_TIME,
+      finishedAt: null,
+      economics,
+    };
+    expect(getPipelineStateInvalidReason(seedState)).toBeUndefined();
+    mkdirSync(join(root, ".pi", "pipeline", "state"), { recursive: true });
+    writeFileSync(
+      statePath(root, CURRENT_REVIEW_STORY_ID),
+      `${JSON.stringify(seedState, null, 2)}\n`,
+    );
+    const tracePath = join(root, ".pi", "pipeline", "current-review-trace.jsonl");
+
+    const outcome = runCli(root, "legacy-review-recovery", CURRENT_REVIEW_STORY_ID, {
+      E2E_STAGE_TRACE: tracePath,
+    });
+
+    expect(outcome.status, `${outcome.stdout}\n${outcome.stderr}`).toBe(0);
+    expect(singleResult(outcome)).toMatchObject({
+      status: "passed",
+      stagesRun: [],
+      regressions: 2,
+    });
+    expect(existsSync(tracePath)).toBe(false);
+    const finalState = readState(root, CURRENT_REVIEW_STORY_ID);
+    expect(getPipelineStateInvalidReason(finalState)).toBeUndefined();
+    expect(finalState).toMatchObject({
+      status: "done",
+      runnerFeatureVersion: RUNNER_FEATURE_VERSION,
+      regressions: 2,
+      economics,
+    });
+    expect(finalState.stages).toEqual(seedState.stages);
+    expect(finalState.reviewCheckpoint?.qualityGate).toEqual({
+      stageId: "code-review",
+      attempt: 3,
+      status: "passed",
+      finishedAt: DISTINCTIVE_REVIEW_TIME,
+    });
+    expect(finalState.finalScopeReceipt?.qualityGate).toEqual(
+      finalState.reviewCheckpoint?.qualityGate,
+    );
+    expect(finalState.reviewCheckpoint?.branch).toBe(CURRENT_REVIEW_BRANCH);
+    expect(finalState.reviewCheckpoint?.baseOid).toBe(runGit(root, ["rev-parse", "main"]));
   });
 
   it("reruns a durably passed legacy review before docs in a fresh process", async () => {

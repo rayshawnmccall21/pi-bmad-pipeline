@@ -56,6 +56,35 @@ describe("narrowed mission documentation", () => {
     );
   });
 
+  it("documents guarded current-version checkpoint backfill separately from legacy recovery", () => {
+    const recoveryDocumentation = [
+      "README.md",
+      "src/core/CONTEXT.md",
+      "skills/pi-bmad-pipeline-workflows/SKILL.md",
+    ].map((path) => [path, readProjectFile(path)] as const);
+
+    for (const [path, documentation] of recoveryDocumentation) {
+      expect(documentation, path).toMatch(/current[- ]version/iu);
+      expect(documentation, path).toMatch(/exact durable (?:review |passed[- ]review )?identity/iu);
+      expect(documentation, path).toMatch(
+        /zero[- ]stage|without re[- ]?running (?:pipeline )?stages/iu,
+      );
+      expect(documentation, path).toMatch(
+        /backfill(?:s|ed|ing)? (?:the )?(?:missing )?review checkpoint|review checkpoint (?:is )?backfill/iu,
+      );
+      expect(documentation, path).toMatch(/legacy[\s\S]{0,160}reset[\s\S]{0,160}re[- ]?run/iu);
+    }
+
+    const skill = readProjectFile("skills/pi-bmad-pipeline-workflows/SKILL.md");
+    expect(skill).toMatch(/troubleshooting/iu);
+    expect(skill).toMatch(/concurrent default[- ]branch movement/iu);
+    expect(skill).toMatch(/fail(?:s|ed)? closed/iu);
+    expect(skill).toMatch(/(?:do not|never|no) hand[- ]edit/iu);
+    expect(skill).toMatch(/documentation[- ]only[\s\S]{0,160}(?:unchanged|remains)/iu);
+    expect(skill).toMatch(/non[- ]documentation drift[\s\S]{0,160}(?:unchanged|remains)/iu);
+    expect(skill).toMatch(/serializ(?:e|ed|ing) (?:default[- ]branch )?landings/iu);
+  });
+
   it("ships the claimed local-code executor module context", () => {
     const contextPath = resolve(projectRoot, "src/executors/code/CONTEXT.md");
     const moduleContext = existsSync(contextPath) ? readFileSync(contextPath, "utf8") : "";
