@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "issueId": "STY-317",
+  "authority": "repository-owner",
+  "authorizationId": "STY-317-owner-authorized",
+  "directives": [
+    "Full deterministic quality is mandatory: typecheck, Prettier, ESLint, tests/coverage, CRAP, strict Knip, production Knip."
+  ],
+  "authorizedPaths": [
+    "knip.json"
+  ],
+  "expectedRepositoryHead": "0eac50564e2df7e5ec03f76d218a97c2977a66c6",
+  "expectedBranch": "sty-317/current-main",
+  "previousSha256": "4bb7fb78fc396abe77e0d8a0b08db9bead3ca063933b77d527594b1b483d88a1",
+  "authorizedSha256": "d41573dd03f19c9a16ba73e3d00b51e8196953d0368ad6bf6d2d5c8f9f767fb8",
+  "policy": {
+    "entry": [
+      "src/cli.ts",
+      "src/cli-args.ts",
+      "src/cli-command.ts",
+      "src/cli-output.ts",
+      "scripts/check-pi-bmad-freshness.mjs",
+      "scripts/check-review-gate-locks.mjs",
+      "scripts/crap-ratchet.mjs",
+      "scripts/crap-report.mjs",
+      "skills/pi-bmad-pipeline-workflows/scripts/validate-rundef.mjs",
+      "tests/e2e/harness.ts",
+      "tests/e2e/stub-pi.mjs"
+    ],
+    "ignore": [
+      ".pi/**"
+    ],
+    "treatConfigHintsAsErrors": true,
+    "ignoreDependencies": [
+      "pi-bmad",
+      "@eslint/js"
+    ]
+  },
+  "constraints": [
+    "No linter, formatter, coverage, CRAP, TypeScript, runtime, or public API weakening.",
+    "Workflow agents may review but did not perform this locked-file mutation.",
+    "Only redundant export surface may be narrowed; canonical public seams remain exported."
+  ],
+  "recordedAt": "2026-08-25T22:45:44.995Z"
+}
