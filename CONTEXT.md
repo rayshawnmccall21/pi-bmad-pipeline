@@ -81,4 +81,4 @@ The built bin target is bundled for Node runtime execution while library source 
 
 ## Quality
 
-`npm run check` enforces TypeScript, Prettier, ESLint, coverage, CRAP, checkpoint conformance, and dead-code checks. Core state, routing, redaction, parser, provenance, timeout, abort, and local process-boundary tests remain part of the retained mechanism suite.
+`npm run check` enforces TypeScript, Prettier, ESLint, coverage, CRAP, checkpoint conformance, full strict Knip, and production Knip pinned to the `dependencies`, `unlisted`, and `unresolved` issue set. Core state, routing, redaction, parser, provenance, timeout, abort, and local process-boundary tests remain part of the retained mechanism suite.

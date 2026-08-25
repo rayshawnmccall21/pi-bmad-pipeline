@@ -26,8 +26,22 @@ describe("quality script entrypoints", () => {
 
     expect(knipConfig).toEqual({
       $schema: "https://unpkg.com/knip@5/schema.json",
+      entry: [
+        "src/cli.ts",
+        "src/cli-args.ts",
+        "src/cli-command.ts",
+        "src/cli-output.ts",
+        "scripts/check-pi-bmad-freshness.mjs",
+        "scripts/check-review-gate-locks.mjs",
+        "scripts/crap-ratchet.mjs",
+        "scripts/crap-report.mjs",
+        "skills/pi-bmad-pipeline-workflows/scripts/validate-rundef.mjs",
+        "tests/e2e/harness.ts",
+        "tests/e2e/stub-pi.mjs",
+      ],
       ignore: [".pi/**"],
-      ignoreDependencies: ["pi-bmad", "@eslint/js", "@mariozechner/pi-coding-agent"],
+      treatConfigHintsAsErrors: true,
+      ignoreDependencies: ["pi-bmad", "@eslint/js"],
     });
   });
 
@@ -40,14 +54,27 @@ describe("quality script entrypoints", () => {
     expect(existsSync(fileURLToPath(scriptUrl))).toBe(true);
   });
 
-  it("wires review-gate lock validation into the aggregate quality gate", () => {
+  it("wires every required tool and both strict Knip modes into the aggregate quality gate", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-    ) as { scripts: Record<string, string> };
+    ) as { scripts: Record<string, string>; devDependencies: Record<string, string> };
     const checkTerms = packageJson.scripts["check"]?.split(" && ");
 
     expect(packageJson.scripts["check:review-gate-locks"]).toBe(
       "node scripts/check-review-gate-locks.mjs",
+    );
+    expect(packageJson.scripts["format"]).toBe(
+      'prettier --write . "!knip.json" "!.pi/governance/quality-policy/STY-317.json"',
+    );
+    expect(packageJson.scripts["format:check"]).toBe(
+      'prettier --check . "!knip.json" "!.pi/governance/quality-policy/STY-317.json"',
+    );
+    expect(packageJson.scripts["knip"]).toBe("knip --strict");
+    expect(packageJson.scripts["knip:production"]).toBe(
+      "knip --production --strict --include dependencies,unlisted,unresolved",
+    );
+    expect(Object.keys(packageJson.devDependencies)).toEqual(
+      expect.arrayContaining(["typescript", "eslint", "prettier", "vitest", "knip"]),
     );
     expect(checkTerms).toEqual([
       "npm run check:pi-bmad",
@@ -60,6 +87,7 @@ describe("quality script entrypoints", () => {
       "npm run conformance",
       "npm run test:e2e",
       "npm run knip",
+      "npm run knip:production",
     ]);
   });
 

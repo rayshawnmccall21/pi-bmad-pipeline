@@ -35,7 +35,7 @@ export const MAX_STAGE_STDERR_CHARS = 16_384 as const;
 
 /** Default grace period in milliseconds before SIGTERM escalates to SIGKILL. */
 // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- small fixed escalation grace.
-export const DEFAULT_KILL_ESCALATION_MS = 10_000 as const;
+const DEFAULT_KILL_ESCALATION_MS = 10_000 as const;
 
 const millisecondsPerSecond = 1000;
 

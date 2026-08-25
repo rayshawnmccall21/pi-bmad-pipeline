@@ -16,6 +16,7 @@
 - Local code uses the exact command and literal argv with no shell, exact `projectRoot` cwd, ignored stdin, inherited `process.env`, and continuously drained output. Successful output is discarded; failure diagnostics are bounded and redacted.
 - Structured findings lift only from a declared `findingsFile` after a clean exit `1`, never after timeout/abort. The root must contain `schema: "stage-findings.v1"` and an array `findings` (extra root keys are accepted). Invalid entries are skipped; fields are normalized and control-character stripped, each formatted item truncates at 2,048 characters, collection stops at 50 items or before exceeding 65,536 characters, and a raw file above 262,144 characters lifts nothing.
 - Timeout or abort sends SIGTERM with bounded SIGKILL escalation: Pi stages signal the direct child, while detached code stages signal the child process group.
+- Pi's offline environment key and default kill-escalation duration are implementation constants, not public API. Tests pin their observable environment and timing behavior without importing those internals.
 
 ## Gotchas
 
@@ -30,3 +31,4 @@
 - 2026-08-14 — Literal no-shell argv and an exhaustive two-way dispatcher add deterministic local execution without exposing process-mechanism branching to the FSM.
 - 2026-08-15 — Prompt-only StageHandoff can enrich successor reasoning without altering child spawn transport, emission provenance, or the existing findings summary.
 - 2026-08-20 — Code-stage regression evidence needs a separate bounded, schema-marked file trust boundary; process diagnostics are not structured findings.
+- 2026-08-25 — Strict production dead-code enforcement is most reliable when tests assert boundary behavior instead of turning implementation constants into accidental exports.

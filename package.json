@@ -31,8 +31,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ --max-warnings 0",
     "lint:fix": "eslint src/ --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "prettier --write . \"!knip.json\" \"!.pi/governance/quality-policy/STY-317.json\"",
+    "format:check": "prettier --check . \"!knip.json\" \"!.pi/governance/quality-policy/STY-317.json\"",
     "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -44,11 +44,12 @@
     "crap": "vitest run --coverage && node scripts/crap-report.mjs",
     "crap:ratchet": "node scripts/crap-ratchet.mjs",
     "crap:update-baseline": "node scripts/crap-ratchet.mjs --update-baseline",
-    "knip": "knip",
+    "knip": "knip --strict",
+    "knip:production": "knip --production --strict --include dependencies,unlisted,unresolved",
     "conformance": "vitest run --config vitest.conformance.config.ts",
     "check:pi-bmad": "node scripts/check-pi-bmad-freshness.mjs",
     "check:review-gate-locks": "node scripts/check-review-gate-locks.mjs",
-    "check": "npm run check:pi-bmad && npm run check:review-gate-locks && npm run typecheck && npm run format:check && npm run lint && npm run test:coverage && npm run crap && npm run conformance && npm run test:e2e && npm run knip"
+    "check": "npm run check:pi-bmad && npm run check:review-gate-locks && npm run typecheck && npm run format:check && npm run lint && npm run test:coverage && npm run crap && npm run conformance && npm run test:e2e && npm run knip && npm run knip:production"
   },
   "keywords": [
     "pi-package",

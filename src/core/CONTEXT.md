@@ -27,6 +27,7 @@
 - Forward progress and regression both target the routed successor, so handoff updates must follow `nextStageId`, not arithmetic stage order.
 - Keep event vocabulary outside core: observers carry domain information, not serialized JSONL.
 - Scope observation remains injected; core owns only typed attestation sequencing, persistence order, bounded rerouting, and current-scope re-attestation after an interrupted preterminal receipt. A durable receipt is never a shortcut to `done`. Legacy missing-checkpoint recovery reruns review before docs and captures newly reviewed current bytes; it never reconstructs a checkpoint from Git, stale handoff, prior result, or invocation identity.
+- Import `ScopeAttestor` through the core barrel or `scope-attestation.ts`; `pipeline-runner.ts` does not re-export that sibling contract merely for test convenience.
 
 ## Learnings
 
@@ -35,3 +36,4 @@
 - 2026-08-15 — Treating StageHandoff as successor state keeps replay deterministic and preserves the existing gate and regression-summary rails.
 - 2026-08-20 — Final settlement must be receipt-driven: a durable preterminal receipt is recovery evidence, not permission to skip fresh scope observation.
 - 2026-08-24 — Passed-stage settlement and review-checkpoint persistence are separate durable boundaries; current-version recovery must save a trusted exact-identity checkpoint before fresh final comparison.
+- 2026-08-25 — Strict dead-code checks require public ownership to stay explicit: shared attestation types belong to the core barrel and their defining module, not an incidental runner re-export.

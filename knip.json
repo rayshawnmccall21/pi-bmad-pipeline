@@ -1,5 +1,24 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "ignore": [".pi/**"],
-  "ignoreDependencies": ["pi-bmad", "@eslint/js", "@mariozechner/pi-coding-agent"]
+  "entry": [
+    "src/cli.ts",
+    "src/cli-args.ts",
+    "src/cli-command.ts",
+    "src/cli-output.ts",
+    "scripts/check-pi-bmad-freshness.mjs",
+    "scripts/check-review-gate-locks.mjs",
+    "scripts/crap-ratchet.mjs",
+    "scripts/crap-report.mjs",
+    "skills/pi-bmad-pipeline-workflows/scripts/validate-rundef.mjs",
+    "tests/e2e/harness.ts",
+    "tests/e2e/stub-pi.mjs"
+  ],
+  "ignore": [
+    ".pi/**"
+  ],
+  "treatConfigHintsAsErrors": true,
+  "ignoreDependencies": [
+    "pi-bmad",
+    "@eslint/js"
+  ]
 }

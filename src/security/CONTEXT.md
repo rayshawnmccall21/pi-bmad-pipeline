@@ -25,10 +25,11 @@
 - Normalization fails closed on accessors that throw, cycles, non-finite numbers, non-plain prototypes, and malformed JSON; it canonicalizes valid serialized input. State loading separately rejects persisted strings whose original bytes differ from that canonical result.
 - This module no longer owns evidence commands, evidence storage, or audit assertions.
 - Scope constructors validate canonical repository-relative present or absent snapshots and exact caller-supplied documentation allowlists. Tombstone framing constants are compatibility-sensitive. The action boundary supplies complete committed and dirty Git scope and excludes prompts, skills, specs, configuration/workflows, and executable instruction Markdown from its docs-only allowlist; model handoffs never authorize repository paths.
-- StageHandoff APIs are direct exports of `security/stage-handoff.js`, not exports of the top-level `security/index.js` barrel.
+- StageHandoff APIs are direct exports of `security/stage-handoff.js`, not exports of the top-level `security/index.js` barrel. The 32 KiB cap is an internal policy constant; consumers and tests must verify accepted/rejected UTF-8 boundary behavior rather than import the constant.
 
 ## Learnings
 
 - 2026-08-06 — Separating redaction from evidence policy preserved the reusable security boundary while allowing the duplicate evidence store to be deleted.
 - 2026-08-15 — A single branded normalization seam makes redaction, compact serialization, UTF-8 bounds, durable validation, and prompt validation enforce the same fail-closed contract.
 - 2026-08-20 — Final-scope authorization must compare canonical exact-byte scopes and durable quality-attempt identity rather than trusting filenames reported by an agent.
+- 2026-08-25 — Security limits remain enforceable without becoming public API when tests pin exact boundary behavior through the normal normalization seam.
