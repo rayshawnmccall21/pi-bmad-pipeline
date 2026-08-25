@@ -27,7 +27,7 @@ export const PI_BMAD_RUN_ID_ENV_VAR = "PI_BMAD_RUN_ID" as const;
 export const PI_BMAD_EMISSION_KEY_ENV_VAR = "PI_BMAD_EMISSION_KEY" as const;
 
 /** Environment variable forcing pi offline so children skip startup network operations. */
-export const PI_OFFLINE_ENV_VAR = "PI_OFFLINE" as const;
+const PI_OFFLINE_ENV_VAR = "PI_OFFLINE" as const;
 
 /** Minimal stage shape required to construct Pi stage argv. */
 export interface StageArgsStage {

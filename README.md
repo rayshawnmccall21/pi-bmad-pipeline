@@ -61,4 +61,4 @@ npm run build
 npm run check
 ```
 
-`npm run check` runs type checking, formatting, linting, coverage, CRAP, checkpoint conformance, and knip.
+`npm run check` runs type checking, formatting, linting, coverage, CRAP, checkpoint conformance, full strict Knip, and production Knip pinned to the `dependencies`, `unlisted`, and `unresolved` issue set.

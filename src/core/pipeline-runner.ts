@@ -60,7 +60,6 @@ export type {
   PipelineRunFailureCode,
   PipelineRunStatus,
 } from "./runner-evaluation.js";
-export type { ScopeAttestor } from "./scope-attestation.js";
 
 /** Default number of gate-triggered regressions allowed before failing closed. */
 export const DEFAULT_MAX_REGRESSIONS = 3;

@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { REDACTION_PLACEHOLDER } from "./redaction.js";
-import {
-  MAX_STAGE_HANDOFF_BYTES,
-  createStageHandoff,
-  sanitizeStageHandoff,
-} from "./stage-handoff.js";
+import { createStageHandoff, sanitizeStageHandoff } from "./stage-handoff.js";
 
+const expectedStageHandoffBytes = 32 * 1024;
 const fakeBearer = "Bearer abcdefghijklmnopqrstuvwxyz123456";
 const fakeOpenAiKey = "sk-abcdefghijklmnopqrstuvwx";
 
@@ -72,28 +69,28 @@ describe("stage handoff", () => {
   });
 
   it("accepts final compact JSON at exactly 32 KiB UTF-8", () => {
-    const serialized = serializedWithStringBytes(MAX_STAGE_HANDOFF_BYTES);
+    const serialized = serializedWithStringBytes(expectedStageHandoffBytes);
 
-    expect(Buffer.byteLength(serialized, "utf8")).toBe(MAX_STAGE_HANDOFF_BYTES);
+    expect(Buffer.byteLength(serialized, "utf8")).toBe(expectedStageHandoffBytes);
     expect(createStageHandoff(JSON.parse(serialized))).toBe(serialized);
   });
 
   it("rejects the whole handoff when final compact JSON is one byte over", () => {
-    const serialized = serializedWithStringBytes(MAX_STAGE_HANDOFF_BYTES + 1);
+    const serialized = serializedWithStringBytes(expectedStageHandoffBytes + 1);
 
-    expect(Buffer.byteLength(serialized, "utf8")).toBe(MAX_STAGE_HANDOFF_BYTES + 1);
+    expect(Buffer.byteLength(serialized, "utf8")).toBe(expectedStageHandoffBytes + 1);
     expect(createStageHandoff(JSON.parse(serialized))).toBeUndefined();
   });
 
   it("counts Unicode UTF-8 bytes rather than JavaScript string length", () => {
     const overhead = Buffer.byteLength('{"value":""}', "utf8");
-    const exactEmojiCount = (MAX_STAGE_HANDOFF_BYTES - overhead) / 4;
+    const exactEmojiCount = (expectedStageHandoffBytes - overhead) / 4;
     const exact = { value: "😀".repeat(exactEmojiCount) };
     const over = { value: `${exact.value}😀` };
 
-    expect(Buffer.byteLength(JSON.stringify(exact), "utf8")).toBe(MAX_STAGE_HANDOFF_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(exact), "utf8")).toBe(expectedStageHandoffBytes);
     expect(createStageHandoff(exact)).toBe(JSON.stringify(exact));
-    expect(Buffer.byteLength(JSON.stringify(over), "utf8")).toBe(MAX_STAGE_HANDOFF_BYTES + 4);
+    expect(Buffer.byteLength(JSON.stringify(over), "utf8")).toBe(expectedStageHandoffBytes + 4);
     expect(createStageHandoff(over)).toBeUndefined();
   });
 
@@ -146,7 +143,7 @@ describe("stage handoff", () => {
   });
 
   it("defensively rejects an oversized tampered serialized value whole", () => {
-    const oversized = serializedWithStringBytes(MAX_STAGE_HANDOFF_BYTES + 1);
+    const oversized = serializedWithStringBytes(expectedStageHandoffBytes + 1);
 
     expect(sanitizeStageHandoff(oversized)).toBeUndefined();
   });

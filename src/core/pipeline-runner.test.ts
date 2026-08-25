@@ -3,11 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_MAX_REGRESSIONS, runPipelineStages } from "./index.js";
 import { createInitialPipelineState } from "../state/index.js";
 import { getPipelineStateInvalidReason } from "../state/fs-state-validation.js";
-import {
-  MAX_STAGE_HANDOFF_BYTES,
-  createStageHandoff,
-  type StageHandoff,
-} from "../security/stage-handoff.js";
+import { createStageHandoff, type StageHandoff } from "../security/stage-handoff.js";
 
 import type {
   FinalScopeReceipt,
@@ -21,8 +17,10 @@ import type {
   StageExecutionResult,
   WorkflowExecutor,
 } from "../executors/index.js";
-import type { RunPipelineStagesRequest, ScopeAttestor } from "./pipeline-runner.js";
+import type { RunPipelineStagesRequest } from "./pipeline-runner.js";
+import type { ScopeAttestor } from "./scope-attestation.js";
 
+const expectedStageHandoffBytes = 32 * 1024;
 const T0 = "2026-08-05T00:00:00.000Z";
 const digest = (character: string): string => character.repeat(64);
 
@@ -1060,7 +1058,7 @@ describe("runPipelineStages", () => {
 
   it("rejects an oversized handoff whole while retaining the findings fallback", async () => {
     const priorFindings = ["Findings by severity: high=1"];
-    const oversized = `OVER_CAP_${"x".repeat(MAX_STAGE_HANDOFF_BYTES + 1)}_END`;
+    const oversized = `OVER_CAP_${"x".repeat(expectedStageHandoffBytes + 1)}_END`;
     const payload = { ok: false, findings: priorFindings, detail: oversized };
     const { request, executor, saves } = harness(gatedStages(), [
       okResult(),

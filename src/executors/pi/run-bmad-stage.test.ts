@@ -15,7 +15,6 @@ import {
   runBmadStage,
   toBuildStageArgsRequest,
 } from "./index.js";
-import { DEFAULT_KILL_ESCALATION_MS } from "./run-bmad-stage.js";
 
 import type { CompiledAgentStage } from "../../rundef/index.js";
 import type {
@@ -25,6 +24,7 @@ import type {
   RunBmadStageRequest,
 } from "./index.js";
 
+const expectedDefaultKillEscalationMs = 10_000;
 const piBmadRootDir = resolve(dirname(resolvePiBmadExtensionPath()), "..");
 
 const loadFixtureEnvelope = (): Record<string, unknown> => {
@@ -435,17 +435,13 @@ describe("run BMAD stage SIGTERM-to-SIGKILL escalation", () => {
     vi.useRealTimers();
   });
 
-  it("exports a 10 second default grace period", () => {
-    expect(DEFAULT_KILL_ESCALATION_MS).toBe(10_000);
-  });
-
   it("escalates to SIGKILL when the child ignores SIGTERM past the grace period", async () => {
     vi.useFakeTimers();
     const [spawn, child] = createSpawn();
 
     const promise = runBmadStage(request({ spawn, timeoutMs: 1 }));
     await vi.advanceTimersByTimeAsync(1);
-    await vi.advanceTimersByTimeAsync(DEFAULT_KILL_ESCALATION_MS);
+    await vi.advanceTimersByTimeAsync(expectedDefaultKillEscalationMs);
     close(child, null);
 
     await expect(promise).resolves.toMatchObject({ timedOut: true });
@@ -495,7 +491,7 @@ describe("run BMAD stage SIGTERM-to-SIGKILL escalation", () => {
     const promise = runBmadStage(request({ spawn, timeoutMs: 1 }));
     await vi.advanceTimersByTimeAsync(1);
     close(child, null);
-    await vi.advanceTimersByTimeAsync(DEFAULT_KILL_ESCALATION_MS);
+    await vi.advanceTimersByTimeAsync(expectedDefaultKillEscalationMs);
 
     await expect(promise).resolves.toMatchObject({ timedOut: true });
     expect(killSignals(child)).toEqual(["SIGTERM"]);
@@ -509,7 +505,7 @@ describe("run BMAD stage SIGTERM-to-SIGKILL escalation", () => {
 
     const promise = runBmadStage(request({ spawn, signal: controller.signal }));
     controller.abort();
-    await vi.advanceTimersByTimeAsync(DEFAULT_KILL_ESCALATION_MS);
+    await vi.advanceTimersByTimeAsync(expectedDefaultKillEscalationMs);
     close(child, null);
 
     await expect(promise).resolves.toMatchObject({ aborted: true });
@@ -524,7 +520,7 @@ describe("run BMAD stage SIGTERM-to-SIGKILL escalation", () => {
     const promise = runBmadStage(request({ spawn, signal: controller.signal, timeoutMs: 1 }));
     await vi.advanceTimersByTimeAsync(1);
     controller.abort();
-    await vi.advanceTimersByTimeAsync(DEFAULT_KILL_ESCALATION_MS);
+    await vi.advanceTimersByTimeAsync(expectedDefaultKillEscalationMs);
     close(child, null);
 
     await expect(promise).resolves.toMatchObject({ timedOut: true, aborted: true });

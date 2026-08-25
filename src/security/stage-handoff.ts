@@ -9,7 +9,7 @@ export type StageHandoff = string & {
 
 /** Maximum UTF-8 size of a normalized stage handoff. */
 // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- documented 32 KiB security cap.
-export const MAX_STAGE_HANDOFF_BYTES = 32 * 1024;
+const MAX_STAGE_HANDOFF_BYTES = 32 * 1024;
 
 /**
  * Creates a normalized stage handoff from JSON-like payload data.

@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  MAX_STAGE_HANDOFF_BYTES,
-  createStageHandoff,
-  type StageHandoff,
-} from "../../security/stage-handoff.js";
-import { PI_OFFLINE_ENV_VAR } from "./build-stage-args.js";
+import { createStageHandoff, type StageHandoff } from "../../security/stage-handoff.js";
 import {
   DEFAULT_PI_BIN,
   PI_BMAD_EMISSION_KEY_ENV_VAR,
@@ -14,6 +9,8 @@ import {
 } from "./index.js";
 
 import type { BuildStageArgsRequest, StageArgsStage } from "./index.js";
+
+const expectedStageHandoffBytes = 32 * 1024;
 
 const stage = (overrides: Partial<StageArgsStage> = {}): StageArgsStage => ({
   id: "dev-story",
@@ -193,22 +190,22 @@ describe("Pi stage argv builder", () => {
   it("accepts an exact-cap ASCII handoff and omits an over-cap handoff whole", () => {
     const exactMarker = "exact-start";
     const exact = tamperedHandoff(
-      `"${exactMarker}${"a".repeat(MAX_STAGE_HANDOFF_BYTES - exactMarker.length - 2)}"`,
+      `"${exactMarker}${"a".repeat(expectedStageHandoffBytes - exactMarker.length - 2)}"`,
     );
     const overMarker = "over-start";
     const overEnd = "over-end";
     const over = tamperedHandoff(
       `"${overMarker}${"b".repeat(
-        MAX_STAGE_HANDOFF_BYTES - overMarker.length - overEnd.length - 1,
+        expectedStageHandoffBytes - overMarker.length - overEnd.length - 1,
       )}${overEnd}"`,
     );
 
     const exactPrompt = promptFor({ upstreamHandoff: exact });
     const overPrompt = promptFor({ upstreamHandoff: over });
 
-    expect(Buffer.byteLength(exact, "utf8")).toBe(MAX_STAGE_HANDOFF_BYTES);
+    expect(Buffer.byteLength(exact, "utf8")).toBe(expectedStageHandoffBytes);
     expect(exactPrompt).toContain(exact);
-    expect(Buffer.byteLength(over, "utf8")).toBe(MAX_STAGE_HANDOFF_BYTES + 1);
+    expect(Buffer.byteLength(over, "utf8")).toBe(expectedStageHandoffBytes + 1);
     expect(overPrompt).not.toContain("Untrusted upstream data");
     expect(overPrompt).not.toContain(overMarker);
     expect(overPrompt).not.toContain(overEnd);
@@ -218,9 +215,9 @@ describe("Pi stage argv builder", () => {
     const exact = tamperedHandoff(`"${"😀".repeat(8_191)}aa"`);
     const over = tamperedHandoff(`"${"😀".repeat(8_192)}"`);
 
-    expect(Buffer.byteLength(exact, "utf8")).toBe(MAX_STAGE_HANDOFF_BYTES);
+    expect(Buffer.byteLength(exact, "utf8")).toBe(expectedStageHandoffBytes);
     expect(promptFor({ upstreamHandoff: exact })).toContain(exact);
-    expect(Buffer.byteLength(over, "utf8")).toBe(MAX_STAGE_HANDOFF_BYTES + 2);
+    expect(Buffer.byteLength(over, "utf8")).toBe(expectedStageHandoffBytes + 2);
     expect(promptFor({ upstreamHandoff: over })).not.toContain("😀");
   });
 
@@ -315,7 +312,7 @@ describe("Pi stage argv builder", () => {
   });
 
   it("emits PI_OFFLINE=1 so the child skips startup network operations", () => {
-    expect(buildStageArgs(request()).env[PI_OFFLINE_ENV_VAR]).toBe("1");
+    expect(buildStageArgs(request()).env.PI_OFFLINE).toBe("1");
   });
 
   it("emits exactly the documented hermetic child env contract", () => {
