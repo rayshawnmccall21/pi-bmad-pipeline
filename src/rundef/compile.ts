@@ -256,6 +256,9 @@ function buildOptionalFields(
   if (stage.thinking !== undefined) {
     fields["thinking"] = stage.thinking;
   }
+  if (stage.model !== undefined) {
+    fields["model"] = stage.model;
+  }
   addCopiedFields(fields, stage);
   addObservabilityFields(fields, stage);
   return fields;
