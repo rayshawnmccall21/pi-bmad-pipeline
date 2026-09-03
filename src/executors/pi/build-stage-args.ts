@@ -40,6 +40,9 @@ export interface StageArgsStage {
   /** Optional stage-level thinking effort override. */
   readonly thinking?: "low" | "medium" | "high";
 
+  /** Optional stage-level model override; replaces the run-level model. */
+  readonly model?: string;
+
   /** Optional extra Pi extension file paths loaded via repeated -e flags. */
   readonly extensions?: readonly string[];
 
@@ -135,10 +138,11 @@ export interface BuiltStageArgs {
 export function buildStageArgs(request: BuildStageArgsRequest): BuiltStageArgs {
   validateRequest(request);
   const thinking = request.stage.thinking ?? request.thinking;
+  const model = request.stage.model ?? request.model;
   const args = [
     ...headlessPrefixArgs(),
     ...extensionArgs(request),
-    ...bmadArgs(request, thinking),
+    ...bmadArgs(request, thinking, model),
     buildStagePrompt(request),
   ];
   return Object.freeze({
@@ -166,13 +170,17 @@ const extensionArgs = (request: BuildStageArgsRequest): readonly string[] => {
   return ["-e", request.piBmadExtensionPath, ...extra.flatMap((ext) => ["-e", ext])];
 };
 
-const bmadArgs = (request: BuildStageArgsRequest, thinking: ModelThinking): readonly string[] => [
+const bmadArgs = (
+  request: BuildStageArgsRequest,
+  thinking: ModelThinking,
+  model: string,
+): readonly string[] => [
   "--bmad-workflow",
   request.stage.workflow,
   "--bmad-story",
   request.storyId,
   "--model",
-  request.model,
+  model,
   "--thinking",
   thinking,
   ...observabilityArgs(request),

@@ -337,6 +337,20 @@ describe("Pi stage argv builder", () => {
     expect(argAfter(invocation.args, "--thinking")).toBe("low");
   });
 
+  it("uses stage-level model override when present", () => {
+    const invocation = buildStageArgs(
+      request({ stage: stage({ model: "openrouter/google/gemini-3.8-flash" }) }),
+    );
+
+    expect(argAfter(invocation.args, "--model")).toBe("openrouter/google/gemini-3.8-flash");
+  });
+
+  it("uses request-level model when stage has none", () => {
+    const invocation = buildStageArgs(request({ model: "anthropic/claude-opus-5" }));
+
+    expect(argAfter(invocation.args, "--model")).toBe("anthropic/claude-opus-5");
+  });
+
   it("supports custom piBin", () => {
     expect(buildStageArgs(request({ piBin: "/usr/local/bin/pi" })).bin).toBe("/usr/local/bin/pi");
   });

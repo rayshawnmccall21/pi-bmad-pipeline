@@ -196,6 +196,25 @@ describe("RunDef compilation", () => {
     expect(compiledStage.budget).toEqual({ maxTokens: 1000, maxDollars: 0 });
   });
 
+  it("preserves stage-level model override", () => {
+    const runDef: RunDef = {
+      id: "sdlc",
+      stages: [
+        {
+          id: "code-review",
+          kind: "agent",
+          workflow: "code-review",
+          agent: "dev",
+          model: "openrouter/google/gemini-3.8-flash",
+        },
+      ],
+    };
+
+    const stages = compileRunDef(runDef);
+
+    expect(agentStageAt(stages, 0).model).toBe("openrouter/google/gemini-3.8-flash");
+  });
+
   it("copies and freezes compiled budget objects", () => {
     const runDef: RunDef = {
       id: "sdlc",

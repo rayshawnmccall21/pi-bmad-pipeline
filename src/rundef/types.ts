@@ -52,6 +52,9 @@ export interface AgentRunDefStage {
   /** Optional stage-level thinking effort override. */
   readonly thinking?: StageThinking;
 
+  /** Optional stage-level model override; replaces the run-level --model. */
+  readonly model?: string;
+
   /** Optional per-stage economic ceiling override. */
   readonly budget?: StageBudget;
 
@@ -147,6 +150,9 @@ export interface CompiledAgentStage extends CompiledStageCommon {
 
   /** Optional stage-level thinking effort override. */
   readonly thinking?: StageThinking;
+
+  /** Optional stage-level model override consumed by the Pi executor. */
+  readonly model?: string;
 
   /** Optional per-stage economic ceiling override. */
   readonly budget?: StageBudget;
