@@ -942,6 +942,67 @@ describe("createGitScopeAttestor", () => {
     expect(result).toMatchObject({ kind: "rejected" });
   });
 
+  it("attests the docs-contract root CLAUDE.md symlink to a regular sibling AGENTS.md", async () => {
+    const { projectRoot } = await createPhysicalScope();
+    await writeFile(join(projectRoot, "AGENTS.md"), "project instructions\n");
+    await symlink("AGENTS.md", join(projectRoot, "CLAUDE.md"));
+    const attest = createGitScopeAttestor({
+      runGit: authenticatedRunGit("?? CLAUDE.md\0"),
+    });
+
+    const result = await attest({ phase: "review", ...identity, projectRoot, qualityGate });
+
+    expect(result).toMatchObject({
+      kind: "review-checkpoint",
+      checkpoint: { reviewed: { paths: ["CLAUDE.md"] } },
+    });
+  });
+
+  it.each(["./AGENTS.md", "target.ts", "docs/AGENTS.md", "../AGENTS.md"])(
+    "rejects CLAUDE.md with non-canonical symlink target %s",
+    async (target) => {
+      const { projectRoot } = await createPhysicalScope();
+      await mkdir(join(projectRoot, "docs"));
+      await writeFile(join(projectRoot, "AGENTS.md"), "project instructions\n");
+      await writeFile(join(projectRoot, "target.ts"), "forbidden\n");
+      await writeFile(join(projectRoot, "docs/AGENTS.md"), "nested\n");
+      await symlink(target, join(projectRoot, "CLAUDE.md"));
+      const attest = createGitScopeAttestor({
+        runGit: authenticatedRunGit("?? CLAUDE.md\0"),
+      });
+
+      const result = await attest({ phase: "review", ...identity, projectRoot, qualityGate });
+
+      expect(result).toMatchObject({ kind: "rejected" });
+    },
+  );
+
+  it("rejects canonical CLAUDE.md when sibling AGENTS.md is missing", async () => {
+    const { projectRoot } = await createPhysicalScope();
+    await symlink("AGENTS.md", join(projectRoot, "CLAUDE.md"));
+    const attest = createGitScopeAttestor({
+      runGit: authenticatedRunGit("?? CLAUDE.md\0"),
+    });
+
+    const result = await attest({ phase: "review", ...identity, projectRoot, qualityGate });
+
+    expect(result).toMatchObject({ kind: "rejected" });
+  });
+
+  it("rejects canonical CLAUDE.md when sibling AGENTS.md is itself a symlink", async () => {
+    const { projectRoot } = await createPhysicalScope();
+    await writeFile(join(projectRoot, "target.md"), "forbidden\n");
+    await symlink("target.md", join(projectRoot, "AGENTS.md"));
+    await symlink("AGENTS.md", join(projectRoot, "CLAUDE.md"));
+    const attest = createGitScopeAttestor({
+      runGit: authenticatedRunGit("?? CLAUDE.md\0"),
+    });
+
+    const result = await attest({ phase: "review", ...identity, projectRoot, qualityGate });
+
+    expect(result).toMatchObject({ kind: "rejected" });
+  });
+
   it("rejects a symlinked-parent escape with the default physical reader", async () => {
     const { projectRoot, outsideRoot } = await createPhysicalScope();
     await writeFile(join(outsideRoot, "secret.ts"), "forbidden\n");

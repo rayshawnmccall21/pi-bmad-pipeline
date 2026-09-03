@@ -1,6 +1,6 @@
 /* eslint-disable jsdoc/require-description, jsdoc/no-blank-blocks, jsdoc/require-param, jsdoc/require-returns, jsdoc/require-example, @typescript-eslint/no-magic-numbers, max-lines -- Git porcelain parsing and fixed-argv observation are kept together at the trust boundary. */
 import { spawn } from "node:child_process";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, readFile, readlink, realpath } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 
 import {
@@ -398,16 +398,45 @@ const isDocumentationPath = (path: string): boolean => {
   );
 };
 
-const readRepositoryBytes = async (projectRoot: string, path: string): Promise<Uint8Array> => {
-  const physicalRoot = await realpath(projectRoot);
-  const candidate = resolve(physicalRoot, path);
+const DOCS_INSTRUCTION_LINK_PATH = "CLAUDE.md" as const;
+const DOCS_INSTRUCTION_LINK_TARGET = "AGENTS.md" as const;
+const DOCS_INSTRUCTION_LINK_BYTES = new TextEncoder().encode(
+  "pi-bmad.safe-symbolic-link.v1:AGENTS.md",
+);
+
+const assertCanonicalDocsInstructionLink = (path: string, linkTarget: string): void => {
+  if (path !== DOCS_INSTRUCTION_LINK_PATH) {
+    throw new TypeError("Git scope path targets a symlink.");
+  }
+  if (linkTarget !== DOCS_INSTRUCTION_LINK_TARGET) {
+    throw new TypeError("CLAUDE.md must target the sibling AGENTS.md exactly.");
+  }
+};
+
+const readDocsInstructionLink = async (
+  physicalRoot: string,
+  candidate: string,
+  path: string,
+): Promise<Uint8Array> => {
+  assertCanonicalDocsInstructionLink(path, await readlink(candidate));
+  const siblingStat = await lstat(resolve(physicalRoot, DOCS_INSTRUCTION_LINK_TARGET));
+  if (!siblingStat.isFile() || siblingStat.isSymbolicLink()) {
+    throw new TypeError("CLAUDE.md must target a regular sibling AGENTS.md file.");
+  }
+  return DOCS_INSTRUCTION_LINK_BYTES.slice();
+};
+
+const assertLexicallyConfined = (physicalRoot: string, candidate: string): void => {
   const relativePath = relative(physicalRoot, candidate);
   if (relativePath.startsWith("..") || resolve(physicalRoot, relativePath) !== candidate) {
     throw new TypeError("Git scope path escapes the project root.");
   }
-  if ((await lstat(candidate)).isSymbolicLink()) {
-    throw new TypeError("Git scope path targets a symlink.");
-  }
+};
+
+const readRegularRepositoryBytes = async (
+  physicalRoot: string,
+  candidate: string,
+): Promise<Uint8Array> => {
   const physicalPath = await realpath(candidate);
   const physicalRelative = relative(physicalRoot, physicalPath);
   if (
@@ -417,6 +446,15 @@ const readRepositoryBytes = async (projectRoot: string, path: string): Promise<U
     throw new TypeError("Git scope file escapes the project root.");
   }
   return new Uint8Array(await readFile(physicalPath));
+};
+
+const readRepositoryBytes = async (projectRoot: string, path: string): Promise<Uint8Array> => {
+  const physicalRoot = await realpath(projectRoot);
+  const candidate = resolve(physicalRoot, path);
+  assertLexicallyConfined(physicalRoot, candidate);
+  return (await lstat(candidate)).isSymbolicLink()
+    ? readDocsInstructionLink(physicalRoot, candidate, path)
+    : readRegularRepositoryBytes(physicalRoot, candidate);
 };
 
 const runGit = (projectRoot: string, args: readonly string[]): Promise<string> =>
