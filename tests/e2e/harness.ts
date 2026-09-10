@@ -29,7 +29,7 @@ const extensionPath = require.resolve("pi-bmad/extension");
 
 /** Base env every spawned CLI receives. */
 export const baseEnv: Readonly<Record<string, string>> = Object.freeze({
-  BMAD_PIPELINE_MODEL: "gpt-5",
+  BMAD_PIPELINE_MODEL: "openai/gpt-5",
   BMAD_PIPELINE_THINKING: "low",
   BMAD_PIPELINE_PI_BIN: stubPath,
   PI_BMAD_PIPELINE_EXTENSION_PATH: extensionPath,

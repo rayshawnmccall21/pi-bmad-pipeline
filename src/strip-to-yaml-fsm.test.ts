@@ -137,7 +137,7 @@ describe("YAML-only pipeline surface", () => {
       specFile: "spec.md",
       projectRoot,
       attempt: 1,
-      model: "test-model",
+      model: "test/test-model",
       thinking: "medium" as const,
       piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
       emissionKey: "key",

@@ -107,9 +107,11 @@ describe("FSM routing and gates", () => {
 
     expect(outcome.status).toBe(2);
     expect(singleResult(outcome)).toMatchObject({ status: "failed" });
-    const attempt = verifyAttempts(root, "B4-WRONG-STORY")[0];
-    expect(attempt?.status).toBe("gate-failed");
-    expect(attempt?.reason).toContain("story identity");
+    const state = readState(root, "B4-WRONG-STORY");
+    const devAttempt = state.stages["dev"]?.history[0];
+    expect(devAttempt?.status).toBe("parse-error");
+    expect(devAttempt?.reason).toContain("story identity");
+    expect(state.stages["verify"]?.history ?? []).toHaveLength(0);
   });
 
   it("halts the run when a stage exceeds its token budget", () => {

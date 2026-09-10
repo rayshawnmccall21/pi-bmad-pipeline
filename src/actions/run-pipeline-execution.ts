@@ -26,10 +26,11 @@ import type {
 } from "../core/index.js";
 import type { PipelineEventEmitter } from "../events/index.js";
 import type { WorkflowExecutor } from "../executors/index.js";
-import type {
-  ModelConfigCandidate,
-  ResolveModelConfigRequest,
-  ResolvedModelConfig,
+import {
+  normalizeLegacyPipelineModel,
+  type ModelConfigCandidate,
+  type ResolveModelConfigRequest,
+  type ResolvedModelConfig,
 } from "../model/index.js";
 
 /** Env var supplying the environment-sourced model candidate (D7). */
@@ -205,7 +206,7 @@ const assertResumeIdentity = (
     loaded.runDefId === input.runDefId,
     loaded.runDefDigest === input.runDefDigest,
     loaded.specFile === request.specFile,
-    loaded.model === input.model.model,
+    normalizeLegacyPipelineModel(loaded.model) === input.model.model,
     loaded.thinking === input.model.thinking,
   ].every(Boolean);
   if (!matches) {

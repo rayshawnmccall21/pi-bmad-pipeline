@@ -25,6 +25,9 @@ export interface GatedHeadlessOutputContext {
 
   /** Workflow requested for the active stage. */
   readonly expectedWorkflow?: string;
+
+  /** Active story/sprint identity, when the workflow declares an identity field. */
+  readonly expectedStoryId?: string;
 }
 
 /** Fail-closed extraction result for the gated headless terminal output. */
@@ -104,25 +107,24 @@ const gateCandidates = (
   if (accepted !== undefined) {
     return { output: accepted.candidate };
   }
-  const lastEntry = gated[gated.length - 1];
-  const workflowFailure = workflowMismatchFailure(lastEntry, context.expectedWorkflow);
-  if (workflowFailure !== undefined) {
-    return { output: null, failure: workflowFailure };
-  }
-  const stage = rejectedStage(lastEntry);
-  return {
-    output: null,
-    failure: `Headless terminal output rejected at the ${stage} gate under the emission key.`,
-  };
+  return { output: null, failure: candidateFailure(gated[gated.length - 1], context) };
 };
 
+interface GatedCandidate {
+  readonly candidate: Record<string, unknown>;
+  readonly verdict: ReturnType<typeof gateHeadlessTerminalOutput>;
+}
+
+const candidateFailure = (
+  entry: GatedCandidate | undefined,
+  context: GatedHeadlessOutputContext,
+): string =>
+  workflowMismatchFailure(entry, context.expectedWorkflow) ??
+  identityMismatchFailure(entry, context) ??
+  `Headless terminal output rejected at the ${rejectedStage(entry)} gate under the emission key.`;
+
 const workflowMismatchFailure = (
-  entry:
-    | {
-        readonly candidate: Record<string, unknown>;
-        readonly verdict: ReturnType<typeof gateHeadlessTerminalOutput>;
-      }
-    | undefined,
+  entry: GatedCandidate | undefined,
   expectedWorkflow: string | undefined,
 ): string | undefined => {
   if (
@@ -135,20 +137,69 @@ const workflowMismatchFailure = (
   return `Headless terminal output workflow ${JSON.stringify(entry.candidate["workflow"] ?? null)} does not match requested workflow ${JSON.stringify(expectedWorkflow)}.`;
 };
 
-const rejectedStage = (
-  entry: { readonly verdict: ReturnType<typeof gateHeadlessTerminalOutput> } | undefined,
-): string => (entry !== undefined && !entry.verdict.accepted ? entry.verdict.stage : "unknown");
-
-const isExpectedOutput = (
-  entry: {
-    readonly candidate: Record<string, unknown>;
-    readonly verdict: ReturnType<typeof gateHeadlessTerminalOutput>;
-  },
+const identityMismatchFailure = (
+  entry: GatedCandidate | undefined,
   context: GatedHeadlessOutputContext,
-): boolean =>
+): string | undefined => {
+  const field = identityFieldForWorkflow(context.expectedWorkflow);
+  if (
+    entry?.verdict.accepted !== true ||
+    context.expectedStoryId === undefined ||
+    field === undefined
+  ) {
+    return undefined;
+  }
+  const actual = recordField(entry.candidate, "payload")?.[field];
+  return actual === context.expectedStoryId
+    ? undefined
+    : `Headless terminal output payload ${field} ${JSON.stringify(actual ?? null)} does not match requested story identity ${JSON.stringify(context.expectedStoryId)}.`;
+};
+
+const storyIdentityWorkflows = new Set([
+  "code-review",
+  "create-plan",
+  "create-story",
+  "dev-story",
+  "e2e-fix",
+  "e2e-plan",
+  "e2e-verify",
+  "execute-slice",
+  "plan-vertical-slice",
+  "quick-review",
+  "render-change-explanation-page",
+  "render-html-review",
+  "self-improve",
+]);
+
+const identityFieldForWorkflow = (
+  workflow: string | undefined,
+): "storyId" | "sprintId" | undefined =>
+  workflow === "sprint-planning"
+    ? "sprintId"
+    : workflow !== undefined && storyIdentityWorkflows.has(workflow)
+      ? "storyId"
+      : undefined;
+
+const rejectedStage = (entry: GatedCandidate | undefined): string =>
+  entry !== undefined && !entry.verdict.accepted ? entry.verdict.stage : "unknown";
+
+const isExpectedOutput = (entry: GatedCandidate, context: GatedHeadlessOutputContext): boolean =>
   entry.verdict.accepted &&
   (context.expectedWorkflow === undefined ||
-    entry.candidate["workflow"] === context.expectedWorkflow);
+    entry.candidate["workflow"] === context.expectedWorkflow) &&
+  hasExpectedIdentity(entry.candidate, context);
+
+const hasExpectedIdentity = (
+  candidate: Record<string, unknown>,
+  context: GatedHeadlessOutputContext,
+): boolean => {
+  const field = identityFieldForWorkflow(context.expectedWorkflow);
+  return (
+    context.expectedStoryId === undefined ||
+    field === undefined ||
+    recordField(candidate, "payload")?.[field] === context.expectedStoryId
+  );
+};
 
 const headlessOutputCandidate = (value: unknown): Record<string, unknown> | undefined => {
   const event = eventOfType(value, "tool_execution_end");

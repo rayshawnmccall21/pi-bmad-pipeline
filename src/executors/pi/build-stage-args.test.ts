@@ -24,7 +24,7 @@ const request = (overrides: Partial<BuildStageArgsRequest> = {}): BuildStageArgs
   specFile: "./specs/story-123.md",
   projectRoot: "/repo",
   attempt: 1,
-  model: "gpt-5.5-pro",
+  model: "zai/glm-5.3",
   thinking: "medium",
   piBmadExtensionPath: "/deps/pi-bmad/extensions/pi-bmad.ts",
   emissionKey: "emission-key-1",
@@ -50,20 +50,48 @@ describe("Pi stage argv builder", () => {
     expect(buildStageArgs(request()).bin).toBe(DEFAULT_PI_BIN);
   });
 
-  it("emits the real headless prefix: JSON mode, print, isolation", () => {
-    expect(buildStageArgs(request()).args.slice(0, 5)).toEqual([
+  it("emits the exact Pi 0.84 headless isolation prefix before explicit extensions", () => {
+    expect(buildStageArgs(request()).args.slice(0, 13)).toEqual([
       "--mode",
       "json",
       "-p",
       "--no-session",
       "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--no-context-files",
+      "--no-approve",
+      "--offline",
+      "-e",
+      "/deps/pi-bmad/extensions/pi-bmad.ts",
     ]);
   });
 
-  it("loads the pi-bmad extension explicitly", () => {
-    const args = buildStageArgs(request()).args;
+  it("loads explicit pi-bmad and extra extensions after discovery is disabled", () => {
+    const args = buildStageArgs(
+      request({ stage: stage({ extensions: ["/ext/obs.ts", "/ext/subagents.ts"] }) }),
+    ).args;
 
-    expect(argAfter(args, "-e")).toBe("/deps/pi-bmad/extensions/pi-bmad.ts");
+    expect(args.slice(0, 17)).toEqual([
+      "--mode",
+      "json",
+      "-p",
+      "--no-session",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--no-context-files",
+      "--no-approve",
+      "--offline",
+      "-e",
+      "/deps/pi-bmad/extensions/pi-bmad.ts",
+      "-e",
+      "/ext/obs.ts",
+      "-e",
+      "/ext/subagents.ts",
+    ]);
   });
 
   it("emits the pi-bmad workflow and story flags", () => {
@@ -76,7 +104,7 @@ describe("Pi stage argv builder", () => {
   it("emits real pi model and thinking flags", () => {
     const args = buildStageArgs(request()).args;
 
-    expect(argAfter(args, "--model")).toBe("gpt-5.5-pro");
+    expect(argAfter(args, "--model")).toBe("zai/glm-5.3");
     expect(argAfter(args, "--thinking")).toBe("medium");
   });
 
@@ -386,6 +414,13 @@ describe("Pi stage argv builder", () => {
     "rejects blank required string %s",
     (field, overrides) => {
       expect(() => buildStageArgs(request(overrides))).toThrow(`${field} must not be blank.`);
+    },
+  );
+
+  it.each(["glm-5.3", "/glm-5.3", "zai/", "zai//glm", "zai /glm"])(
+    "rejects malformed model %j before returning spawn arguments",
+    (model) => {
+      expect(() => buildStageArgs(request({ model }))).toThrow();
     },
   );
 

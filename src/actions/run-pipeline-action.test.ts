@@ -270,14 +270,14 @@ describe("runPipelineAction", () => {
     }));
     const harness = createHarness({
       request: {
-        env: { BMAD_PIPELINE_MODEL: "env-model", BMAD_PIPELINE_THINKING: "high" },
+        env: { BMAD_PIPELINE_MODEL: "test/env-model", BMAD_PIPELINE_THINKING: "high" },
       },
       deps: { createExecutor },
     });
 
     await runPipelineAction(harness.request);
 
-    expect(createExecutor).toHaveBeenCalledWith({ model: "env-model", thinking: "high" });
+    expect(createExecutor).toHaveBeenCalledWith({ model: "test/env-model", thinking: "high" });
   });
 
   it("forwards the environment pi bin override to executor construction", async () => {
@@ -288,7 +288,7 @@ describe("runPipelineAction", () => {
     const harness = createHarness({
       request: {
         env: {
-          [BMAD_PIPELINE_MODEL_ENV_VAR]: "env-model",
+          [BMAD_PIPELINE_MODEL_ENV_VAR]: "test/env-model",
           [BMAD_PIPELINE_THINKING_ENV_VAR]: "high",
           [BMAD_PIPELINE_PI_BIN_ENV_VAR]: "/stub/pi",
         },
@@ -299,7 +299,7 @@ describe("runPipelineAction", () => {
     await runPipelineAction(harness.request);
 
     expect(createExecutor).toHaveBeenCalledWith({
-      model: "env-model",
+      model: "test/env-model",
       thinking: "high",
       piBin: "/stub/pi",
     });
@@ -328,9 +328,9 @@ describe("runPipelineAction", () => {
     const runStages = vi.fn(doneFsm);
     const harness = createHarness({
       request: {
-        model: "explicit",
+        model: "test/explicit",
         thinking: "high",
-        env: { [BMAD_PIPELINE_MODEL_ENV_VAR]: "env" },
+        env: { [BMAD_PIPELINE_MODEL_ENV_VAR]: "test/env" },
         maxRegressions: 2,
         runBudget: { maxTokens: 5 },
         signal,
@@ -350,7 +350,7 @@ describe("runPipelineAction", () => {
       runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
       specFile: "spec.md",
       stages,
-      model: "gpt-5.5-pro",
+      model: "openrouter/openai/gpt-5.5-pro",
       thinking: "medium",
       startedAt: timestamp,
     });
@@ -373,7 +373,7 @@ describe("runPipelineAction", () => {
       runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
       specFile: "spec.md",
       stages,
-      model: "gpt-5.5-pro",
+      model: "openrouter/openai/gpt-5.5-pro",
       thinking: "medium",
     });
     const runStages = vi.fn(doneFsm);
@@ -386,6 +386,43 @@ describe("runPipelineAction", () => {
     expect(runStages).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: "/root" }));
   });
 
+  it("resumes durable state containing exactly the historical bare default", async () => {
+    const legacyState = createInitialPipelineState({
+      storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
+      specFile: "spec.md",
+      stages,
+      model: "gpt-5.5-pro",
+      thinking: "medium",
+    });
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({ loaded: legacyState, deps: { runStages } });
+
+    await expect(runPipelineAction(harness.request)).resolves.toMatchObject({ status: "passed" });
+    expect(runStages).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed for durable state containing any other bare model", async () => {
+    const invalidState = createInitialPipelineState({
+      storyId: "SH-1",
+      runDefId: "sdlc",
+      runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
+      specFile: "spec.md",
+      stages,
+      model: "other-bare-model",
+      thinking: "medium",
+    });
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({ loaded: invalidState, deps: { runStages } });
+
+    await expect(runPipelineAction(harness.request)).resolves.toMatchObject({
+      status: "needs-attention",
+      error: expect.stringContaining("identity"),
+    });
+    expect(runStages).not.toHaveBeenCalled();
+  });
+
   it("fails closed when YAML changes but reuses the same stage ids", async () => {
     const changedRunDefState = createInitialPipelineState({
       storyId: "SH-1",
@@ -396,7 +433,7 @@ describe("runPipelineAction", () => {
       }),
       specFile: "spec.md",
       stages,
-      model: "gpt-5.5-pro",
+      model: "openrouter/openai/gpt-5.5-pro",
       thinking: "medium",
       startedAt: timestamp,
     });
@@ -437,7 +474,7 @@ describe("runPipelineAction", () => {
       runDefDigest: computeRunDefDigest(previousRunDef),
       specFile: "spec.md",
       stages: codeStages,
-      model: "gpt-5.5-pro",
+      model: "openrouter/openai/gpt-5.5-pro",
       thinking: "medium",
     });
     const runStages = vi.fn(doneFsm);
@@ -468,7 +505,7 @@ describe("runPipelineAction", () => {
       runDefDigest: computeRunDefDigest({ id: "sdlc", stages: [] }),
       specFile: "spec.md",
       stages,
-      model: "gpt-5.5-pro",
+      model: "openrouter/openai/gpt-5.5-pro",
       thinking: "medium",
     });
     const harness = createHarness({ loaded: boundState });

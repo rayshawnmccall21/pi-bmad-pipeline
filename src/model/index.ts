@@ -3,9 +3,11 @@
 export {
   DEFAULT_PIPELINE_MODEL,
   DEFAULT_PIPELINE_THINKING,
+  LEGACY_PIPELINE_MODEL,
   ModelConfigError,
   assertResolvedModelConfig,
   isModelThinking,
+  normalizeLegacyPipelineModel,
   resolveModelConfig,
 } from "./model-config.js";
 

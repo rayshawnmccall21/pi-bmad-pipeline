@@ -10,7 +10,9 @@ import { DEBUG_LOG_PREFIX, PIPELINE_DEBUG_ENV_VAR } from "../../events/index.js"
 import { createStageHandoff } from "../../security/stage-handoff.js";
 import {
   BmadStageSpawnError,
+  MAX_HEADLESS_JSONL_LINE_BYTES,
   MAX_STAGE_STDERR_CHARS,
+  buildStageEnvironment,
   resolvePiBmadExtensionPath,
   runBmadStage,
   toBuildStageArgsRequest,
@@ -27,6 +29,10 @@ import type {
 const expectedDefaultKillEscalationMs = 10_000;
 const piBmadRootDir = resolve(dirname(resolvePiBmadExtensionPath()), "..");
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 const loadFixtureEnvelope = (): Record<string, unknown> => {
   const line = readFileSync(
     join(piBmadRootDir, "contracts", "fixtures", "dev-story", "success.jsonl"),
@@ -39,8 +45,33 @@ const loadFixtureEnvelope = (): Record<string, unknown> => {
 };
 
 const stampedEnvelope = (emissionKey: string): Record<string, unknown> => {
-  const envelope = loadFixtureEnvelope();
+  const fixture = loadFixtureEnvelope();
+  const envelope = {
+    ...fixture,
+    payload: { ...(fixture["payload"] as Record<string, unknown>), storyId: "STORY-123" },
+  };
   return { ...envelope, emissionProvenance: buildEmissionProvenance(emissionKey, envelope) };
+};
+
+const loadPi084Fixture = (
+  emissionKey: string,
+): { readonly events: readonly Record<string, unknown>[]; readonly stdout: string } => {
+  const events = readFileSync(
+    join(import.meta.dirname, "fixtures", "pi-0.84-headless.jsonl"),
+    "utf8",
+  )
+    .trimEnd()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const toolEnd = events.at(-1) as {
+    result: { details: { headlessOutput: Record<string, unknown> } };
+  };
+  const envelope = toolEnd.result.details.headlessOutput;
+  toolEnd.result.details.headlessOutput = {
+    ...envelope,
+    emissionProvenance: buildEmissionProvenance(emissionKey, envelope),
+  };
+  return { events, stdout: `${events.map((event) => JSON.stringify(event)).join("\n")}\n` };
 };
 
 const toolEndLine = (headlessOutput: unknown): string =>
@@ -74,7 +105,7 @@ const request = (overrides: Partial<RunBmadStageRequest> = {}): RunBmadStageRequ
   specFile: "./specs/story-123.md",
   projectRoot: "/repo",
   attempt: 1,
-  model: "gpt-5.5-pro",
+  model: "zai/glm-5.3",
   thinking: "medium",
   signal: new AbortController().signal,
   ...overrides,
@@ -111,6 +142,76 @@ const writeStderr = (child: BmadStageChildProcess, text: string): void => {
   (child.stderr as PassThrough).write(text);
 };
 
+describe("stage child environment", () => {
+  it("preserves ordinary and provider env while removing inherited Pi control state", () => {
+    const parentEnv = {
+      PATH: "/usr/bin",
+      HOME: "/home/test",
+      LANG: "en_US.UTF-8",
+      ZAI_API_KEY: "zai-key",
+      OPENROUTER_API_KEY: "openrouter-key",
+      PI_SESSION_ID: "session-id",
+      PI_SESSION_FILE: "/tmp/session.json",
+      PI_PROVIDER: "inherited-provider",
+      PI_MODEL: "inherited-model",
+      PI_REASONING_LEVEL: "high",
+      PI_SUBAGENT_PARENT_SESSION: "parent-session",
+      PI_BMAD_RUN_ID: "inherited-run",
+      PI_BMAD_EMISSION_KEY: "inherited-emission",
+      PI_PACKAGE_DIR: "/inherited/package",
+      PI_EXTENSIONS: "/inherited/extension.ts",
+      PI_SUBAGENT_CHILD: "child",
+      PI_SUBAGENT_CHILD_TOKEN: "child-token",
+      PI_CODING_AGENT_DIR: "/inherited/agent",
+    };
+
+    expect(buildStageEnvironment(parentEnv, {})).toEqual({
+      PATH: "/usr/bin",
+      HOME: "/home/test",
+      LANG: "en_US.UTF-8",
+      ZAI_API_KEY: "zai-key",
+      OPENROUTER_API_KEY: "openrouter-key",
+      PI_TELEMETRY: "0",
+    });
+  });
+
+  it("lets the fresh invocation win, restores its run contract, and forces telemetry off", () => {
+    const parentEnv = {
+      PATH: "/parent/bin",
+      PI_BMAD_RUN_ID: "inherited-run",
+      PI_BMAD_EMISSION_KEY: "inherited-emission",
+      PI_OFFLINE: "0",
+      PI_TELEMETRY: "1",
+      PI_CODING_AGENT_DIR: "/inherited/agent",
+    };
+    const invocationEnv = {
+      PATH: "/invocation/bin",
+      PI_BMAD_RUN_ID: "fresh-run",
+      PI_BMAD_EMISSION_KEY: "fresh-emission",
+      PI_OFFLINE: "1",
+      PI_TELEMETRY: "1",
+      PI_CODING_AGENT_DIR: "/reviewed/agent",
+    };
+    const parentBefore = { ...parentEnv };
+    const invocationBefore = { ...invocationEnv };
+
+    const result = buildStageEnvironment(parentEnv, invocationEnv);
+
+    expect(result).toEqual({
+      PATH: "/invocation/bin",
+      PI_OFFLINE: "1",
+      PI_TELEMETRY: "0",
+      PI_BMAD_RUN_ID: "fresh-run",
+      PI_BMAD_EMISSION_KEY: "fresh-emission",
+      PI_CODING_AGENT_DIR: "/reviewed/agent",
+    });
+    expect(result).not.toBe(parentEnv);
+    expect(result).not.toBe(invocationEnv);
+    expect(parentEnv).toEqual(parentBefore);
+    expect(invocationEnv).toEqual(invocationBefore);
+  });
+});
+
 describe("run BMAD stage", () => {
   it("maps requests to build-stage-args requests", () => {
     const upstreamHandoff = handoff({ locations: ["src/example.ts:42"] });
@@ -130,7 +231,7 @@ describe("run BMAD stage", () => {
       specFile: "./specs/story-123.md",
       projectRoot: "/repo",
       attempt: 1,
-      model: "gpt-5.5-pro",
+      model: "zai/glm-5.3",
       thinking: "medium",
       priorFindings: ["a"],
       upstreamHandoff,
@@ -163,7 +264,12 @@ describe("run BMAD stage", () => {
     expect(first.emissionKey).not.toBe(second.emissionKey);
   });
 
-  it("spawns with built bin, args, cwd, and the emission env contract", async () => {
+  it("spawns with built bin, args, cwd, and a sanitized child environment", async () => {
+    vi.stubEnv("ZAI_API_KEY", "caller-owned-provider-key");
+    vi.stubEnv("PI_SESSION_ID", "inherited-session");
+    vi.stubEnv("PI_SUBAGENT_CHILD_TOKEN", "inherited-child-token");
+    vi.stubEnv("PI_CODING_AGENT_DIR", "/inherited/agent");
+    vi.stubEnv("PI_TELEMETRY", "1");
     const [spawn, child] = createSpawn();
 
     const promise = runBmadStage(
@@ -180,14 +286,21 @@ describe("run BMAD stage", () => {
     expect(spawn).toHaveBeenCalledWith(
       "pix",
       expect.arrayContaining(["--bmad-workflow", "dev-story", "--bmad-story", "STORY-123"]),
-      expect.objectContaining({
-        cwd: "/repo",
-        env: expect.objectContaining({
-          PI_BMAD_RUN_ID: "STORY-123.dev-story.1",
-          PI_BMAD_EMISSION_KEY: "key-1",
-        }) as NodeJS.ProcessEnv,
-      }) as BmadStageSpawnOptions,
+      expect.objectContaining({ cwd: "/repo" }) as BmadStageSpawnOptions,
     );
+    const options = vi.mocked(spawn).mock.calls[0]?.[2];
+    expect(options?.env).toEqual(
+      expect.objectContaining({
+        ZAI_API_KEY: "caller-owned-provider-key",
+        PI_BMAD_RUN_ID: "STORY-123.dev-story.1",
+        PI_BMAD_EMISSION_KEY: "key-1",
+        PI_OFFLINE: "1",
+        PI_TELEMETRY: "0",
+      }),
+    );
+    expect(options?.env).not.toHaveProperty("PI_SESSION_ID");
+    expect(options?.env).not.toHaveProperty("PI_SUBAGENT_CHILD_TOKEN");
+    expect(options?.env).not.toHaveProperty("PI_CODING_AGENT_DIR");
   });
 
   it("returns the gated headless envelope from tool_execution_end, not the last record", async () => {
@@ -199,6 +312,66 @@ describe("run BMAD stage", () => {
     close(child, 0);
 
     await expect(promise).resolves.toMatchObject({ output: envelope, exitCode: 0 });
+  });
+
+  it("accepts the Pi 0.84 delta-only/update, authoritative-end, headless fixture", async () => {
+    const [spawn, child] = createSpawn();
+    const fixture = loadPi084Fixture("key-1");
+
+    expect(fixture.events[0]).not.toHaveProperty("message");
+    expect(fixture.events[0]).toMatchObject({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "working " },
+    });
+    expect(fixture.events[2]).toMatchObject({
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "working done" }] },
+    });
+    expect(fixture.events[3]).toMatchObject({
+      type: "tool_execution_end",
+      result: { details: { headlessOutput: { workflow: "dev-story" } } },
+    });
+
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(child, fixture.stdout);
+    close(child, 0);
+
+    await expect(promise).resolves.toMatchObject({
+      output: { workflow: "dev-story", payload: { storyId: "STORY-123" } },
+      usage: { tokens: 42, dollars: 0.125 },
+      exitCode: 0,
+    });
+  });
+
+  it("rejects a valid emitted dev-story envelope for another story on exit 0", async () => {
+    const [spawn, child] = createSpawn();
+    const envelope = loadFixtureEnvelope();
+    const forged = {
+      ...envelope,
+      payload: {
+        storyId: "FORGED-999",
+        testsAdded: 4,
+        filesChanged: ["src/contracts/index.ts"],
+        testsPassed: true,
+        typecheckPassed: true,
+        lintPassed: true,
+      },
+    };
+    const stamped = {
+      ...forged,
+      emissionProvenance: buildEmissionProvenance("key-1", forged),
+    };
+
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1" }));
+    writeStdout(child, toolEndLine(stamped));
+    close(child, 0);
+
+    await expect(promise).resolves.toMatchObject({
+      output: null,
+      exitCode: 0,
+      parseError:
+        'Headless terminal output payload storyId "FORGED-999" does not match requested story identity "STORY-123".',
+    });
   });
 
   it("spawns the child with stdin ignored so print-mode children see EOF", async () => {
@@ -272,6 +445,65 @@ describe("run BMAD stage", () => {
     close(child, 0);
 
     expect((await promise).parseError).toMatch(/^Invalid JSONL on line 1:/u);
+  });
+
+  it("kills on parser overflow, ignores later output and child errors, and escalates", async () => {
+    vi.useFakeTimers();
+    const [spawn, child] = createSpawn();
+    const promise = runBmadStage(request({ spawn, emissionKey: "key-1", killEscalationMs: 5 }));
+
+    writeStdout(child, toolEndLine(stampedEnvelope("key-1")));
+    expect(() => {
+      writeStdout(child, "x".repeat(MAX_HEADLESS_JSONL_LINE_BYTES + 1));
+      writeStdout(child, "{}\n".repeat(100));
+      child.emit("error", new Error("late process error"));
+    }).not.toThrow();
+    expect(killSignals(child)).toEqual(["SIGTERM"]);
+    await vi.advanceTimersByTimeAsync(5);
+    expect(killSignals(child)).toEqual(["SIGTERM", "SIGKILL"]);
+    close(child, 0);
+
+    await expect(promise).resolves.toMatchObject({
+      output: null,
+      exitCode: 0,
+      parseError: `JSONL line exceeded ${String(MAX_HEADLESS_JSONL_LINE_BYTES)} bytes.`,
+    });
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ["stdout", "Child stdout stream error."],
+    ["stderr", "Child stderr stream error."],
+  ] as const)("fails closed and escalates on %s stream error", async (streamName, parseError) => {
+    vi.useFakeTimers();
+    const [spawn, child] = createSpawn();
+    const promise = runBmadStage(request({ spawn, killEscalationMs: 5 }));
+
+    expect(() =>
+      child[streamName].emit("error", new Error("unbounded secret detail")),
+    ).not.toThrow();
+    expect(killSignals(child)).toEqual(["SIGTERM"]);
+    await vi.advanceTimersByTimeAsync(5);
+    expect(killSignals(child)).toEqual(["SIGTERM", "SIGKILL"]);
+    close(child, 0);
+
+    await expect(promise).resolves.toMatchObject({ output: null, exitCode: 0, parseError });
+    vi.useRealTimers();
+  });
+
+  it("cleans up child and stream listeners after settlement", async () => {
+    const [spawn, child] = createSpawn();
+    const promise = runBmadStage(request({ spawn }));
+
+    close(child, 0);
+    await promise;
+
+    expect(child.listenerCount("error")).toBe(0);
+    expect(child.listenerCount("close")).toBe(0);
+    expect(child.stdout.listenerCount("data")).toBe(0);
+    expect(child.stdout.listenerCount("error")).toBe(0);
+    expect(child.stderr.listenerCount("data")).toBe(0);
+    expect(child.stderr.listenerCount("error")).toBe(0);
   });
 
   it("uses stderr fallback for nonzero exit with no output", async () => {
@@ -381,16 +613,6 @@ describe("run BMAD stage", () => {
     close(child, 1);
 
     await expect(promise).rejects.toBeInstanceOf(BmadStageSpawnError);
-  });
-
-  it("ignores child errors after close", async () => {
-    const [spawn, child] = createSpawn();
-
-    const promise = runBmadStage(request({ spawn }));
-    close(child, 0);
-    child.emit("error", new Error("late error"));
-
-    await expect(promise).resolves.toMatchObject({ exitCode: 0 });
   });
 
   it("rejects invalid timeoutMs", () => {

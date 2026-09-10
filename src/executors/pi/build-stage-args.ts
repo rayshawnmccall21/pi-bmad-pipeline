@@ -14,7 +14,7 @@
  * @packageDocumentation
  */
 
-import type { ModelThinking } from "../../model/index.js";
+import { assertResolvedModelConfig, type ModelThinking } from "../../model/index.js";
 import { sanitizeStageHandoff, type StageHandoff } from "../../security/stage-handoff.js";
 
 /** Default Pi executable name. */
@@ -163,6 +163,12 @@ const headlessPrefixArgs = (): readonly string[] => [
   "-p",
   "--no-session",
   "--no-extensions",
+  "--no-skills",
+  "--no-prompt-templates",
+  "--no-themes",
+  "--no-context-files",
+  "--no-approve",
+  "--offline",
 ];
 
 const extensionArgs = (request: BuildStageArgsRequest): readonly string[] => {
@@ -237,6 +243,12 @@ const defaultRunId = (request: BuildStageArgsRequest): string =>
 
 const validateRequest = (request: BuildStageArgsRequest): void => {
   validateRequiredStrings(request);
+  assertResolvedModelConfig({
+    model: request.model,
+    thinking: request.thinking,
+    modelSource: "explicit",
+    thinkingSource: "explicit",
+  });
   validateOptionalStrings(request);
   validatePositiveInteger("attempt", request.attempt);
 };

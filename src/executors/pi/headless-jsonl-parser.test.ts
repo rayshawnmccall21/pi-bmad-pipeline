@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { createHeadlessJsonlParser, parseHeadlessJsonl } from "./index.js";
+import {
+  MAX_HEADLESS_JSONL_ENTRIES,
+  MAX_HEADLESS_JSONL_LINE_BYTES,
+  MAX_HEADLESS_STDOUT_BYTES,
+  createHeadlessJsonlParser,
+  parseHeadlessJsonl,
+} from "./index.js";
 
 const parse = (input: string | Uint8Array) => parseHeadlessJsonl(input);
 const bytes = (input: string): Uint8Array => new TextEncoder().encode(input);
@@ -58,6 +64,98 @@ describe("headless JSONL parser", () => {
     const snapshot = parser.push(encoded.slice(13));
 
     expect(snapshot.output).toEqual({ emoji: "🙂" });
+  });
+
+  it("fails terminally and deterministically on invalid UTF-8 without throwing", () => {
+    const parser = createHeadlessJsonlParser();
+
+    expect(() => parser.push(Uint8Array.of(0xc3, 0x28))).not.toThrow();
+    expect(parser.snapshot().fatalError).toBe("Invalid UTF-8 in child stdout.");
+  });
+
+  it("detects truncated UTF-8 when finishing", () => {
+    const parser = createHeadlessJsonlParser();
+
+    parser.push(Uint8Array.of(0xf0, 0x9f));
+
+    expect(parser.finish().fatalError).toBe("Invalid UTF-8 in child stdout.");
+  });
+
+  it("fails terminally when total stdout exceeds 16 MiB", () => {
+    expect(MAX_HEADLESS_STDOUT_BYTES).toBe(16 * 1024 * 1024);
+
+    const snapshot = parse(new Uint8Array(MAX_HEADLESS_STDOUT_BYTES + 1));
+
+    expect(snapshot.fatalError).toBe(
+      `Child stdout exceeded ${String(MAX_HEADLESS_STDOUT_BYTES)} bytes.`,
+    );
+  });
+
+  it("fails terminally when a pending line exceeds 1 MiB", () => {
+    const parser = createHeadlessJsonlParser();
+
+    parser.push("x".repeat(MAX_HEADLESS_JSONL_LINE_BYTES));
+    const snapshot = parser.push("x");
+
+    expect(snapshot.fatalError).toBe(
+      `JSONL line exceeded ${String(MAX_HEADLESS_JSONL_LINE_BYTES)} bytes.`,
+    );
+  });
+
+  it("fails terminally after 10,000 retained records and issues", () => {
+    const input = `${"{}\n".repeat(MAX_HEADLESS_JSONL_ENTRIES)}{bad}\n`;
+    const snapshot = parse(input);
+
+    expect(snapshot.records).toHaveLength(MAX_HEADLESS_JSONL_ENTRIES);
+    expect(snapshot.issues).toHaveLength(0);
+    expect(snapshot.fatalError).toBe(
+      `JSONL record and issue count exceeded ${String(MAX_HEADLESS_JSONL_ENTRIES)}.`,
+    );
+  });
+
+  it("drops update traffic while retaining terminal and other records", () => {
+    const retained = [
+      { type: "session", id: "session-1" },
+      { type: "message_end", message: { role: "assistant" } },
+      { type: "tool_execution_end", result: { ok: true } },
+      { type: "agent_end" },
+      { type: "settled" },
+      { type: "retry", attempt: 2 },
+      { type: "other" },
+    ];
+    const input = [
+      retained[0],
+      { type: "message_update", delta: "progress" },
+      retained[1],
+      { type: "tool_execution_update", partialResult: "progress" },
+      ...retained.slice(2),
+    ]
+      .map((value) => JSON.stringify(value))
+      .join("\n");
+
+    expect(parse(`${input}\n`).records.map((record) => record.value)).toEqual(retained);
+  });
+
+  it("keeps repeated update traffic outside the retained entry limit", () => {
+    const updates = `${'{"type":"message_update"}\n'.repeat(
+      MAX_HEADLESS_JSONL_ENTRIES + 1,
+    )}{"type":"session"}\n`;
+    const snapshot = parse(updates);
+
+    expect(snapshot.fatalError).toBeUndefined();
+    expect(snapshot.records).toEqual([
+      { line: MAX_HEADLESS_JSONL_ENTRIES + 2, value: { type: "session" } },
+    ]);
+    expect(snapshot.issues).toEqual([]);
+  });
+
+  it("does not retain or allocate snapshots for later chunks after a terminal failure", () => {
+    const parser = createHeadlessJsonlParser();
+    const failed = parser.push(Uint8Array.of(0xff));
+
+    expect(parser.snapshot()).toBe(failed);
+    expect(parser.push(bytes(`${"{}\n".repeat(100)}${"x".repeat(100_000)}`))).toBe(failed);
+    expect(parser.push("ignored again")).toBe(failed);
   });
 
   it("records invalid JSON as an issue and continues", () => {

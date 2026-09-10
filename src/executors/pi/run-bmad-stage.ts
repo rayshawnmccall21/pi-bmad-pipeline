@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- stage process lifecycle stays in one boundary module. */
 import { randomUUID } from "node:crypto";
 import { dirname, resolve as resolvePath } from "node:path";
 
@@ -9,7 +10,11 @@ import {
   type BuildStageArgsRequest,
   type BuiltStageArgs,
 } from "./build-stage-args.js";
-import { createHeadlessJsonlParser, type HeadlessJsonlParser } from "./headless-jsonl-parser.js";
+import {
+  createHeadlessJsonlParser,
+  type HeadlessJsonlParser,
+  type HeadlessJsonlParserSnapshot,
+} from "./headless-jsonl-parser.js";
 import {
   extractGatedHeadlessOutput,
   extractStageUsage,
@@ -157,6 +162,7 @@ export function runBmadStage(request: RunBmadStageRequest): Promise<StageExecuti
       schemaRootDir: piBmadSchemaRootDir(argsRequest.piBmadExtensionPath),
       resolve,
       reject,
+      cleanupHandlers: undefined,
     });
     if (request.signal.aborted) {
       onAbort();
@@ -205,6 +211,8 @@ const optionalStageArgsFields = (request: RunBmadStageRequest): OptionalStageArg
 interface RunState {
   aborted: boolean;
   timedOut: boolean;
+  parserFailed: boolean;
+  streamFailure: string | undefined;
   settled: boolean;
   killTimer: NodeJS.Timeout | undefined;
   readonly killEscalationMs: number;
@@ -224,6 +232,7 @@ interface CloseContext {
   readonly schemaRootDir: string;
   readonly resolve: (result: StageExecutionResult) => void;
   readonly reject: (error: unknown) => void;
+  cleanupHandlers: (() => void) | undefined;
 }
 
 const resolveTimeoutMs = (request: RunBmadStageRequest): number => {
@@ -249,11 +258,39 @@ interface SpawnChildRequest {
   readonly reject: (error: unknown) => void;
 }
 
+const inheritedStageEnvKeyPattern =
+  /^PI_(?:SESSION_ID|SESSION_FILE|PROVIDER|MODEL|REASONING_LEVEL|SUBAGENT_PARENT_SESSION|BMAD_RUN_ID|BMAD_EMISSION_KEY|PACKAGE_DIR|EXTENSIONS|CODING_AGENT_DIR)$/u;
+
+/**
+ * Builds an isolated Pi child environment without mutating either input.
+ *
+ * @param parentEnv - Environment inherited by the pipeline process.
+ * @param invocationEnv - Reviewed environment generated for this stage invocation.
+ *
+ * @returns A fresh child environment with inherited Pi control state removed.
+ *
+ * @example
+ * ```ts
+ * const env = buildStageEnvironment(process.env, invocation.env);
+ * ```
+ */
+export function buildStageEnvironment(
+  parentEnv: Readonly<NodeJS.ProcessEnv>,
+  invocationEnv: Readonly<NodeJS.ProcessEnv>,
+): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(
+    Object.entries(parentEnv).filter(
+      ([key]) => !inheritedStageEnvKeyPattern.test(key) && !key.startsWith("PI_SUBAGENT_CHILD"),
+    ),
+  );
+  return { ...inherited, ...invocationEnv, PI_TELEMETRY: "0" };
+}
+
 const spawnChild = (request: SpawnChildRequest): BmadStageChildProcess | undefined => {
   try {
     return request.spawn(request.invocation.bin, request.invocation.args, {
       cwd: request.cwd,
-      env: { ...process.env, ...request.invocation.env },
+      env: buildStageEnvironment(process.env, request.invocation.env),
       stdio: BMAD_STAGE_STDIO,
     });
   } catch (error) {
@@ -263,20 +300,70 @@ const spawnChild = (request: SpawnChildRequest): BmadStageChildProcess | undefin
 };
 
 const attachChildHandlers = (child: BmadStageChildProcess, context: CloseContext): void => {
-  child.stdout.on("data", (chunk: Uint8Array | string) => {
-    context.parser.push(chunk);
-  });
-  child.stderr.on("data", (chunk: Uint8Array | string) => {
+  const onStdoutData = (chunk: Uint8Array | string): void => {
+    handleStdoutChunk(child, context, chunk);
+  };
+  const onStderrData = (chunk: Uint8Array | string): void => {
     context.stderr.push(chunk);
-  });
-  child.once("error", (error: unknown) => {
-    if (!context.state.timedOut && !context.state.aborted) {
-      rejectOnce(context, new BmadStageSpawnError(context.command, error));
-    }
-  });
-  child.once("close", (code: number | null) => {
+  };
+  const onStdoutError = (): void => {
+    handleStreamError(child, context, "Child stdout stream error.");
+  };
+  const onStderrError = (): void => {
+    handleStreamError(child, context, "Child stderr stream error.");
+  };
+  const onChildError = (error: unknown): void => {
+    handleChildError(context, error);
+  };
+  const onClose = (code: number | null): void => {
     resolveClose(context, code);
-  });
+  };
+  child.stdout.on("data", onStdoutData);
+  child.stdout.on("error", onStdoutError);
+  child.stderr.on("data", onStderrData);
+  child.stderr.on("error", onStderrError);
+  child.once("error", onChildError);
+  child.once("close", onClose);
+  context.cleanupHandlers = (): void => {
+    child.stdout.off("data", onStdoutData);
+    child.stdout.off("error", onStdoutError);
+    child.stderr.off("data", onStderrData);
+    child.stderr.off("error", onStderrError);
+    child.off("error", onChildError);
+    child.off("close", onClose);
+  };
+};
+
+const handleChildError = (context: CloseContext, error: unknown): void => {
+  if (!context.state.timedOut && !context.state.aborted && !context.state.parserFailed) {
+    rejectOnce(context, new BmadStageSpawnError(context.command, error));
+  }
+};
+
+const handleStdoutChunk = (
+  child: BmadStageChildProcess,
+  context: CloseContext,
+  chunk: Uint8Array | string,
+): void => {
+  if (context.state.settled || context.state.parserFailed) {
+    return;
+  }
+  const snapshot = context.parser.push(chunk);
+  if (snapshot.fatalError !== undefined) {
+    killWithEscalation(child, context.state, "parserFailed");
+  }
+};
+
+const handleStreamError = (
+  child: BmadStageChildProcess,
+  context: CloseContext,
+  failure: string,
+): void => {
+  if (context.state.settled || context.state.parserFailed) {
+    return;
+  }
+  context.state.streamFailure = failure;
+  killWithEscalation(child, context.state, "parserFailed");
 };
 
 const resolveClose = (context: CloseContext, exitCode: number | null): void => {
@@ -287,6 +374,7 @@ const resolveClose = (context: CloseContext, exitCode: number | null): void => {
   clearTimeout(context.timeout);
   clearTimeout(context.state.killTimer);
   context.request.signal.removeEventListener("abort", context.onAbort);
+  context.cleanupHandlers?.();
   context.parser.finish();
   context.resolve(buildResult(context, exitCode));
 };
@@ -299,16 +387,13 @@ const rejectOnce = (context: CloseContext, error: unknown): void => {
   clearTimeout(context.timeout);
   clearTimeout(context.state.killTimer);
   context.request.signal.removeEventListener("abort", context.onAbort);
+  context.cleanupHandlers?.();
   context.reject(error);
 };
 
 const buildResult = (context: CloseContext, exitCode: number | null): StageExecutionResult => {
   const snapshot = context.parser.snapshot();
-  const extraction = extractGatedHeadlessOutput(snapshot.records, {
-    emissionKey: context.emissionKey,
-    rootDir: context.schemaRootDir,
-    expectedWorkflow: context.request.stage.workflow,
-  });
+  const extraction = extractOutput(context, snapshot);
   const gateContext: EnvelopeGateLogContext = {
     request: context.request,
     extraction,
@@ -323,7 +408,7 @@ const buildResult = (context: CloseContext, exitCode: number | null): StageExecu
     exitCode,
     stderr: context.stderr.value(),
   });
-  const usage = extractStageUsage(snapshot.records);
+  const usage = extractUsage(context, snapshot);
   return {
     output: extraction.output,
     exitCode,
@@ -335,6 +420,26 @@ const buildResult = (context: CloseContext, exitCode: number | null): StageExecu
   };
 };
 
+const extractOutput = (
+  context: CloseContext,
+  snapshot: HeadlessJsonlParserSnapshot,
+): GatedHeadlessOutputExtraction => {
+  const failure = context.state.streamFailure ?? snapshot.fatalError;
+  return failure === undefined
+    ? extractGatedHeadlessOutput(snapshot.records, {
+        emissionKey: context.emissionKey,
+        rootDir: context.schemaRootDir,
+        expectedWorkflow: context.request.stage.workflow,
+        expectedStoryId: context.request.storyId,
+      })
+    : { output: null, failure };
+};
+
+const extractUsage = (context: CloseContext, snapshot: HeadlessJsonlParserSnapshot) =>
+  !context.state.parserFailed && snapshot.fatalError === undefined
+    ? extractStageUsage(snapshot.records)
+    : undefined;
+
 interface ParseErrorRequest {
   readonly snapshot: ReturnType<HeadlessJsonlParser["snapshot"]>;
   readonly extraction: GatedHeadlessOutputExtraction;
@@ -343,17 +448,20 @@ interface ParseErrorRequest {
 }
 
 const getParseError = (request: ParseErrorRequest): string | undefined => {
+  if (request.snapshot.fatalError !== undefined) {
+    return request.snapshot.fatalError;
+  }
   const firstIssue = request.snapshot.issues[0];
   if (firstIssue !== undefined) {
     return `Invalid JSONL on line ${String(firstIssue.line)}: ${firstIssue.message}`;
   }
-  if (request.extraction.output !== null) {
-    return undefined;
-  }
-  return request.exitCode !== 0 && request.stderr.length > 0
+  return request.extraction.output === null ? missingOutputError(request) : undefined;
+};
+
+const missingOutputError = (request: ParseErrorRequest): string | undefined =>
+  request.exitCode !== 0 && request.stderr.length > 0
     ? `Child stderr: ${request.stderr}`
     : request.extraction.failure;
-};
 
 /**
  * Resolves the pi-bmad package root (payload schema root) from its extension path.
@@ -369,8 +477,11 @@ const piBmadSchemaRootDir = (extensionPath: string): string =>
 const killWithEscalation = (
   child: BmadStageChildProcess,
   state: RunState,
-  reason: "timedOut" | "aborted",
+  reason: "timedOut" | "aborted" | "parserFailed",
 ): void => {
+  if (reason === "parserFailed" && state.parserFailed) {
+    return;
+  }
   state[reason] = true;
   child.kill("SIGTERM");
   state.killTimer ??= setTimeout(() => child.kill("SIGKILL"), state.killEscalationMs);
@@ -379,6 +490,8 @@ const killWithEscalation = (
 const createRunState = (killEscalationMs: number): RunState => ({
   aborted: false,
   timedOut: false,
+  parserFailed: false,
+  streamFailure: undefined,
   settled: false,
   killTimer: undefined,
   killEscalationMs,

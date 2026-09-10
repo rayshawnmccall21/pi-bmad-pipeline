@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { buildEmissionProvenance } from "pi-bmad";
 import { describe, expect, it } from "vitest";
 
+import { parseHeadlessJsonl } from "./headless-jsonl-parser.js";
 import { extractGatedHeadlessOutput, extractStageUsage } from "./headless-stream-output.js";
 import { resolvePiBmadExtensionPath } from "./pi-bmad-extension.js";
 
@@ -51,6 +52,11 @@ const assistantMessage = (totalTokens: unknown, total: unknown): Record<string, 
 });
 
 const gateContext = { emissionKey: "key-1", rootDir: piBmadRootDir };
+const storyGateContext = {
+  ...gateContext,
+  expectedWorkflow: "dev-story",
+  expectedStoryId: "STORY-123",
+};
 
 describe("extract gated headless output", () => {
   it("accepts a stamped envelope from a tool_execution_end record", () => {
@@ -60,6 +66,45 @@ describe("extract gated headless output", () => {
 
     expect(extraction.output).toEqual(envelope);
     expect(extraction).not.toHaveProperty("failure");
+  });
+
+  it("does not accept terminal output carried only by update records", () => {
+    const envelope = stampedEnvelope("key-1");
+    const snapshot = parseHeadlessJsonl(
+      [
+        { type: "message_update", result: { details: { headlessOutput: envelope } } },
+        { type: "tool_execution_update", result: { details: { headlessOutput: envelope } } },
+      ]
+        .map((value) => JSON.stringify(value))
+        .join("\n"),
+    );
+
+    expect(snapshot.records).toEqual([]);
+    expect(extractGatedHeadlessOutput(snapshot.records, gateContext)).toEqual({
+      output: null,
+      failure: "No headless terminal output found in tool_execution_end events.",
+    });
+  });
+
+  it("retains authoritative terminal envelopes and message_end usage around updates", () => {
+    const envelope = stampedEnvelope("key-1");
+    const snapshot = parseHeadlessJsonl(
+      [
+        { type: "message_update", delta: "progress" },
+        messageEndRecord(2, assistantMessage(13, 0.75)).value,
+        { type: "tool_execution_update", partialResult: "progress" },
+        toolEndRecord(4, envelope).value,
+      ]
+        .map((value) => JSON.stringify(value))
+        .join("\n"),
+    );
+
+    expect(snapshot.records.map((entry) => entry.value)).toEqual([
+      messageEndRecord(2, assistantMessage(13, 0.75)).value,
+      toolEndRecord(4, envelope).value,
+    ]);
+    expect(extractStageUsage(snapshot.records)).toEqual({ tokens: 13, dollars: 0.75 });
+    expect(extractGatedHeadlessOutput(snapshot.records, gateContext).output).toEqual(envelope);
   });
 
   it("prefers the last verified envelope when several are present", () => {
@@ -130,6 +175,48 @@ describe("extract gated headless output", () => {
 
     expect(extraction.output).toBeNull();
     expect(extraction.failure).toMatch(/workflow/u);
+  });
+
+  it("rejects a provenance- and schema-valid story envelope for another story", () => {
+    const extraction = extractGatedHeadlessOutput(
+      [
+        toolEndRecord(
+          1,
+          stampedEnvelope("key-1", {
+            payload: {
+              storyId: "FORGED-999",
+              testsAdded: 4,
+              filesChanged: ["src/contracts/index.ts"],
+              testsPassed: true,
+              typecheckPassed: true,
+              lintPassed: true,
+            },
+          }),
+        ),
+      ],
+      storyGateContext,
+    );
+
+    expect(extraction.output).toBeNull();
+    expect(extraction.failure).toBe(
+      'Headless terminal output payload storyId "FORGED-999" does not match requested story identity "STORY-123".',
+    );
+  });
+
+  it("uses the explicit sprintId identity rule for sprint-planning", () => {
+    const accepted = stampedEnvelope(
+      "key-1",
+      { payload: { sprintId: "SPRINT-123", storyIds: ["STORY-1"], totalPoints: 5 } },
+      "sprint-planning",
+    );
+
+    expect(
+      extractGatedHeadlessOutput([toolEndRecord(1, accepted)], {
+        ...gateContext,
+        expectedWorkflow: "sprint-planning",
+        expectedStoryId: "SPRINT-123",
+      }).output,
+    ).toEqual(accepted);
   });
 
   it("rejects a structurally invalid envelope at the structure gate", () => {

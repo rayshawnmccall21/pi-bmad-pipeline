@@ -1,5 +1,8 @@
 /** Default model used when no source provides one. */
-export const DEFAULT_PIPELINE_MODEL = "gpt-5.5-pro" as const;
+export const DEFAULT_PIPELINE_MODEL = "openrouter/openai/gpt-5.5-pro" as const;
+
+/** Historical bare default accepted only for deterministic compatibility migration. */
+export const LEGACY_PIPELINE_MODEL = "gpt-5.5-pro" as const;
 
 /** Default thinking effort used when no source provides one. */
 export const DEFAULT_PIPELINE_THINKING = "medium" as const;
@@ -39,7 +42,7 @@ export interface ResolveModelConfigRequest {
 
 /** Final model and thinking values selected for stage execution. */
 export interface ResolvedModelConfig {
-  /** Resolved nonblank model name. */
+  /** Resolved provider-qualified model name. */
   readonly model: string;
 
   /** Resolved thinking effort. */
@@ -114,7 +117,8 @@ export function isModelThinking(value: string): value is ModelThinking {
  * ```
  */
 export function resolveModelConfig(request: ResolveModelConfigRequest = {}): ResolvedModelConfig {
-  const model = resolveSelectedValue(request, "model", DEFAULT_PIPELINE_MODEL);
+  const selectedModel = resolveSelectedValue(request, "model", DEFAULT_PIPELINE_MODEL);
+  const model = { ...selectedModel, value: normalizeLegacyPipelineModel(selectedModel.value) };
   const thinking = resolveSelectedValue(request, "thinking", DEFAULT_PIPELINE_THINKING);
   const issues = [...validateModel(model), ...validateThinking(thinking)];
   if (issues.length > 0 || !isModelThinking(thinking.value)) {
@@ -129,13 +133,30 @@ export function resolveModelConfig(request: ResolveModelConfigRequest = {}): Res
 }
 
 /**
+ * Maps exactly the historical bare built-in default to the full Pi CLI selector.
+ * All other values are returned unchanged so arbitrary bare models still fail validation.
+ *
+ * @param model - Candidate or durable model identity.
+ *
+ * @returns The normalized legacy default or the original value.
+ *
+ * @example
+ * ```ts
+ * normalizeLegacyPipelineModel("gpt-5.5-pro");
+ * ```
+ */
+export function normalizeLegacyPipelineModel(model: string): string {
+  return model === LEGACY_PIPELINE_MODEL ? DEFAULT_PIPELINE_MODEL : model;
+}
+
+/**
  * Asserts that a resolved model config is safe to use.
  *
  * @param config - Resolved model config to validate.
  *
  * @returns Nothing when the config is valid.
  *
- * @throws ModelConfigError When model is blank or thinking is invalid.
+ * @throws ModelConfigError When model is not provider-qualified or thinking is invalid.
  *
  * @example
  * ```ts
@@ -144,9 +165,7 @@ export function resolveModelConfig(request: ResolveModelConfigRequest = {}): Res
  */
 export function assertResolvedModelConfig(config: ResolvedModelConfig): void {
   const issues = [
-    ...(config.model.trim().length === 0
-      ? [{ path: "/model", message: "Model must not be blank." }]
-      : []),
+    ...modelIssues(config.model, "/model"),
     ...(!isModelThinking(config.thinking)
       ? [{ path: "/thinking", message: 'Thinking must be "low", "medium", or "high".' }]
       : []),
@@ -185,9 +204,19 @@ const resolveSelectedValue = (
 };
 
 const validateModel = (selected: SelectedConfigValue): readonly ModelConfigIssue[] =>
-  selected.value.trim().length === 0
-    ? [{ path: selected.path, message: "Model must not be blank." }]
-    : [];
+  modelIssues(selected.value, selected.path);
+
+const providerQualifiedModelPattern = /^[^/\s]+\/[^/\s]+(?:\/[^/\s]+)*$/u;
+
+const modelIssues = (value: string, path: string): readonly ModelConfigIssue[] => {
+  const model = value.trim();
+  if (model.length === 0) {
+    return [{ path, message: "Model must not be blank." }];
+  }
+  return providerQualifiedModelPattern.test(model)
+    ? []
+    : [{ path, message: "Model must be provider-qualified as provider/model." }];
+};
 
 const validateThinking = (selected: SelectedConfigValue): readonly ModelConfigIssue[] =>
   isModelThinking(selected.value)

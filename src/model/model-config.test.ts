@@ -6,11 +6,13 @@ import {
   ModelConfigError,
   assertResolvedModelConfig,
   isModelThinking,
+  normalizeLegacyPipelineModel,
   resolveModelConfig,
 } from "./index.js";
 
 describe("model config resolver", () => {
-  it("resolves built-in defaults when request is absent", () => {
+  it("resolves the provider-qualified built-in default when request is absent", () => {
+    expect(DEFAULT_PIPELINE_MODEL).toBe("openrouter/openai/gpt-5.5-pro");
     expect(resolveModelConfig()).toEqual({
       model: DEFAULT_PIPELINE_MODEL,
       thinking: DEFAULT_PIPELINE_THINKING,
@@ -98,9 +100,21 @@ describe("model config resolver", () => {
     expect(isModelThinking(thinking)).toBe(false);
   });
 
-  it("throws ModelConfigError for selected blank model", () => {
-    expect(() => resolveModelConfig({ explicit: { model: " " } })).toThrow(ModelConfigError);
+  it("normalizes exactly the historical bare default at resolution boundaries", () => {
+    expect(normalizeLegacyPipelineModel("gpt-5.5-pro")).toBe(DEFAULT_PIPELINE_MODEL);
+    expect(resolveModelConfig({ explicit: { model: "gpt-5.5-pro" } }).model).toBe(
+      DEFAULT_PIPELINE_MODEL,
+    );
+    expect(normalizeLegacyPipelineModel(" gpt-5.5-pro ")).toBe(" gpt-5.5-pro ");
+    expect(normalizeLegacyPipelineModel("other-bare-model")).toBe("other-bare-model");
   });
+
+  it.each(["", " ", "other-bare-model", "/gpt-5.5-pro", "openai/", "openai//gpt", "open ai/gpt"])(
+    "throws ModelConfigError for selected malformed model %j",
+    (model) => {
+      expect(() => resolveModelConfig({ explicit: { model } })).toThrow(ModelConfigError);
+    },
+  );
 
   it("throws ModelConfigError for selected invalid thinking", () => {
     expect(() => resolveModelConfig({ project: { thinking: "ultra" } })).toThrow(ModelConfigError);
@@ -141,10 +155,10 @@ describe("model config resolver", () => {
     }).not.toThrow();
   });
 
-  it("assertResolvedModelConfig throws for blank model or invalid thinking", () => {
+  it("assertResolvedModelConfig throws for a bare model or invalid thinking", () => {
     expect(() => {
       assertResolvedModelConfig({
-        model: " ",
+        model: "gpt-5.5-pro",
         thinking: "ultra" as never,
         modelSource: "explicit",
         thinkingSource: "explicit",

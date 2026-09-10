@@ -7,7 +7,13 @@ export {
   buildStageArgs,
 } from "./build-stage-args.js";
 
-export { createHeadlessJsonlParser, parseHeadlessJsonl } from "./headless-jsonl-parser.js";
+export {
+  MAX_HEADLESS_JSONL_ENTRIES,
+  MAX_HEADLESS_JSONL_LINE_BYTES,
+  MAX_HEADLESS_STDOUT_BYTES,
+  createHeadlessJsonlParser,
+  parseHeadlessJsonl,
+} from "./headless-jsonl-parser.js";
 
 export { extractGatedHeadlessOutput, extractStageUsage } from "./headless-stream-output.js";
 
@@ -23,6 +29,7 @@ export { PI_CLI_WORKFLOW_EXECUTOR_ID, PiCliWorkflowExecutor } from "./pi-cli-exe
 export {
   BmadStageSpawnError,
   MAX_STAGE_STDERR_CHARS,
+  buildStageEnvironment,
   runBmadStage,
   toBuildStageArgsRequest,
 } from "./run-bmad-stage.js";
