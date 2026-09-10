@@ -4,9 +4,13 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { attachFinalScopeReceipt, attachReviewCheckpoint } from "../core/runner-transitions.js";
+import {
+  applyTerminalCorrection,
+  attachFinalScopeReceipt,
+  attachReviewCheckpoint,
+} from "../core/runner-transitions.js";
 import { DEBUG_LOG_PREFIX, PIPELINE_DEBUG_ENV_VAR } from "../events/index.js";
-import type { CompiledStageDef } from "../rundef/index.js";
+import { computeRunDefDigest, type CompiledStageDef, type RunDef } from "../rundef/index.js";
 import { createStageHandoff } from "../security/stage-handoff.js";
 import {
   PIPELINE_STATE_FILE_EXTENSION,
@@ -27,6 +31,7 @@ import type {
   PipelineState,
   ReviewScopeCheckpoint,
   StageState,
+  SupersededFinalScopeReceipt,
 } from "./index.js";
 
 let projectRoot: string | undefined;
@@ -136,6 +141,124 @@ const receiptFor = (
     },
   };
 };
+
+const archivedRecord = (receipt: FinalScopeReceipt, overrides = {}): SupersededFinalScopeReceipt =>
+  Object.freeze({
+    version: 1,
+    sequence: 1,
+    kind: "supersede-contract-invalid-candidate",
+    supersededAt: finishedAt,
+    supersededByRunId: "run-correction",
+    expectedReceiptRunId: receipt.runId,
+    reason: "Known contract defect: serialized payload counters diverge.",
+    resetTargetStageId: "dev-story",
+    finalScopeReceipt: receipt,
+    ...overrides,
+  });
+
+const correctedState = (): PipelineState => {
+  const terminal = doneState();
+  const { receipt } = receiptFor(terminal);
+  const pending: PipelineState = { ...terminal };
+  Reflect.deleteProperty(pending, "reviewCheckpoint");
+  Reflect.deleteProperty(pending, "finalScopeReceipt");
+  return {
+    ...pending,
+    runnerFeatureVersion: RUNNER_FEATURE_VERSION,
+    status: "running",
+    currentStage: null,
+    finishedAt: null,
+    supersededFinalScopeReceipts: Object.freeze([archivedRecord(receipt)]),
+    stages: Object.fromEntries(
+      Object.entries(terminal.stages).map(([id, stageState]) => [
+        id,
+        { ...stageState, status: "pending", startedAt: null, finishedAt: null },
+      ]),
+    ),
+  };
+};
+
+const legacyArchiveState = (): PipelineState => {
+  const runDef: RunDef = {
+    id: "sdlc",
+    stages: [
+      {
+        id: "code-review",
+        kind: "agent",
+        workflow: "code-review",
+        agent: "reviewer",
+        timeout: 2400,
+      },
+    ],
+  };
+  const runDefDigest = computeRunDefDigest(runDef);
+  const state = correctedState();
+  const archived = state.supersededFinalScopeReceipts![0]!;
+  const receipt = {
+    ...archived.finalScopeReceipt,
+    storyId: "STORY-LEGACY-ARCHIVE",
+    runDefDigest,
+    qualityGate: {
+      stageId: "code-review",
+      attempt: 3,
+      status: "passed" as const,
+      finishedAt: "2026-08-31T03:32:56.738Z",
+    },
+  };
+  return {
+    ...state,
+    storyId: receipt.storyId,
+    runDefDigest,
+    runDefIdentity: runDef,
+    specFile: "./specs/legacy-archive.md",
+    supersededFinalScopeReceipts: [{ ...archived, finalScopeReceipt: receipt }],
+    stages: {
+      ...state.stages,
+      "code-review": {
+        ...state.stages["code-review"]!,
+        attempts: 4,
+        history: [
+          {
+            attempt: 3,
+            status: "passed",
+            startedAt: "2026-08-31T03:20:00.000Z",
+            finishedAt: receipt.qualityGate.finishedAt,
+            durationMs: 1,
+            exitCode: 0,
+          },
+          {
+            attempt: 4,
+            status: "timed-out",
+            startedAt: "2026-08-31T10:00:00.000Z",
+            finishedAt: "2026-08-31T11:31:03.237Z",
+            durationMs: 1,
+            exitCode: null,
+          },
+        ],
+      },
+    },
+  };
+};
+
+const writeStateFixture = async (root: string, state: PipelineState): Promise<void> => {
+  const path = getPipelineStatePath(root, state.storyId);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+};
+
+const v2TerminalState = (): PipelineState => {
+  const terminal = doneState();
+  const { checkpoint, receipt } = receiptFor(terminal);
+  return {
+    ...terminal,
+    runnerFeatureVersion: 2,
+    reviewCheckpoint: checkpoint,
+    finalScopeReceipt: receipt,
+  };
+};
+
+const asSerialized = (state: PipelineState): PipelineState =>
+  JSON.parse(JSON.stringify(state)) as PipelineState;
 
 afterEach(async () => {
   if (projectRoot !== undefined) {
@@ -309,6 +432,312 @@ describe("filesystem pipeline state store", () => {
     expect(Object.isFrozen(loaded?.finalScopeReceipt?.docs)).toBe(true);
     expect(Object.isFrozen(loaded?.finalScopeReceipt?.docs.paths)).toBe(true);
     expect(Object.isFrozen(loaded?.finalScopeReceipt?.qualityGate)).toBe(true);
+  });
+
+  it("round-trips a version-2 terminal receipt state for backwards compatibility", async () => {
+    const root = await createProjectRoot();
+    const v2 = v2TerminalState();
+
+    await expect(savePipelineState(root, v2)).resolves.toBe(getPipelineStatePath(root, v2.storyId));
+    await expect(loadPipelineState(root, v2.storyId)).resolves.toEqual(v2);
+  });
+
+  it("round-trips a version-3 correction-bearing state and deep-freezes its history", async () => {
+    const root = await createProjectRoot();
+    const state = correctedState();
+
+    await savePipelineState(root, state);
+    const loaded = await loadPipelineState(root, state.storyId);
+
+    expect(loaded).toEqual(state);
+    expect(loaded?.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(Object.isFrozen(loaded?.supersededFinalScopeReceipts)).toBe(true);
+    expect(Object.isFrozen(loaded?.supersededFinalScopeReceipts?.[0])).toBe(true);
+    expect(Object.isFrozen(loaded?.supersededFinalScopeReceipts?.[0]?.finalScopeReceipt)).toBe(
+      true,
+    );
+    expect(
+      Object.isFrozen(loaded?.supersededFinalScopeReceipts?.[0]?.finalScopeReceipt?.docs.paths),
+    ).toBe(true);
+  });
+
+  it("loads a legacy archive without record RunDef identity when its receipt digest matches state", async () => {
+    const root = await createProjectRoot();
+    const state = legacyArchiveState();
+    const archived = state.supersededFinalScopeReceipts![0]!;
+    await writeStateFixture(root, state);
+
+    const loaded = await loadPipelineState(root, state.storyId);
+
+    expect(state).toHaveProperty("runDefIdentity");
+    expect(archived).not.toHaveProperty("runDefIdentity");
+    expect(archived.finalScopeReceipt.runDefDigest).toBe(state.runDefDigest);
+    expect(loaded).toEqual(state);
+  });
+
+  it("rejects a root RunDef identity whose digest does not match runDefDigest", async () => {
+    const root = await createProjectRoot();
+    const state = legacyArchiveState();
+    const runDefIdentity = state.runDefIdentity;
+    const identityStage = runDefIdentity?.stages[0];
+    if (runDefIdentity === undefined || identityStage?.kind !== "agent") {
+      throw new Error("missing fixture RunDef identity");
+    }
+    const tampered: PipelineState = {
+      ...state,
+      runDefIdentity: {
+        ...runDefIdentity,
+        stages: [{ ...identityStage, workflow: "other" }],
+      },
+    };
+    expect(computeRunDefDigest(tampered.runDefIdentity!)).not.toBe(tampered.runDefDigest);
+    await writeStateFixture(root, tampered);
+
+    await expect(loadPipelineState(root, state.storyId)).rejects.toMatchObject({
+      code: "invalid-state",
+      reason: 'Field "runDefIdentity" is malformed or does not match runDefDigest.',
+    });
+  });
+
+  it.each([
+    ["story", { storyId: "STORY-OTHER" }],
+    ["RunDef", { runDefId: "other-rundef" }],
+    ["digest", { runDefDigest: digest("f") }],
+  ] as const)("rejects legacy archive %s drift", async (_name, receiptChange) => {
+    const root = await createProjectRoot();
+    const state = legacyArchiveState();
+    const archived = state.supersededFinalScopeReceipts![0]!;
+    const tampered: PipelineState = {
+      ...state,
+      supersededFinalScopeReceipts: [
+        {
+          ...archived,
+          finalScopeReceipt: { ...archived.finalScopeReceipt, ...receiptChange },
+        },
+      ],
+    };
+    await writeStateFixture(root, tampered);
+
+    await expect(loadPipelineState(root, state.storyId)).rejects.toMatchObject({
+      code: "invalid-state",
+      reason: expect.stringContaining("supersededFinalScopeReceipts"),
+    });
+  });
+
+  it("round-trips correction writer identifiers longer than the expected receipt id bound", async () => {
+    const root = await createProjectRoot();
+    const resetTargetStageId = "s".repeat(101);
+    const supersededByRunId = "r".repeat(101);
+    const initial = createInitialPipelineState({
+      storyId: "STORY-LONG-CORRECTION-IDS",
+      runDefId: "sdlc",
+      runDefDigest: digest("a"),
+      specFile: "./specs/story-long.md",
+      stages: [stage(resetTargetStageId, 0), stage("code-review", 1), stage("docs", 2)],
+      model: "gpt-5.5-pro",
+      thinking: "high",
+      startedAt: finishedAt,
+    });
+    const terminal = doneState(initial);
+    const done = attachFinalScopeReceipt(terminal, receiptFor(terminal).receipt);
+    const corrected = applyTerminalCorrection(done, Object.keys(done.stages), {
+      kind: "supersede-contract-invalid-candidate",
+      expectedReceiptRunId: done.finalScopeReceipt!.runId,
+      reason: "Known contract defect: serialized payload counters diverge.",
+      resetTargetStageId,
+      supersededAt: finishedAt,
+      supersededByRunId,
+    });
+
+    await savePipelineState(root, corrected);
+
+    await expect(loadPipelineState(root, corrected.storyId)).resolves.toEqual(corrected);
+  });
+
+  it("accepts an archived receipt whose quality stage is no longer the latest attempt", async () => {
+    const root = await createProjectRoot();
+    const terminal = doneState();
+    const { receipt } = receiptFor(terminal);
+    const record = archivedRecord(receipt);
+    const pendingReview: PipelineState = {
+      ...terminal,
+      runnerFeatureVersion: RUNNER_FEATURE_VERSION,
+      status: "running",
+      currentStage: null,
+      finishedAt: null,
+      supersededFinalScopeReceipts: Object.freeze([record]),
+      stages: {
+        ...Object.fromEntries(
+          Object.entries(terminal.stages).map(([id, stageState]) => [
+            id,
+            { ...stageState, status: "pending", startedAt: null, finishedAt: null },
+          ]),
+        ),
+        "code-review": {
+          ...terminal.stages["code-review"]!,
+          status: "pending",
+          attempts: 2,
+          startedAt: null,
+          finishedAt: null,
+          history: [
+            ...(terminal.stages["code-review"]?.history ?? []),
+            {
+              attempt: 2,
+              status: "failed" as const,
+              startedAt: finishedAt,
+              finishedAt,
+              durationMs: 1,
+              exitCode: 1,
+              reason: "retry failed",
+            },
+          ],
+        },
+      },
+    };
+
+    await expect(savePipelineState(root, pendingReview)).resolves.toBe(
+      getPipelineStatePath(root, pendingReview.storyId),
+    );
+    await expect(loadPipelineState(root, pendingReview.storyId)).resolves.toEqual(pendingReview);
+  });
+
+  it.each([
+    [
+      "history at feature version 2",
+      (state: PipelineState): PipelineState => ({ ...state, runnerFeatureVersion: 2 }),
+      /runnerFeatureVersion/u,
+    ],
+    [
+      "a record with an unknown extra key",
+      (state: PipelineState): PipelineState => {
+        const record = state.supersededFinalScopeReceipts?.[0];
+        if (record === undefined) throw new Error("missing fixture record");
+        return {
+          ...state,
+          supersededFinalScopeReceipts: [
+            { ...record, tampered: true } as SupersededFinalScopeReceipt,
+          ],
+        };
+      },
+      /malformed|inconsistent|superseded/u,
+    ],
+    [
+      "a record whose expected run id differs from its archived receipt",
+      (state: PipelineState): PipelineState => {
+        const record = state.supersededFinalScopeReceipts?.[0];
+        if (record === undefined) throw new Error("missing fixture record");
+        return {
+          ...state,
+          supersededFinalScopeReceipts: [{ ...record, expectedReceiptRunId: "run-different" }],
+        };
+      },
+      /malformed|inconsistent|superseded/u,
+    ],
+    [
+      "duplicate archived expected run ids",
+      (state: PipelineState): PipelineState => {
+        const record = state.supersededFinalScopeReceipts?.[0];
+        if (record === undefined) throw new Error("missing fixture record");
+        return {
+          ...state,
+          supersededFinalScopeReceipts: Object.freeze([record, record]),
+        };
+      },
+      /duplicate|unique|superseded/u,
+    ],
+    [
+      "an archived receipt bound to another RunDef",
+      (state: PipelineState): PipelineState => {
+        const record = state.supersededFinalScopeReceipts?.[0];
+        if (record === undefined) throw new Error("missing fixture record");
+        return {
+          ...state,
+          supersededFinalScopeReceipts: [
+            {
+              ...record,
+              finalScopeReceipt: { ...record.finalScopeReceipt, runDefId: "other-rundef" },
+            },
+          ],
+        };
+      },
+      /malformed|inconsistent|story|RunDef/u,
+    ],
+    [
+      "a quality attempt absent from stage history",
+      (state: PipelineState): PipelineState => {
+        const record = state.supersededFinalScopeReceipts?.[0];
+        if (record === undefined) throw new Error("missing fixture record");
+        return {
+          ...state,
+          supersededFinalScopeReceipts: [
+            {
+              ...record,
+              finalScopeReceipt: {
+                ...record.finalScopeReceipt,
+                qualityGate: {
+                  ...record.finalScopeReceipt.qualityGate,
+                  attempt: 9,
+                },
+              },
+            },
+          ],
+        };
+      },
+      /quality|attempt|malformed|inconsistent/u,
+    ],
+  ] as const)("rejects %s", async (_name, mutate, reason) => {
+    const root = await createProjectRoot();
+    const state = mutate(correctedState());
+
+    await expect(savePipelineState(root, state)).rejects.toMatchObject({
+      code: "invalid-state",
+      reason: expect.stringMatching(reason),
+    });
+    await expect(loadPipelineState(root, state.storyId)).resolves.toBeUndefined();
+  });
+
+  it("rejects reversed two-record superseded history as non-contiguous", async () => {
+    const root = await createProjectRoot();
+    const state = correctedState();
+    const record = state.supersededFinalScopeReceipts?.[0];
+    if (record === undefined) throw new Error("missing fixture record");
+    const secondReceipt = { ...record.finalScopeReceipt, runId: "run-other" };
+    const second: SupersededFinalScopeReceipt = {
+      ...record,
+      sequence: 2,
+      supersededByRunId: "run-correction-2",
+      supersededAt: "2026-07-02T00:00:00.000Z",
+      expectedReceiptRunId: "run-other",
+      finalScopeReceipt: secondReceipt,
+    };
+    const reversed = Object.freeze([second, { ...record, sequence: 1 }]);
+
+    await expect(
+      savePipelineState(root, { ...state, supersededFinalScopeReceipts: reversed }),
+    ).rejects.toMatchObject({
+      code: "invalid-state",
+      reason: expect.stringMatching(/sequence|order|superseded/u),
+    });
+    await expect(loadPipelineState(root, state.storyId)).resolves.toBeUndefined();
+  });
+
+  it("keeps the done state authoritative when an archived record is malformed", async () => {
+    const root = await createProjectRoot();
+    const valid = correctedState();
+    await savePipelineState(root, valid);
+
+    const tampered = asSerialized(valid);
+    const record = tampered.supersededFinalScopeReceipts?.[0];
+    const tamperedState = {
+      ...tampered,
+      supersededFinalScopeReceipts: record === undefined ? undefined : [{ ...record, version: 2 }],
+    } as unknown as PipelineState;
+    const path = getPipelineStatePath(root, valid.storyId);
+    await writeFile(path, `${JSON.stringify(tamperedState, null, 2)}\n`, "utf8");
+
+    await expect(loadPipelineState(root, valid.storyId)).rejects.toMatchObject({
+      code: "invalid-state",
+    });
   });
 
   it("returns a deeply frozen loaded state snapshot", async () => {

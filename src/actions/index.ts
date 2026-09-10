@@ -14,6 +14,8 @@ export type {
   RunPipelineActionRequest,
 } from "./run-pipeline-action.js";
 
+export { readGitHeadOid } from "./git-scope-attestor.js";
+
 export {
   BMAD_PIPELINE_MODEL_ENV_VAR,
   BMAD_PIPELINE_PI_BIN_ENV_VAR,

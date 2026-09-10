@@ -47,7 +47,7 @@ export type {
   RunDefValidationResult,
   StageBudgetSchemaValue,
 } from "./schema.js";
-export { computeRunDefDigest } from "./identity.js";
+export { computeRunDefDigest, runDefsEqualExceptStageTimeouts } from "./identity.js";
 export {
   DEFAULT_STAGE_TIMEOUT_SECONDS,
   RunDefCompileError,

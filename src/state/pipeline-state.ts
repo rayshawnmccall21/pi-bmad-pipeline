@@ -12,12 +12,33 @@
  * @packageDocumentation
  */
 
-import type { CompiledStageDef } from "../rundef/index.js";
+import type { CompiledStageDef, RunDef } from "../rundef/index.js";
 import type { StageHandoff } from "../security/stage-handoff.js";
 
 /** Current durable state feature version written by this runner. */
 // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- durable schema version.
-export const RUNNER_FEATURE_VERSION = 2 as const;
+export const RUNNER_FEATURE_VERSION = 3 as const;
+
+/** Durable feature version that first introduced review checkpoints and final scope receipts. */
+// eslint-disable-next-line @typescript-eslint/no-magic-numbers -- durable schema version.
+export const RECEIPT_INTRODUCED_FEATURE_VERSION = 2 as const;
+
+/** Stable kind literal for the terminal semantic recovery request. */
+export const TERMINAL_RECOVERY_KIND = "supersede-contract-invalid-candidate" as const;
+
+/** Stable failure code emitted when terminal recovery eligibility rejects. */
+export const TERMINAL_RECOVERY_REJECTED_CODE = "terminal-recovery-rejected" as const;
+
+/** Maximum length of an expected receipt run id in characters. */
+// eslint-disable-next-line @typescript-eslint/no-magic-numbers -- authenticated identity cap.
+export const EXPECTED_RECEIPT_RUN_ID_MAX_CHARS = 100 as const;
+
+/** Durable kind recorded on each superseded receipt archive record. */
+export type TerminalRecoveryKind = typeof TERMINAL_RECOVERY_KIND;
+
+/** Maximum persisted recovery reason size in UTF-8 bytes. */
+// eslint-disable-next-line @typescript-eslint/no-magic-numbers -- documented 2 KiB security cap.
+export const TERMINAL_RECOVERY_REASON_MAX_BYTES = 2 * 1024;
 
 /** Durable pipeline state statuses persisted across crashes. */
 export type PipelineStatus =
@@ -114,6 +135,39 @@ export interface FinalScopeReceipt extends ReviewScopeCheckpoint {
   readonly finalWorkingTreeDigest: string;
 }
 
+/** One superseded final scope receipt archived by a terminal recovery. */
+export interface SupersededFinalScopeReceipt {
+  /** Archive record schema version. */
+  readonly version: 1;
+
+  /** One-based append-only order of this archived record. */
+  readonly sequence: number;
+
+  /** Recovery kind that superseded the receipt. */
+  readonly kind: TerminalRecoveryKind;
+
+  /** ISO timestamp when the receipt was superseded. */
+  readonly supersededAt: string;
+
+  /** Run id of the correction run that superseded the receipt. */
+  readonly supersededByRunId: string;
+
+  /** Expected active receipt run id the recovery compare-and-swapped against. */
+  readonly expectedReceiptRunId: string;
+
+  /** Normalized, redacted, bounded recovery reason. */
+  readonly reason: string;
+
+  /** Compiled stage id whose earlier onFail target the recovery reset. */
+  readonly resetTargetStageId: string;
+
+  /** Exact superseded final scope receipt; never active landing authority again. */
+  readonly finalScopeReceipt: FinalScopeReceipt;
+
+  /** Canonical RunDef identity bound to the superseded receipt when available. */
+  readonly runDefIdentity?: RunDef;
+}
+
 /** Durable record for one stage attempt. */
 export interface StageAttemptState {
   /** One-based attempt number for the stage. */
@@ -188,6 +242,9 @@ export interface PipelineState {
   /** Stable digest of the selected RunDef content. */
   readonly runDefDigest: string;
 
+  /** Canonical RunDef persisted for terminal-recovery retry identity checks. */
+  readonly runDefIdentity?: RunDef;
+
   /** Story or spec file path provided to the run. */
   readonly specFile: string;
 
@@ -226,6 +283,9 @@ export interface PipelineState {
 
   /** Optional final scope receipt; absent before final attestation. */
   readonly finalScopeReceipt?: FinalScopeReceipt;
+
+  /** Optional append-only superseded receipt history written by terminal recovery. */
+  readonly supersededFinalScopeReceipts?: readonly SupersededFinalScopeReceipt[];
 }
 
 /** Final action result returned by the public runner or action layer. */

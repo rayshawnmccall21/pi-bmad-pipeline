@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_MAX_REGRESSIONS, runPipelineStages } from "./index.js";
-import { createInitialPipelineState } from "../state/index.js";
+import { RUNNER_FEATURE_VERSION, createInitialPipelineState } from "../state/index.js";
 import { getPipelineStateInvalidReason } from "../state/fs-state-validation.js";
+import { applyTerminalCorrection } from "./runner-transitions.js";
 import { createStageHandoff, type StageHandoff } from "../security/stage-handoff.js";
 
 import type {
@@ -797,7 +798,7 @@ describe("runPipelineStages", () => {
       "review",
       "final",
     ]);
-    expect(result.state.runnerFeatureVersion).toBe(2);
+    expect(result.state.runnerFeatureVersion).toBe(RUNNER_FEATURE_VERSION);
     expect(result.state.reviewCheckpoint?.qualityGate.attempt).toBe(2);
   });
 
@@ -1365,5 +1366,756 @@ describe("runPipelineStages", () => {
     const { request } = harness(twoStages(), []);
 
     await expect(runPipelineStages({ ...request, maxRegressions })).rejects.toThrow(RangeError);
+  });
+});
+
+const recoveryStages = (): readonly CompiledStageDef[] => [
+  stage("dev-story", 0),
+  stage("code-review", 1, {
+    payloadGate: okGate,
+    payloadGateName: "code-review",
+    onFail: "dev-story",
+  }),
+  stage("docs", 2),
+];
+
+const recoveryRunDefId = "create-story-dev-story-code-review-docs";
+const recoveryRunDefDigest = digest("e");
+const correctionCheckpoint: ReviewScopeCheckpoint = {
+  ...reviewCheckpoint,
+  runDefId: recoveryRunDefId,
+  runDefDigest: recoveryRunDefDigest,
+};
+const correctionReceipt: FinalScopeReceipt = {
+  ...finalScopeReceipt,
+  ...correctionCheckpoint,
+};
+
+const terminalCorrectionState = (): PipelineState => {
+  const fixture = harness(recoveryStages(), []);
+  const stages = Object.fromEntries(
+    recoveryStages().map(({ id }) => [
+      id,
+      durablyPassedStage(fixture.request.state.stages[id]!, 1, T0),
+    ]),
+  );
+  return {
+    ...fixture.request.state,
+    runDefId: recoveryRunDefId,
+    runDefDigest: recoveryRunDefDigest,
+    runnerFeatureVersion: RUNNER_FEATURE_VERSION,
+    status: "done",
+    currentStage: null,
+    startedAt: T0,
+    finishedAt: T0,
+    stages,
+    reviewCheckpoint: correctionCheckpoint,
+    finalScopeReceipt: correctionReceipt,
+  };
+};
+
+const baseOid = reviewCheckpoint.baseOid;
+const terminalRecoveryRequest = (expectedReceiptRunId = "run-1") =>
+  Object.freeze({
+    kind: "supersede-contract-invalid-candidate" as const,
+    expectedReceiptRunId,
+    reason: "Known contract defect: delivered payload counters diverge.",
+  });
+
+const headReader = vi.fn(async () => baseOid);
+
+const wireRecoveryAttestor = (attestScope: ReturnType<typeof createScopeAttestor>): void => {
+  attestScope.mockImplementation(async (request) => {
+    if (request.phase === "review") {
+      return {
+        kind: "review-checkpoint",
+        checkpoint: {
+          ...correctionCheckpoint,
+          runId: request.runId,
+          runDefId: request.runDefId,
+          runDefDigest: request.runDefDigest,
+          qualityGate: request.qualityGate,
+        },
+      };
+    }
+    return {
+      kind: "final-receipt",
+      receipt: {
+        ...correctionReceipt,
+        ...request.reviewCheckpoint,
+        runId: request.runId,
+        runDefId: request.runDefId,
+        runDefDigest: request.runDefDigest,
+        qualityGate: request.qualityGate,
+      },
+    };
+  });
+};
+
+const correctedFixture = (): PipelineState => {
+  const done = terminalCorrectionState();
+  return applyTerminalCorrection(
+    done,
+    recoveryStages().map(({ id }) => id),
+    {
+      kind: "supersede-contract-invalid-candidate",
+      expectedReceiptRunId: "run-1",
+      reason: terminalRecoveryRequest().reason,
+      resetTargetStageId: "dev-story",
+      supersededAt: T0,
+      supersededByRunId: "run-1",
+    },
+  );
+};
+
+describe("terminal recovery", () => {
+  it("applies the correction atomically before spawning and reruns dev->review->docs", async () => {
+    const { request, saves, executor, attestScope } = harness(recoveryStages(), [
+      okResult(),
+      okResult(),
+      okResult(),
+    ]);
+    wireRecoveryAttestor(attestScope);
+    const result = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("done");
+    expect(result.stagesRun).toEqual(["dev-story", "code-review", "docs"]);
+    expect(executor.requests.map(({ stage: executedStage }) => executedStage.id)).toEqual([
+      "dev-story",
+      "code-review",
+      "docs",
+    ]);
+
+    const correctedSave = saves.findIndex(
+      (state) =>
+        state.supersededFinalScopeReceipts !== undefined &&
+        state.finalScopeReceipt === undefined &&
+        state.status === "running",
+    );
+    const devStartSave = saves.findIndex(
+      (state) =>
+        state.currentStage === "dev-story" && state.stages["dev-story"]?.status === "running",
+    );
+    const checkpointSave = saves.findIndex((state) => state.reviewCheckpoint !== undefined);
+    const doneSave = saves.findIndex((state) => state.status === "done");
+    expect(correctedSave).toBeGreaterThanOrEqual(0);
+    expect(devStartSave).toBeGreaterThan(correctedSave);
+    expect(checkpointSave).toBeGreaterThan(devStartSave);
+    expect(doneSave).toBeGreaterThan(checkpointSave);
+
+    const corrected = saves[correctedSave];
+    expect(corrected?.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(corrected?.supersededFinalScopeReceipts?.[0]).toMatchObject({
+      expectedReceiptRunId: "run-1",
+      resetTargetStageId: "dev-story",
+      reason: terminalRecoveryRequest().reason,
+      supersededByRunId: "run-1",
+      finalScopeReceipt: correctionReceipt,
+    });
+    expect(corrected?.stages["dev-story"]?.status).toBe("pending");
+    expect(corrected?.stages["dev-story"]?.findings).toEqual([terminalRecoveryRequest().reason]);
+    expect(corrected?.stages["code-review"]?.status).toBe("pending");
+    expect(corrected?.stages["docs"]?.status).toBe("pending");
+    expect(corrected?.stages["code-review"]?.history).toEqual(
+      terminalCorrectionState().stages["code-review"]?.history,
+    );
+    expect(corrected?.regressions).toBe(0);
+    expect(corrected?.economics).toEqual(terminalCorrectionState().economics);
+    expect(getPipelineStateInvalidReason(corrected)).toBeUndefined();
+
+    const terminal = result.state;
+    expect(terminal.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(terminal.finalScopeReceipt).toMatchObject({
+      runDefId: recoveryRunDefId,
+      runDefDigest: recoveryRunDefDigest,
+      reviewed: correctionReceipt.reviewed,
+    });
+    expect(terminal.finalScopeReceipt?.qualityGate.attempt).toBe(2);
+    expect(terminal.reviewCheckpoint?.qualityGate.attempt).toBe(2);
+    expect(executor.requests[0]?.priorFindings).toEqual([terminalRecoveryRequest().reason]);
+  });
+
+  it.each(["pending", "running"] as const)(
+    "resumes an already-applied %s correction without a duplicate archive",
+    async (status) => {
+      const { request, saves, attestScope } = harness(recoveryStages(), [
+        okResult(),
+        okResult(),
+        okResult(),
+      ]);
+      wireRecoveryAttestor(attestScope);
+      const result = await runPipelineStages({
+        ...request,
+        state: { ...correctedFixture(), status },
+        terminalRecovery: terminalRecoveryRequest(),
+        readTerminalCorrectionHead: headReader,
+      });
+
+      expect(result.status).toBe("done");
+      expect(result.stagesRun).toEqual(["dev-story", "code-review", "docs"]);
+      for (const saved of saves) {
+        expect(saved.supersededFinalScopeReceipts?.length ?? 0).toBeLessThanOrEqual(1);
+      }
+      expect(result.state.supersededFinalScopeReceipts).toHaveLength(1);
+    },
+  );
+
+  it("resumes a failed in-progress correction on the same exact request without a second archive", async () => {
+    const { request, saves, executor, attestScope } = harness(recoveryStages(), [
+      okResult({ exitCode: 1 }),
+      okResult(),
+      okResult(),
+      okResult(),
+    ]);
+    wireRecoveryAttestor(attestScope);
+
+    const first = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(first.status).toBe("failed");
+    expect(first.state.status).toBe("failed");
+    expect(first.state.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(first.state.finalScopeReceipt).toBeUndefined();
+    expect(first.state.reviewCheckpoint).toBeUndefined();
+
+    const savesBeforeRetry = saves.length;
+    const second = await runPipelineStages({
+      ...request,
+      state: first.state,
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(second.status).toBe("done");
+    expect(second.stagesRun).toEqual(["dev-story", "code-review", "docs"]);
+    expect(second.state.finalScopeReceipt).toBeDefined();
+    expect(second.state.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(executor.requests.map(({ stage, attempt }) => ({ stage: stage.id, attempt }))).toEqual([
+      { stage: "dev-story", attempt: 2 },
+      { stage: "dev-story", attempt: 3 },
+      { stage: "code-review", attempt: 2 },
+      { stage: "docs", attempt: 2 },
+    ]);
+    for (const saved of saves.slice(savesBeforeRetry)) {
+      expect(saved.supersededFinalScopeReceipts?.length ?? 0).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("resumes a needs-attention in-progress correction after an executor error", async () => {
+    const { request, attestScope, executor } = harness(recoveryStages(), [
+      new Error("dev spawned exploded"),
+      okResult(),
+      okResult(),
+      okResult(),
+    ]);
+    wireRecoveryAttestor(attestScope);
+
+    const first = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(first.status).toBe("needs-attention");
+    expect(first.state.status).toBe("needs-attention");
+    expect(first.state.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(first.state.finalScopeReceipt).toBeUndefined();
+    expect(first.state.reviewCheckpoint).toBeUndefined();
+
+    const second = await runPipelineStages({
+      ...request,
+      state: first.state,
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(second.status).toBe("done");
+    expect(second.stagesRun).toEqual(["dev-story", "code-review", "docs"]);
+    expect(second.state.finalScopeReceipt).toBeDefined();
+    expect(second.state.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(executor.requests.map(({ attempt }) => attempt)).toEqual([2, 3, 2, 2]);
+  });
+
+  it("rejects kind, id, or reason mismatches against a failed in-progress correction", async () => {
+    const { request, attestScope } = harness(recoveryStages(), [okResult({ exitCode: 1 })]);
+    wireRecoveryAttestor(attestScope);
+
+    const failed = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+    expect(failed.status).toBe("failed");
+
+    await expect(
+      runPipelineStages({
+        ...request,
+        state: failed.state,
+        terminalRecovery: {
+          kind: "some-other-kind",
+          expectedReceiptRunId: "run-1",
+          reason: terminalRecoveryRequest().reason,
+        } as never,
+        readTerminalCorrectionHead: headReader,
+      }),
+    ).rejects.toThrow(RangeError);
+
+    const staleId = await runPipelineStages({
+      ...request,
+      state: failed.state,
+      terminalRecovery: terminalRecoveryRequest("run-stale"),
+      readTerminalCorrectionHead: headReader,
+    });
+    expect(staleId.status).toBe("needs-attention");
+    expect(staleId.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(staleId.state).toEqual(failed.state);
+
+    const staleReason = await runPipelineStages({
+      ...request,
+      state: failed.state,
+      terminalRecovery: {
+        ...terminalRecoveryRequest(),
+        reason: "A different defect reason.",
+      },
+      readTerminalCorrectionHead: headReader,
+    });
+    expect(staleReason.status).toBe("needs-attention");
+    expect(staleReason.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(staleReason.state).toEqual(failed.state);
+  });
+
+  it.each(["pending", "running", "failed", "needs-attention"] as const)(
+    "rejects an idempotent %s retry when the in-progress state still holds active authority",
+    async (status) => {
+      const { request, saves, executor } = harness(recoveryStages(), []);
+      const withActiveAuthority = {
+        ...correctedFixture(),
+        status,
+        reviewCheckpoint: correctionCheckpoint,
+      };
+
+      const result = await runPipelineStages({
+        ...request,
+        state: withActiveAuthority,
+        terminalRecovery: terminalRecoveryRequest(),
+        readTerminalCorrectionHead: headReader,
+      });
+
+      expect(result.status).toBe("needs-attention");
+      expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+      expect(result.state).toEqual(withActiveAuthority);
+      expect(saves).toHaveLength(0);
+      expect(executor.requests).toHaveLength(0);
+    },
+  );
+
+  it.each(["done", "paused", "needs-approval"] as const)(
+    "rejects an unrelated terminal status %s carried over a matching archive tail",
+    async (status) => {
+      const { request, saves, executor, attestScope } = harness(recoveryStages(), [
+        okResult({ exitCode: 1 }),
+      ]);
+      wireRecoveryAttestor(attestScope);
+      const failed = await runPipelineStages({
+        ...request,
+        state: terminalCorrectionState(),
+        terminalRecovery: terminalRecoveryRequest(),
+        readTerminalCorrectionHead: headReader,
+      });
+      const unrelated = { ...failed.state, status };
+      const savesBefore = saves.length;
+
+      const result = await runPipelineStages({
+        ...request,
+        state: unrelated,
+        terminalRecovery: terminalRecoveryRequest(),
+        readTerminalCorrectionHead: headReader,
+      });
+
+      expect(result.status).toBe("needs-attention");
+      expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+      expect(saves).toHaveLength(savesBefore);
+      expect(executor.requests).toHaveLength(1);
+    },
+  );
+
+  it("rejects an idempotent retry against a failed state with no matching archive tail", async () => {
+    const { request, saves, executor, attestScope } = harness(recoveryStages(), [
+      okResult({ exitCode: 1 }),
+    ]);
+    wireRecoveryAttestor(attestScope);
+    const failed = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+    const withoutTail = structuredClone(failed.state);
+    Reflect.deleteProperty(withoutTail, "supersededFinalScopeReceipts");
+    const savesBefore = saves.length;
+
+    const result = await runPipelineStages({
+      ...request,
+      state: withoutTail,
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(saves).toHaveLength(savesBefore);
+    expect(executor.requests).toHaveLength(1);
+  });
+
+  it("rejects a stale expected receipt run id without saving or spawning", async () => {
+    const { request, saves, executor } = harness(recoveryStages(), []);
+    const result = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest("run-stale"),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(result.state).toEqual(terminalCorrectionState());
+    expect(saves).toHaveLength(0);
+    expect(executor.requests).toHaveLength(0);
+  });
+
+  it("rejects reconciliation-needed done state before recovery effects", async () => {
+    const { request, saves, executor, attestScope } = harness(recoveryStages(), []);
+    const state = { ...terminalCorrectionState(), currentStage: "code-review", finishedAt: null };
+    const readHead = vi.fn(async () => baseOid);
+
+    const result = await runPipelineStages({
+      ...request,
+      state,
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: readHead,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(result.state).toEqual(state);
+    expect(saves).toHaveLength(0);
+    expect(attestScope).not.toHaveBeenCalled();
+    expect(readHead).not.toHaveBeenCalled();
+    expect(executor.requests).toHaveLength(0);
+  });
+
+  it("rejects a recovery against a non-done state", async () => {
+    const { request, saves } = harness(recoveryStages(), []);
+    const result = await runPipelineStages({
+      ...request,
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(saves).toHaveLength(0);
+  });
+
+  it("rejects when the reviewed scope drifts after the final receipt", async () => {
+    const { request, saves, executor, attestScope } = harness(recoveryStages(), []);
+    attestScope.mockResolvedValueOnce({ kind: "rejected", reason: "Git scope changed." });
+    const result = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(saves).toHaveLength(0);
+    expect(executor.requests).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      "storyId",
+      (receipt: FinalScopeReceipt): FinalScopeReceipt => ({ ...receipt, storyId: "SH-other" }),
+    ],
+    [
+      "runDefDigest",
+      (receipt: FinalScopeReceipt): FinalScopeReceipt => ({
+        ...receipt,
+        runDefDigest: "f".repeat(64),
+      }),
+    ],
+    [
+      "qualityGate",
+      (receipt: FinalScopeReceipt): FinalScopeReceipt => ({
+        ...receipt,
+        qualityGate: { ...receipt.qualityGate, attempt: 9 },
+      }),
+    ],
+  ] as const)("rejects an observed receipt with a foreign %s", async (_field, drift) => {
+    const { request, saves, executor, attestScope } = harness(recoveryStages(), []);
+    attestScope.mockImplementation(async (attestation) =>
+      attestation.phase === "final"
+        ? { kind: "final-receipt", receipt: drift(correctionReceipt) }
+        : { kind: "review-checkpoint", checkpoint: correctionCheckpoint },
+    );
+    const result = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(saves).toHaveLength(0);
+    expect(executor.requests).toHaveLength(0);
+  });
+
+  it("rejects when feature HEAD is not at the receipt base", async () => {
+    const { request, saves, executor } = harness(recoveryStages(), []);
+    const result = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: async () => "b".repeat(40),
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(saves).toHaveLength(0);
+    expect(executor.requests).toHaveLength(0);
+  });
+
+  it("rejects a thrown scope attestor as terminal-recovery-rejected without saving", async () => {
+    const { request, saves, executor, attestScope } = harness(recoveryStages(), []);
+    attestScope.mockRejectedValue(new TypeError("git status exploded"));
+    const result = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({
+      code: "terminal-recovery-rejected",
+      reason: expect.stringContaining("git status exploded"),
+    });
+    expect(saves).toHaveLength(0);
+    expect(executor.requests).toHaveLength(0);
+  });
+
+  it("rejects a thrown HEAD reader as terminal-recovery-rejected without saving", async () => {
+    const { request, saves, executor, attestScope } = harness(recoveryStages(), []);
+    wireRecoveryAttestor(attestScope);
+    const result = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: async () => {
+        throw new TypeError("HEAD is not 40-hex");
+      },
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({
+      code: "terminal-recovery-rejected",
+      reason: expect.stringContaining("HEAD is not 40-hex"),
+    });
+    expect(saves).toHaveLength(0);
+    expect(executor.requests).toHaveLength(0);
+  });
+
+  it("rejects when the receipt quality stage is not an earlier code-review stage", async () => {
+    const { request, saves, executor } = harness(recoveryStages(), []);
+    const done = terminalCorrectionState();
+    const nonReviewReceipt: FinalScopeReceipt = {
+      ...correctionCheckpoint,
+      qualityGate: { ...correctionCheckpoint.qualityGate, stageId: "docs" },
+      docs: { paths: ["README.md"], digest: digest("c") },
+      finalWorkingTreeDigest: digest("d"),
+    };
+    const result = await runPipelineStages({
+      ...request,
+      state: { ...done, reviewCheckpoint: nonReviewReceipt, finalScopeReceipt: nonReviewReceipt },
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(saves).toHaveLength(0);
+    expect(executor.requests).toHaveLength(0);
+  });
+
+  it("leaves no active receipt when a corrected stage fails", async () => {
+    const { request, saves, attestScope } = harness(recoveryStages(), [new Error("dev exploded")]);
+    wireRecoveryAttestor(attestScope);
+    const result = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+      terminalRecovery: terminalRecoveryRequest(),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "executor-error" });
+    expect(result.state).not.toHaveProperty("finalScopeReceipt");
+    expect(result.state).not.toHaveProperty("reviewCheckpoint");
+    expect(result.state.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(saves.at(-1)?.finalScopeReceipt).toBeUndefined();
+  });
+
+  it("treats a repeated recovery against a freshly completed receipt as stale", async () => {
+    const { request, saves } = harness(recoveryStages(), []);
+    const freshDone = {
+      ...terminalCorrectionState(),
+      finalScopeReceipt: { ...correctionReceipt, runId: "run-fresh" },
+      reviewCheckpoint: { ...correctionCheckpoint, runId: "run-fresh" },
+    };
+    const result = await runPipelineStages({
+      ...request,
+      state: freshDone,
+      terminalRecovery: terminalRecoveryRequest("run-1"),
+      readTerminalCorrectionHead: headReader,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({ code: "terminal-recovery-rejected" });
+    expect(saves).toHaveLength(0);
+  });
+
+  it("requires the head reader when a recovery is requested", async () => {
+    const { request } = harness(recoveryStages(), []);
+
+    await expect(
+      runPipelineStages({
+        ...request,
+        state: terminalCorrectionState(),
+        terminalRecovery: terminalRecoveryRequest(),
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it("ordinary runs without recovery flags remain compatible", async () => {
+    const { request, executor, attestScope } = harness(recoveryStages(), [
+      okResult(),
+      okResult(),
+      okResult(),
+    ]);
+    wireRecoveryAttestor(attestScope);
+    const result = await runPipelineStages({
+      ...request,
+      state: terminalCorrectionState(),
+    });
+
+    expect(result.status).toBe("done");
+    expect(result.stagesRun).toEqual([]);
+    expect(executor.requests).toHaveLength(0);
+    expect(result.state).toHaveProperty("finalScopeReceipt");
+  });
+
+  it("resumes a version-2 all-passed missing-checkpoint state without re-running stages", async () => {
+    const fixture = harness(recoveryStages(), []);
+    const state: PipelineState = {
+      ...fixture.request.state,
+      runnerFeatureVersion: 2,
+      status: "running",
+      currentStage: "docs",
+      stages: {
+        "dev-story": durablyPassedStage(fixture.request.state.stages["dev-story"]!, 1, T0),
+        "code-review": durablyPassedStage(fixture.request.state.stages["code-review"]!, 1, T0),
+        docs: durablyPassedStage(fixture.request.state.stages["docs"]!, 1, T0),
+      },
+    };
+    expect(getPipelineStateInvalidReason(state)).toBeUndefined();
+    fixture.attestScope.mockImplementation(async (request) => {
+      if (request.phase === "review") {
+        return {
+          kind: "review-checkpoint",
+          checkpoint: {
+            ...correctionCheckpoint,
+            runId: request.runId,
+            runDefId: request.runDefId,
+            runDefDigest: request.runDefDigest,
+            qualityGate: request.qualityGate,
+          },
+        };
+      }
+      return {
+        kind: "final-receipt",
+        receipt: {
+          ...correctionReceipt,
+          ...request.reviewCheckpoint,
+          runId: request.runId,
+          runDefId: request.runDefId,
+          runDefDigest: request.runDefDigest,
+          qualityGate: request.qualityGate,
+        },
+      };
+    });
+
+    const result = await runPipelineStages({ ...fixture.request, state });
+
+    expect(result.status).toBe("done");
+    expect(result.stagesRun).toEqual([]);
+    expect(fixture.executor.requests).toEqual([]);
+    expect(fixture.attestScope.mock.calls.map(([request]) => request.phase)).toEqual([
+      "review",
+      "final",
+    ]);
+    expect(result.state.reviewCheckpoint?.qualityGate).toEqual({
+      stageId: "code-review",
+      attempt: 1,
+      status: "passed",
+      finishedAt: T0,
+    });
+    expect(result.state.status).toBe("done");
+  });
+
+  it("rejects an unsupported recovery kind at the core boundary", async () => {
+    const { request } = harness(recoveryStages(), []);
+
+    await expect(
+      runPipelineStages({
+        ...request,
+        state: terminalCorrectionState(),
+        terminalRecovery: {
+          kind: "some-other-kind",
+          expectedReceiptRunId: "run-1",
+          reason: "defect",
+        } as never,
+        readTerminalCorrectionHead: headReader,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it("rejects an oversized expected receipt run id at the core boundary", async () => {
+    const { request } = harness(recoveryStages(), []);
+
+    await expect(
+      runPipelineStages({
+        ...request,
+        state: terminalCorrectionState(),
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: "x".repeat(101),
+          reason: "defect",
+        },
+        readTerminalCorrectionHead: headReader,
+      }),
+    ).rejects.toThrow(RangeError);
   });
 });

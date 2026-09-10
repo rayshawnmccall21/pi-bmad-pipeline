@@ -41,6 +41,23 @@ export function createGitScopeAttestor(
   return async (request) => attestObservedScope(dependencies, request);
 }
 
+/**
+ * Reads the exact lowercase 40-hex worktree HEAD for terminal-recovery eligibility.
+ *
+ * @param projectRoot - Project root directory.
+ *
+ * @returns The current HEAD object id.
+ *
+ * @throws TypeError When the HEAD output is not a lowercase 40-hex OID.
+ *
+ * @example
+ * ```ts
+ * await readGitHeadOid(process.cwd());
+ * ```
+ */
+export const readGitHeadOid = (projectRoot: string): Promise<string> =>
+  readHeadOid({ runGit, readBytes: readRepositoryBytes }, projectRoot);
+
 interface ObservedGitScope {
   readonly branch: string;
   readonly baseOid: string;
@@ -256,6 +273,8 @@ const CHANGED_PATH_ACTIONS = new Map<string, GitPathAction>([
   ["M ", "present"],
   ["MM", "present"],
   ["??", "present"],
+  ["A ", "present"],
+  ["AM", "present"],
   ["D ", "absent"],
   [" D", "absent"],
 ]);

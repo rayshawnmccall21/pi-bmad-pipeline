@@ -122,6 +122,39 @@ describe("runCli", () => {
     expect(runPipeline.mock.calls[0]?.[0]).not.toHaveProperty("openPr");
   });
 
+  it("forwards the terminal recovery option group to the run action", async () => {
+    const runPipeline = vi.fn(async () => result());
+
+    expect(
+      await runCli(
+        [
+          "run",
+          "custom",
+          "--story-id",
+          "S-1",
+          "--spec-file",
+          "s.md",
+          "--terminal-recovery-kind",
+          "supersede-contract-invalid-candidate",
+          "--expected-receipt-run-id",
+          "run-1",
+          "--recovery-reason",
+          "Contract defect.",
+        ],
+        { runPipeline },
+      ),
+    ).toBe(0);
+    expect(runPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: "run-1",
+          reason: "Contract defect.",
+        },
+      }),
+    );
+  });
+
   it("emits raw JSONL event lines with --jsonl", async () => {
     const stdout = sink();
     const rawEvent = JSON.stringify({ event: "progress", message: "working" });

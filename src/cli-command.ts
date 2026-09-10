@@ -4,6 +4,8 @@
  * @packageDocumentation
  */
 
+import type { TerminalRecoveryRequest } from "./core/index.js";
+
 /** Stable argv parse error codes. */
 export type CliParseErrorCode =
   | "missing-command"
@@ -13,7 +15,8 @@ export type CliParseErrorCode =
   | "missing-required-option"
   | "missing-positional"
   | "unexpected-positional"
-  | "invalid-number";
+  | "invalid-number"
+  | "invalid-option-value";
 
 /** Structured argv parse failure returned as data. */
 export interface CliParseError {
@@ -43,6 +46,10 @@ export interface CliRunCommand {
   readonly thinking?: string;
   /** Optional regression ceiling. */
   readonly maxRegressions?: number;
+
+  /** Optional all-or-none terminal recovery option group. */
+  readonly terminalRecovery?: TerminalRecoveryRequest;
+
   /** Whether raw JSONL output was requested. */
   readonly jsonl: boolean;
 }

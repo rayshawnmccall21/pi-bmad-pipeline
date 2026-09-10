@@ -4,6 +4,12 @@
  * @packageDocumentation
  */
 
+import {
+  EXPECTED_RECEIPT_RUN_ID_MAX_CHARS,
+  TERMINAL_RECOVERY_KIND,
+  TERMINAL_RECOVERY_REASON_MAX_BYTES,
+  type TerminalRecoveryRequest,
+} from "./core/index.js";
 import type { CliCommand, CliParseError, CliParseErrorCode, CliRunCommand } from "./cli-command.js";
 
 /** Usage text written one line at a time by the CLI shell. */
@@ -12,6 +18,8 @@ export const CLI_USAGE_LINES: readonly string[] = Object.freeze([
   "Commands:",
   "  run <rundef-id> [--story-id ID] [--spec-file PATH] [--project-root DIR]",
   "      [--model NAME] [--thinking EFFORT] [--max-regressions N] [--jsonl]",
+  "      [--terminal-recovery-kind KIND] [--expected-receipt-run-id RUN_ID]",
+  "      [--recovery-reason REASON]",
   "  help | version",
 ]);
 
@@ -22,6 +30,9 @@ const valueOptions = new Set([
   "--model",
   "--thinking",
   "--max-regressions",
+  "--terminal-recovery-kind",
+  "--expected-receipt-run-id",
+  "--recovery-reason",
 ]);
 const flagOptions = new Set(["--jsonl"]);
 const helpWords = new Set(["help", "--help", "-h"]);
@@ -121,6 +132,80 @@ const regressionError = (scanned: ScannedRunArgs): CliParseError | undefined => 
     : undefined;
 };
 
+const isBoundedRecoveryReason = (reason: string | undefined): boolean =>
+  reason !== undefined &&
+  reason.trim().length > 0 &&
+  Buffer.byteLength(reason, "utf8") <= TERMINAL_RECOVERY_REASON_MAX_BYTES;
+
+const isBoundedExpectedReceiptRunId = (expectedReceiptRunId: string | undefined): boolean =>
+  expectedReceiptRunId !== undefined &&
+  expectedReceiptRunId.trim().length > 0 &&
+  Array.from(expectedReceiptRunId).length <= EXPECTED_RECEIPT_RUN_ID_MAX_CHARS;
+
+const terminalRecoveryValueError = (
+  kind: string | undefined,
+  expectedReceiptRunId: string | undefined,
+  reason: string | undefined,
+): CliParseError | undefined => {
+  if (kind !== TERMINAL_RECOVERY_KIND) {
+    return parseError(
+      "invalid-option-value",
+      `Option "--terminal-recovery-kind" must be "${TERMINAL_RECOVERY_KIND}".`,
+    );
+  }
+  if (!isBoundedExpectedReceiptRunId(expectedReceiptRunId)) {
+    return parseError(
+      "invalid-option-value",
+      `Option "--expected-receipt-run-id" must be a nonblank receipt run id no larger than ${String(EXPECTED_RECEIPT_RUN_ID_MAX_CHARS)} characters.`,
+    );
+  }
+  if (!isBoundedRecoveryReason(reason)) {
+    return parseError(
+      "invalid-option-value",
+      `Option "--recovery-reason" must be a nonblank reason no larger than ${String(TERMINAL_RECOVERY_REASON_MAX_BYTES)} UTF-8 bytes.`,
+    );
+  }
+  return undefined;
+};
+
+const terminalRecoveryRequestOrError = (
+  kind: string,
+  expectedReceiptRunId: string,
+  reason: string,
+): { readonly terminalRecovery?: TerminalRecoveryRequest } | CliParseError => {
+  const valueError = terminalRecoveryValueError(kind, expectedReceiptRunId, reason);
+  if (valueError !== undefined) {
+    return valueError;
+  }
+  return {
+    terminalRecovery: Object.freeze({
+      kind: TERMINAL_RECOVERY_KIND,
+      expectedReceiptRunId,
+      reason,
+    }),
+  };
+};
+
+const allUndefined = (values: readonly (string | undefined)[]): boolean =>
+  values.every((value) => value === undefined);
+
+const terminalRecoveryFields = (
+  scanned: ScannedRunArgs,
+): { readonly terminalRecovery?: TerminalRecoveryRequest } | CliParseError => {
+  const kind = scanned.values.get("--terminal-recovery-kind");
+  const expectedReceiptRunId = scanned.values.get("--expected-receipt-run-id");
+  const reason = scanned.values.get("--recovery-reason");
+  if (kind !== undefined && expectedReceiptRunId !== undefined && reason !== undefined) {
+    return terminalRecoveryRequestOrError(kind, expectedReceiptRunId, reason);
+  }
+  return allUndefined([kind, expectedReceiptRunId, reason])
+    ? {}
+    : parseError(
+        "missing-required-option",
+        "Options --terminal-recovery-kind, --expected-receipt-run-id, and --recovery-reason must be provided together.",
+      );
+};
+
 const optionalFields = (scanned: ScannedRunArgs): Partial<CliRunCommand> => {
   const projectRoot = scanned.values.get("--project-root");
   const model = scanned.values.get("--model");
@@ -134,13 +219,33 @@ const optionalFields = (scanned: ScannedRunArgs): Partial<CliRunCommand> => {
   };
 };
 
-const buildRunCommand = (scanned: ScannedRunArgs, required: RequiredRunFields): CliRunCommand =>
+const buildRunCommand = (
+  scanned: ScannedRunArgs,
+  required: RequiredRunFields,
+  terminalRecovery: TerminalRecoveryRequest | undefined,
+): CliRunCommand =>
   Object.freeze({
     kind: "run",
     ...required,
     ...optionalFields(scanned),
+    ...(terminalRecovery === undefined ? {} : { terminalRecovery }),
     jsonl: scanned.flags.has("--jsonl"),
   });
+
+const runOptionOutcome = (
+  scanned: ScannedRunArgs,
+  required: RequiredRunFields,
+): CliCommand | CliParseError => {
+  const regression = regressionError(scanned);
+  if (regression !== undefined) {
+    return regression;
+  }
+  const recovery = terminalRecoveryFields(scanned);
+  if ("kind" in recovery) {
+    return recovery;
+  }
+  return buildRunCommand(scanned, required, recovery.terminalRecovery);
+};
 
 const buildRun = (tokens: readonly string[]): CliCommand | CliParseError => {
   const scanned = scanRunArgs(tokens);
@@ -151,7 +256,7 @@ const buildRun = (tokens: readonly string[]): CliCommand | CliParseError => {
   if ("kind" in required) {
     return required;
   }
-  return regressionError(scanned) ?? buildRunCommand(scanned, required);
+  return runOptionOutcome(scanned, required);
 };
 
 /**

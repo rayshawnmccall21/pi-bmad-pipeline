@@ -1,6 +1,8 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
+  EXPECTED_RECEIPT_RUN_ID_MAX_CHARS,
+  RECEIPT_INTRODUCED_FEATURE_VERSION,
   RUNNER_FEATURE_VERSION,
   createEmptyRunEconomicsSummary,
   createInitialPipelineState,
@@ -17,6 +19,7 @@ import type {
   PipelineStatus,
   ReviewScopeCheckpoint,
   StageStatus,
+  SupersededFinalScopeReceipt,
 } from "./pipeline-state.js";
 
 const stage = (id: string, index: number): CompiledStageDef =>
@@ -116,14 +119,20 @@ describe("pipeline state contracts", () => {
       thinking: "medium",
     });
 
-    expect(RUNNER_FEATURE_VERSION).toBe(2);
+    expect(RUNNER_FEATURE_VERSION).toBe(3);
+    expect(RECEIPT_INTRODUCED_FEATURE_VERSION).toBe(2);
+    expect(EXPECTED_RECEIPT_RUN_ID_MAX_CHARS).toBe(100);
     expect(state).not.toHaveProperty("reviewCheckpoint");
     expect(state).not.toHaveProperty("finalScopeReceipt");
+    expect(state).not.toHaveProperty("supersededFinalScopeReceipts");
     expectTypeOf<PipelineState["reviewCheckpoint"]>().toEqualTypeOf<
       ReviewScopeCheckpoint | undefined
     >();
     expectTypeOf<PipelineState["finalScopeReceipt"]>().toEqualTypeOf<
       FinalScopeReceipt | undefined
+    >();
+    expectTypeOf<PipelineState["supersededFinalScopeReceipts"]>().toEqualTypeOf<
+      readonly SupersededFinalScopeReceipt[] | undefined
     >();
   });
 

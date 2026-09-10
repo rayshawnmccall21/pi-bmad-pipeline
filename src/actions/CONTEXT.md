@@ -10,7 +10,7 @@
 
 ## Invariants
 
-- `runPipelineAction` acquires the lock, then preparation loads state, registers gates, selects/compiles YAML, resolves the model, resolves fresh or reconciled state, constructs an executor through the injected factory, and invokes the FSM.
+- `runPipelineAction` acquires the lock, then preparation loads state, registers gates, selects/compiles YAML, resolves the model, resolves fresh or reconciled state, constructs an executor through the injected factory, and invokes the FSM. A terminal recovery request is validated (kind, nonblank ≤100-char expected run id, normalized bounded reason) and its reason normalized before the lock is acquired; the normalized request and the injected worktree HEAD reader (`readGitHead`) are forwarded into the locked FSM.
 - After a lock is acquired, execution failures are caught and returned as frozen `RunResult` data. Request validation and lock acquisition itself occur outside that catch boundary and may throw.
 - The dispatch lock is released in `finally`; state persistence enters through injected dependencies, while event output and time enter through the request's injected `sink` and `now` seams.
 - Agent and code stages share the ordinary lifecycle events; payload-gate events are emitted only for agent stages.
@@ -23,6 +23,7 @@
 ## Gotchas
 
 - Keep `run-pipeline-action.ts`, `run-pipeline-execution.ts`, and `run-pipeline-settlement.ts` separated; moving policy back into the composition root recreates a god module.
+- Terminal recovery eligibility is the first permitted state write: in recovery mode preparation never initializes missing state and never persists reconciliation before the FSM eligibility/CAS; the supersession transition is the first save. The action only validates identifiers and normalizes the bounded reason, so malformed, unknown-kind, and partial requests fail before locking.
 - Resume identity includes the RunDef digest, so code command/argv changes cannot reuse prior state.
 - `projectRoot` is passed unchanged as the exact executor cwd; actions do not create a worktree.
 - Register payload gates before compiling YAML that references them.

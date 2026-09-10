@@ -1,13 +1,23 @@
+/* eslint-disable max-lines -- Cohesive durable receipt and superseded-history schema validation stays together. */
 import { isDeepStrictEqual } from "node:util";
 
+import { computeRunDefDigest, runDefsEqualExceptStageTimeouts } from "../rundef/identity.js";
+import { isRunDef } from "../rundef/schema.js";
 import {
   FINAL_SCOPE_RECEIPT_VERSION,
   createCanonicalRepositoryScope,
 } from "../security/final-scope-receipt.js";
 import { sanitizeStageHandoff } from "../security/stage-handoff.js";
 
-import { RUNNER_FEATURE_VERSION, type PipelineState } from "./pipeline-state.js";
 import {
+  EXPECTED_RECEIPT_RUN_ID_MAX_CHARS,
+  RUNNER_FEATURE_VERSION,
+  TERMINAL_RECOVERY_KIND,
+  TERMINAL_RECOVERY_REASON_MAX_BYTES,
+  type PipelineState,
+} from "./pipeline-state.js";
+import {
+  qualityGateMatchesDurableAttemptHistory,
   qualityGateMatchesDurableStage,
   receiptIntegrityFactsAreValid,
   repositoryScopesHaveDisjointPaths,
@@ -41,10 +51,25 @@ const qualityGateKeys = "stageId attempt status finishedAt".split(" ");
 const reviewCheckpointKeys =
   "version storyId runId runDefId runDefDigest branch baseOid reviewed qualityGate".split(" ");
 const finalScopeReceiptKeys = [...reviewCheckpointKeys, "docs", "finalWorkingTreeDigest"];
+const supersededReceiptKeys =
+  "version sequence kind supersededAt supersededByRunId expectedReceiptRunId reason resetTargetStageId finalScopeReceipt".split(
+    " ",
+  );
 const checkpointStringKeys = "storyId runId runDefId branch".split(" ");
 const lowercaseOidPattern = /^[0-9a-f]{40}$/u;
 const lowercaseDigestPattern = /^[0-9a-f]{64}$/u;
 const emptyFileBytes = new Uint8Array();
+
+/** Minimum ISO timestamp length persisted on durable records. */
+const ISO_TIMESTAMP_MIN_CHARS = 20;
+/** Maximum ISO timestamp length persisted on durable records. */
+const ISO_TIMESTAMP_MAX_CHARS = 64;
+
+const isISOishTimestamp = (value: unknown): boolean =>
+  isString(value) &&
+  value.length >= ISO_TIMESTAMP_MIN_CHARS &&
+  value.length <= ISO_TIMESTAMP_MAX_CHARS &&
+  value.endsWith("Z");
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -121,6 +146,66 @@ const validFinalScopeReceipt = (value: unknown): value is Record<string, unknown
   validRepositoryScope(value["docs"]) &&
   isString(value["finalWorkingTreeDigest"]) &&
   lowercaseDigestPattern.test(value["finalWorkingTreeDigest"]);
+
+const boundedExpectedReceiptId = (value: unknown): boolean =>
+  isNonBlankString(value) && Array.from(value).length <= EXPECTED_RECEIPT_RUN_ID_MAX_CHARS;
+
+const boundedReason = (value: unknown): boolean =>
+  isNonBlankString(value) && Buffer.byteLength(value, "utf8") <= TERMINAL_RECOVERY_REASON_MAX_BYTES;
+
+const validSupersededFields = (value: Record<string, unknown>): boolean => {
+  const receipt = finalScopeReceiptOf(value["finalScopeReceipt"]);
+  const fields = [
+    value["version"] === 1,
+    isPositiveInteger(value["sequence"]),
+    value["kind"] === TERMINAL_RECOVERY_KIND,
+    isISOishTimestamp(value["supersededAt"]),
+    isNonBlankString(value["supersededByRunId"]),
+    boundedExpectedReceiptId(value["expectedReceiptRunId"]),
+    boundedReason(value["reason"]),
+    isNonBlankString(value["resetTargetStageId"]),
+  ];
+  return (
+    receipt !== undefined &&
+    fields.every(Boolean) &&
+    receipt["runId"] === value["expectedReceiptRunId"]
+  );
+};
+
+const validRunDefIdentity = (value: unknown, digest: unknown): boolean =>
+  isRunDef(value) && typeof digest === "string" && computeRunDefDigest(value) === digest;
+
+const validSupersededReceipt = (value: unknown): value is Record<string, unknown> =>
+  isRecord(value) &&
+  (hasExactKeys(value, supersededReceiptKeys) ||
+    hasExactKeys(value, [...supersededReceiptKeys, "runDefIdentity"])) &&
+  validSupersededFields(value) &&
+  (!("runDefIdentity" in value) ||
+    validRunDefIdentity(
+      value["runDefIdentity"],
+      finalScopeReceiptOf(value["finalScopeReceipt"])?.["runDefDigest"],
+    ));
+
+const hasUniqueExpectedReceiptRunIds = (records: readonly Record<string, unknown>[]): boolean => {
+  const seen = new Set<string>();
+  for (const record of records) {
+    const expected = record["expectedReceiptRunId"];
+    if (typeof expected !== "string" || seen.has(expected)) {
+      return false;
+    }
+    seen.add(expected);
+  }
+  return true;
+};
+
+const validSupersededReceipts = (value: unknown): value is Record<string, unknown>[] =>
+  Array.isArray(value) &&
+  value.every(validSupersededReceipt) &&
+  hasUniqueExpectedReceiptRunIds(value) &&
+  hasContiguousSequence(value);
+
+const hasContiguousSequence = (records: readonly Record<string, unknown>[]): boolean =>
+  records.every((record, index) => record["sequence"] === index + 1);
 
 const matchesStateIdentity = (
   receipt: Record<string, unknown>,
@@ -263,11 +348,76 @@ const unsupportedVersionReason = (version: unknown): string | undefined =>
 
 const incompatibleReceiptVersionReason = (
   candidate: Record<string, unknown>,
-): string | undefined =>
-  (Object.hasOwn(candidate, "reviewCheckpoint") || Object.hasOwn(candidate, "finalScopeReceipt")) &&
-  candidate["runnerFeatureVersion"] !== RUNNER_FEATURE_VERSION
-    ? `Fields "reviewCheckpoint" and "finalScopeReceipt" require runnerFeatureVersion ${String(RUNNER_FEATURE_VERSION)}.`
+): string | undefined => {
+  const receiptBearing =
+    Object.hasOwn(candidate, "reviewCheckpoint") || Object.hasOwn(candidate, "finalScopeReceipt");
+  if (!receiptBearing) {
+    return undefined;
+  }
+  const version = candidate["runnerFeatureVersion"];
+  const legacyReceiptVersion = 2;
+  return version !== legacyReceiptVersion && version !== RUNNER_FEATURE_VERSION
+    ? `Fields "reviewCheckpoint" and "finalScopeReceipt" require runnerFeatureVersion 2 or ${String(RUNNER_FEATURE_VERSION)}.`
     : undefined;
+};
+
+const correctionVersionReason = (candidate: Record<string, unknown>): string | undefined =>
+  Object.hasOwn(candidate, "supersededFinalScopeReceipts") &&
+  candidate["runnerFeatureVersion"] !== RUNNER_FEATURE_VERSION
+    ? `Field "supersededFinalScopeReceipts" requires runnerFeatureVersion ${String(RUNNER_FEATURE_VERSION)}.`
+    : undefined;
+
+const finalScopeReceiptOf = (value: unknown): Record<string, unknown> | undefined =>
+  validFinalScopeReceipt(value) ? value : undefined;
+
+const archivedRunDefMatches = (
+  record: Record<string, unknown>,
+  receipt: Record<string, unknown>,
+  candidate: Record<string, unknown>,
+): boolean => {
+  if (receipt["runDefDigest"] === candidate["runDefDigest"]) {
+    return true;
+  }
+  const archivedRunDef = record["runDefIdentity"];
+  const activeRunDef = candidate["runDefIdentity"];
+  return (
+    isRunDef(archivedRunDef) &&
+    isRunDef(activeRunDef) &&
+    runDefsEqualExceptStageTimeouts(archivedRunDef, activeRunDef)
+  );
+};
+
+const supersededReceiptMatchesState = (
+  record: Record<string, unknown>,
+  candidate: Record<string, unknown>,
+): boolean => {
+  const receipt = finalScopeReceiptOf(record["finalScopeReceipt"]);
+  if (receipt === undefined) {
+    return false;
+  }
+  return [
+    receipt["storyId"] === candidate["storyId"],
+    receipt["runDefId"] === candidate["runDefId"],
+    archivedRunDefMatches(record, receipt, candidate),
+    qualityGateMatchesDurableAttemptHistory(receipt["qualityGate"], candidate["stages"]),
+  ].every(Boolean);
+};
+
+const rootSupersededReceiptsIntegrity = (candidate: Record<string, unknown>): boolean => {
+  const records = candidate["supersededFinalScopeReceipts"];
+  if (records === undefined) {
+    return true;
+  }
+  return (
+    validSupersededReceipts(records) &&
+    records.every((record) => supersededReceiptMatchesState(record, candidate))
+  );
+};
+
+const rootSupersededReceiptsReason = (candidate: Record<string, unknown>): string | undefined =>
+  rootSupersededReceiptsIntegrity(candidate)
+    ? undefined
+    : 'Field "supersededFinalScopeReceipts" contains malformed, duplicated, or history-unmatched receipt records.';
 
 const rootReceiptVersionReason = (candidate: Record<string, unknown>): string | undefined => {
   const unsupportedReason = unsupportedVersionReason(candidate["runnerFeatureVersion"]);
@@ -308,6 +458,12 @@ const rootReceiptIntegrityReason = (candidate: Record<string, unknown>): string 
     ? undefined
     : 'Fields "reviewCheckpoint" or "finalScopeReceipt" are malformed, inconsistent, or name no matching quality stage attempt.';
 
+const rootRunDefIdentityReason = (candidate: Record<string, unknown>): string | undefined =>
+  !("runDefIdentity" in candidate) ||
+  validRunDefIdentity(candidate["runDefIdentity"], candidate["runDefDigest"])
+    ? undefined
+    : 'Field "runDefIdentity" is malformed or does not match runDefDigest.';
+
 const rootReasonChecks = [
   rootStringReason,
   rootVersionReason,
@@ -319,8 +475,11 @@ const rootReasonChecks = [
   rootFinishedAtReason,
   rootEconomicsReason,
   rootOptionalOldFields,
+  rootRunDefIdentityReason,
   rootReceiptVersionReason,
   rootReceiptIntegrityReason,
+  correctionVersionReason,
+  rootSupersededReceiptsReason,
 ] as const;
 
 /**

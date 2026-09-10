@@ -1,4 +1,4 @@
-/* eslint-disable max-lines, jsdoc/require-param, jsdoc/require-returns, jsdoc/require-throws, @typescript-eslint/no-unsafe-assignment -- Cohesive frozen structural transitions preserve dynamic stage records and atomic receipt migration. */
+/* eslint-disable max-lines, jsdoc/require-param, jsdoc/require-returns, @typescript-eslint/no-unsafe-assignment -- Cohesive frozen structural transitions preserve dynamic stage records and atomic receipt migration. */
 /**
  * Pure durable-state transition constructors for the pipeline FSM.
  *
@@ -20,6 +20,8 @@ import {
   type RunEconomicsSummary,
   type StageAttemptState,
   type StageState,
+  type SupersededFinalScopeReceipt,
+  type TerminalRecoveryKind,
 } from "../state/index.js";
 
 import type { StageDecision } from "./stage-decision.js";
@@ -288,15 +290,56 @@ export const resetReviewAndDownstream = (
   state: PipelineState,
   orderedStageIds: readonly string[],
   reviewStageId: string,
+): PipelineState =>
+  resetStageAndDownstream(state, orderedStageIds, {
+    stageId: reviewStageId,
+  });
+
+/** Optional findings persisted on the reset target stage. */
+interface StageResetExtras {
+  /** Findings carried into the reset target for the next attempt. */
+  readonly findings?: readonly string[];
+}
+
+/** Describes one stage-and-downstream reset. */
+interface StageResetRequest extends StageResetExtras {
+  /** First stage to reset. */
+  readonly stageId: string;
+}
+
+/**
+ * Clears scope approval and resets one stage plus downstream to pending.
+ *
+ * Preserves attempts, history, economics, regressions, and every stage before
+ * the reset stage. The reset target may receive fresh findings; stale reason,
+ * findings, and upstream handoff are otherwise cleared on every reset stage.
+ *
+ * @param state - Durable pipeline state.
+ * @param orderedStageIds - Compiled stage ids in execution order.
+ * @param reset - Reset stage identity and optional target findings.
+ *
+ * @returns Frozen state with approval cleared and the target/downstream pending.
+ *
+ * @throws RangeError When the reset stage is not in the compiled pipeline.
+ *
+ * @example
+ * ```ts
+ * resetStageAndDownstream(state, ["a", "b", "c"], { stageId: "b" });
+ * ```
+ */
+const resetStageAndDownstream = (
+  state: PipelineState,
+  orderedStageIds: readonly string[],
+  reset: StageResetRequest,
 ): PipelineState => {
-  const reviewIndex = orderedStageIds.indexOf(reviewStageId);
-  if (reviewIndex < 0) {
-    throw new RangeError(`Review stage "${reviewStageId}" is not in the compiled pipeline.`);
+  const resetIndex = orderedStageIds.indexOf(reset.stageId);
+  if (resetIndex < 0) {
+    throw new RangeError(`Stage "${reset.stageId}" is not in the compiled pipeline.`);
   }
   const stages = Object.fromEntries(
     Object.entries(state.stages).map(([stageId, stageState]) => {
       const stageIndex = orderedStageIds.indexOf(stageId);
-      return stageIndex < reviewIndex
+      return stageIndex < resetIndex
         ? [stageId, stageState]
         : [
             stageId,
@@ -307,6 +350,9 @@ export const resetReviewAndDownstream = (
               startedAt: null,
               finishedAt: null,
               history: stageState.history,
+              ...(stageIndex === resetIndex && reset.findings !== undefined
+                ? { findings: Object.freeze([...reset.findings]) }
+                : {}),
             }),
           ];
     }),
@@ -322,6 +368,86 @@ export const resetReviewAndDownstream = (
     finishedAt: null,
   });
 };
+
+/** Update describing one terminal semantic recovery transition. */
+export interface TerminalCorrectionTransitionRequest {
+  /** Recovery kind literal. */
+  readonly kind: TerminalRecoveryKind;
+  /** Expected active receipt run id the recovery compare-and-swapped against. */
+  readonly expectedReceiptRunId: string;
+  /** Normalized, redacted, bounded recovery reason. */
+  readonly reason: string;
+  /** Compiled stage id whose earlier onFail target the recovery resets. */
+  readonly resetTargetStageId: string;
+  /** ISO timestamp when the receipt was superseded. */
+  readonly supersededAt: string;
+  /** Run id of the correction run applying the recovery. */
+  readonly supersededByRunId: string;
+}
+
+/**
+ * Atomically supersedes the active final receipt and resets the recovery target.
+ *
+ * Archives the exact old receipt, clears active approval, sets nonterminal
+ * pipeline fields, and resets the inferred onFail target plus downstream to
+ * pending while preserving all prior history, attempts, regressions, and
+ * economics. The normalized reason is persisted on the reset target findings.
+ *
+ * @param state - Durable done state with an active final scope receipt.
+ * @param orderedStageIds - Compiled stage ids in execution order.
+ * @param request - Recovery identity and transition timestamps.
+ *
+ * @returns Frozen correction state; no executor start precedes the save.
+ *
+ * @throws RangeError When the active receipt is absent or fails the compare-and-swap.
+ *
+ * @example
+ * ```ts
+ * applyTerminalCorrection(state, stageIds, request);
+ * ```
+ */
+export const applyTerminalCorrection = (
+  state: PipelineState,
+  orderedStageIds: readonly string[],
+  request: TerminalCorrectionTransitionRequest,
+): PipelineState => {
+  const receipt = state.finalScopeReceipt;
+  if (receipt === undefined) {
+    throw new RangeError("Terminal recovery requires an active final scope receipt to supersede.");
+  }
+  if (receipt.runId !== request.expectedReceiptRunId) {
+    throw new RangeError(
+      `Terminal recovery expected receipt run id "${request.expectedReceiptRunId}" but the active receipt is "${receipt.runId}".`,
+    );
+  }
+  const archived: SupersededFinalScopeReceipt = Object.freeze({
+    version: 1,
+    sequence: (state.supersededFinalScopeReceipts?.length ?? 0) + 1,
+    kind: request.kind,
+    supersededAt: request.supersededAt,
+    supersededByRunId: request.supersededByRunId,
+    expectedReceiptRunId: request.expectedReceiptRunId,
+    reason: request.reason,
+    resetTargetStageId: request.resetTargetStageId,
+    finalScopeReceipt: receipt,
+    ...persistedRunDefIdentity(state),
+  });
+  const reset = resetStageAndDownstream(state, orderedStageIds, {
+    stageId: request.resetTargetStageId,
+    findings: [request.reason],
+  });
+  return cloneFrozenState({
+    ...reset,
+    runnerFeatureVersion: RUNNER_FEATURE_VERSION,
+    supersededFinalScopeReceipts: Object.freeze([
+      ...(state.supersededFinalScopeReceipts ?? Object.freeze([])),
+      archived,
+    ]),
+  });
+};
+
+const persistedRunDefIdentity = (state: PipelineState): Pick<PipelineState, "runDefIdentity"> =>
+  state.runDefIdentity === undefined ? {} : { runDefIdentity: state.runDefIdentity };
 
 /** Clears stale scope approval and consumes one regression before rerun. */
 export const invalidateReviewApproval = (

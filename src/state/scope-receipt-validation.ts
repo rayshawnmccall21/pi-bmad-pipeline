@@ -101,7 +101,8 @@ const qualityStage = (
  * @param qualityGate - Candidate final-scope quality receipt.
  * @param stages - Candidate durable stage record.
  *
- * @returns Whether stage id, attempt, status, and finish time all correlate.
+ * @returns Whether stage id, attempt, status, and finish time all correlate
+ * and the stage is currently passed at its latest attempt.
  *
  * @example
  * ```ts
@@ -120,4 +121,35 @@ export function qualityGateMatchesDurableStage(qualityGate: unknown, stages: unk
     stage["finishedAt"] === correlated.qualityGate["finishedAt"],
     historyMatches(stage["history"], correlated.qualityGate),
   ].every(Boolean);
+}
+
+/**
+ * Checks that a receipt names an exact passed attempt in durable history.
+ *
+ * Unlike {@link qualityGateMatchesDurableStage}, this correlation does not
+ * require the quality stage to remain currently passed or at its latest
+ * attempt; it validates archived evidence whose stage was later reset by a
+ * terminal recovery.
+ *
+ * @param qualityGate - Candidate archived quality receipt.
+ * @param stages - Candidate durable stage record.
+ *
+ * @returns Whether some durable attempt matches stage id, attempt, status,
+ * and finish time exactly.
+ *
+ * @example
+ * ```ts
+ * qualityGateMatchesDurableAttemptHistory(receipt.qualityGate, state.stages);
+ * ```
+ */
+export function qualityGateMatchesDurableAttemptHistory(
+  qualityGate: unknown,
+  stages: unknown,
+): boolean {
+  const correlated = qualityStage(qualityGate, stages);
+  return (
+    correlated !== undefined &&
+    isRecord(correlated.stage) &&
+    historyMatches(correlated.stage["history"], correlated.qualityGate)
+  );
 }

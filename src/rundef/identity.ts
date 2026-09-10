@@ -18,6 +18,32 @@ export function computeRunDefDigest(runDef: RunDef): string {
   return createHash("sha256").update(canonicalJson(runDef)).digest("hex");
 }
 
+/**
+ * Compares canonical RunDefs while ignoring only stage timeout fields.
+ *
+ * @param left - Previously persisted RunDef identity.
+ * @param right - Active discovered RunDef.
+ *
+ * @returns True when every canonical field except stage timeouts is byte-equal.
+ *
+ * @example
+ * ```ts
+ * runDefsEqualExceptStageTimeouts(previous, current);
+ * ```
+ */
+export function runDefsEqualExceptStageTimeouts(left: RunDef, right: RunDef): boolean {
+  return canonicalJson(withoutStageTimeouts(left)) === canonicalJson(withoutStageTimeouts(right));
+}
+
+const withoutStageTimeouts = (runDef: RunDef): unknown => ({
+  ...runDef,
+  stages: runDef.stages.map((stage) => {
+    const withoutTimeout: Record<string, unknown> = { ...stage };
+    Reflect.deleteProperty(withoutTimeout, "timeout");
+    return withoutTimeout;
+  }),
+});
+
 const canonicalJson = (value: unknown): string => JSON.stringify(canonicalValue(value));
 
 const canonicalValue = (value: unknown): unknown => {
