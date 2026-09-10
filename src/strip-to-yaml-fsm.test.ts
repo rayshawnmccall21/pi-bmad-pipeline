@@ -125,6 +125,8 @@ describe("YAML-only pipeline surface", () => {
         "Commands:",
         "  run <rundef-id> [--story-id ID] [--spec-file PATH] [--project-root DIR]",
         "      [--model NAME] [--thinking EFFORT] [--max-regressions N] [--jsonl]",
+        "      [--terminal-recovery-kind KIND] [--expected-receipt-run-id RUN_ID]",
+        "      [--recovery-reason REASON]",
         "  help | version",
       ].join("\n"),
     );

@@ -15,7 +15,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { createGitScopeAttestor } from "./git-scope-attestor.js";
+import { createGitScopeAttestor, readGitHeadOid } from "./git-scope-attestor.js";
 import { executeStages, preparePipeline } from "./run-pipeline-execution.js";
 import {
   emitMinimalResult,
@@ -23,8 +23,17 @@ import {
   settleFsmFailure,
   finishAction,
 } from "./run-pipeline-settlement.js";
-import { runPipelineStages, type RunBudget, type ScopeAttestor } from "../core/index.js";
+import {
+  EXPECTED_RECEIPT_RUN_ID_MAX_CHARS,
+  TERMINAL_RECOVERY_KIND,
+  normalizeTerminalRecoveryReason,
+  runPipelineStages,
+  type RunBudget,
+  type ScopeAttestor,
+  type TerminalRecoveryRequest,
+} from "../core/index.js";
 import { errorMessage } from "../core/runner-evaluation.js";
+
 import {
   createPipelineEventEmitter,
   type PipelineEventEmitter,
@@ -47,7 +56,6 @@ import {
   savePipelineState,
   type RunResult,
 } from "../state/index.js";
-
 /** Stable error code emitted when the per-story dispatch lock is held. */
 export const LOCK_HELD_ERROR_CODE = "lock-held" as const;
 
@@ -95,6 +103,9 @@ export interface RunPipelineActionDeps {
   /** Attests trusted Git scope before review and terminal transitions. */
   readonly attestScope: ScopeAttestor;
 
+  /** Reads the exact worktree HEAD for terminal-recovery eligibility. */
+  readonly readGitHead: (projectRoot: string) => Promise<string>;
+
   /** Runs compiled stages to a terminal outcome. */
   readonly runStages: typeof runPipelineStages;
 
@@ -130,6 +141,9 @@ export interface RunPipelineActionRequest {
 
   /** Optional aggregate run budget forwarded to the FSM. */
   readonly runBudget?: RunBudget;
+
+  /** Optional terminal semantic recovery forwarded to the locked FSM. */
+  readonly terminalRecovery?: TerminalRecoveryRequest;
 
   /** Optional abort signal forwarded to stage execution. */
   readonly signal?: AbortSignal;
@@ -177,6 +191,7 @@ export const defaultRunPipelineActionDeps: RunPipelineActionDeps = Object.freeze
   createExecutor: (options: CreateStageExecutorOptions): WorkflowExecutor =>
     new StageExecutorDispatcher(new PiCliWorkflowExecutor(options), new LocalCodeExecutor()),
   attestScope: createGitScopeAttestor(),
+  readGitHead: readGitHeadOid,
   runStages: runPipelineStages,
   createRunId: (): string => randomUUID(),
 } satisfies RunPipelineActionDeps);
@@ -202,7 +217,8 @@ export const defaultRunPipelineActionDeps: RunPipelineActionDeps = Object.freeze
  */
 export async function runPipelineAction(request: RunPipelineActionRequest): Promise<RunResult> {
   validateActionRequest(request);
-  const context = createActionContext(request);
+  const normalizedRequest = normalizeTerminalRecovery(request);
+  const context = createActionContext(normalizedRequest);
   const lock = await context.deps.acquireLock({
     projectRoot: request.projectRoot,
     storyId: request.storyId,
@@ -232,7 +248,39 @@ const validateActionRequest = (request: RunPipelineActionRequest): void => {
       throw new RangeError(`${field} must not be blank.`);
     }
   }
+  if (request.terminalRecovery !== undefined) {
+    validateTerminalRecovery(request.terminalRecovery);
+  }
 };
+
+const validateTerminalRecovery = (recovery: TerminalRecoveryRequest): void => {
+  const kind: string = recovery.kind;
+  if (kind !== TERMINAL_RECOVERY_KIND) {
+    throw new RangeError(`terminalRecovery.kind must be "${TERMINAL_RECOVERY_KIND}".`);
+  }
+  const expectedReceiptRunId = recovery.expectedReceiptRunId.trim();
+  if (expectedReceiptRunId.length === 0) {
+    throw new RangeError("terminalRecovery.expectedReceiptRunId must not be blank.");
+  }
+  if (Array.from(expectedReceiptRunId).length > EXPECTED_RECEIPT_RUN_ID_MAX_CHARS) {
+    throw new RangeError(
+      `terminalRecovery.expectedReceiptRunId must be at most ${String(EXPECTED_RECEIPT_RUN_ID_MAX_CHARS)} characters.`,
+    );
+  }
+  normalizeTerminalRecoveryReason(recovery.reason);
+};
+
+const normalizeTerminalRecovery = (request: RunPipelineActionRequest): RunPipelineActionRequest =>
+  request.terminalRecovery === undefined
+    ? request
+    : Object.freeze({
+        ...request,
+        terminalRecovery: Object.freeze({
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: request.terminalRecovery.expectedReceiptRunId.trim(),
+          reason: normalizeTerminalRecoveryReason(request.terminalRecovery.reason),
+        }),
+      });
 
 const createActionContext = (request: RunPipelineActionRequest): PipelineActionContext => {
   const now = request.now ?? defaultNow;

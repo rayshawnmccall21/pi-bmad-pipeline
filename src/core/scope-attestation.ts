@@ -2,6 +2,7 @@
 /** Trusted repository-scope attestation adapter for the durable FSM. */
 
 import { errorMessage } from "./runner-evaluation.js";
+import { findStageById } from "./routing.js";
 import { attachFinalScopeReceipt, attachReviewCheckpoint } from "./runner-transitions.js";
 
 import type { CompiledStageDef } from "../rundef/index.js";
@@ -411,6 +412,39 @@ const hasCompleteReviewIdentity = (
   Number.isInteger(stage.attempts) &&
   stage.attempts > 0 &&
   stage.finishedAt !== null;
+
+/**
+ * Infers the terminal-recovery reset target from a final scope receipt.
+ *
+ * Requires the receipt quality stage to be exactly one compiled code-review
+ * stage whose configured onFail target exists earlier in the pipeline. The
+ * caller never selects the reset stage.
+ *
+ * @param stages - Compiled stages in execution order.
+ * @param receipt - Active final scope receipt.
+ *
+ * @returns The earlier onFail target stage id, or undefined when ambiguous.
+ *
+ * @example
+ * ```ts
+ * inferTerminalCorrectionResetTarget(stages, receipt);
+ * ```
+ */
+export const inferTerminalCorrectionResetTarget = (
+  stages: readonly CompiledStageDef[],
+  receipt: FinalScopeReceipt,
+): string | undefined => {
+  const review = findStageById(stages, receipt.qualityGate.stageId);
+  if (review === undefined || !isCodeReviewStage(review)) {
+    return undefined;
+  }
+  const onFail = review.onFail;
+  if (onFail === undefined) {
+    return undefined;
+  }
+  const target = findStageById(stages, onFail);
+  return target !== undefined && target.index < review.index ? target.id : undefined;
+};
 
 export const isCodeReviewStage = (stage: CompiledStageDef): boolean =>
   stage.kind === "agent" && stage.payloadGateName?.startsWith("code-review") === true;

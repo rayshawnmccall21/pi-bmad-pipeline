@@ -60,6 +60,15 @@ describe("headless JSONL parser", () => {
     expect(snapshot.output).toEqual({ emoji: "🙂" });
   });
 
+  it("preserves a UTF-16 surrogate pair split across string chunks", () => {
+    const parser = createHeadlessJsonlParser();
+
+    parser.push('{"emoji":"\uD83D');
+    const snapshot = parser.push('\uDE42"}\n');
+
+    expect(snapshot.output).toEqual({ emoji: "\uD83D\uDE42" });
+  });
+
   it("records invalid JSON as an issue and continues", () => {
     const snapshot = parse('{bad}\n{"ok":true}\n');
 
@@ -67,6 +76,24 @@ describe("headless JSONL parser", () => {
     expect(snapshot.issues).toHaveLength(1);
     expect(snapshot.issues[0]?.line).toBe(1);
     expect(snapshot.issues[0]?.text).toBe("{bad}");
+  });
+
+  it("bounds invalid previews and continues past overlong uninteresting lines", () => {
+    const longTransientLine = JSON.stringify({
+      type: "message_update",
+      content: "x".repeat(500_001),
+    });
+    const snapshot = parse(
+      `${"x".repeat(1_001)}\n{"first":true}\n${longTransientLine}\n{"second":true}\n`,
+    );
+
+    expect(snapshot.issues).toHaveLength(1);
+    expect(snapshot.issues[0]?.line).toBe(1);
+    expect(snapshot.issues[0]?.text).toHaveLength(1_000);
+    expect(snapshot.records).toEqual([
+      { line: 2, value: { first: true } },
+      { line: 4, value: { second: true } },
+    ]);
   });
 
   it("parses the final unterminated buffered line on finish", () => {
@@ -85,6 +112,17 @@ describe("headless JSONL parser", () => {
 
     expect(snapshot.complete).toBe(false);
     expect(snapshot.records).toEqual([{ line: 1, value: { ok: true } }]);
+  });
+
+  it("discards transient streaming message_update records to prevent OOM", () => {
+    const stream =
+      '{"type":"message_start"}\n{"type":"message_update","content":"chunk"}\n{"type":"message_end"}\n';
+    const result = parse(stream);
+
+    expect(result.records).toEqual([
+      { line: 1, value: { type: "message_start" } },
+      { line: 3, value: { type: "message_end" } },
+    ]);
   });
 
   it("finish is idempotent", () => {

@@ -18,13 +18,20 @@ import {
 } from "../rundef/index.js";
 import { createInitialPipelineState, type PipelineState } from "../state/index.js";
 
+import { createStageObserver } from "./run-pipeline-settlement.js";
+import {
+  assertRecoveryStateNeedsNoReconciliation,
+  assertResumeIdentity,
+  withActiveRunDefIdentity,
+  type StartingStateInput,
+} from "./run-pipeline-identity.js";
 import type { PipelineActionContext, RunPipelineActionRequest } from "./run-pipeline-action.js";
-import type {
-  PipelineStageFinishInfo,
-  PipelineStageObserver,
-  RunPipelineStagesResult,
+import {
+  TERMINAL_RECOVERY_REJECTED_CODE,
+  type RunBudget,
+  type RunPipelineStagesResult,
+  type TerminalRecoveryRequest,
 } from "../core/index.js";
-import type { PipelineEventEmitter } from "../events/index.js";
 import type { WorkflowExecutor } from "../executors/index.js";
 import type {
   ModelConfigCandidate,
@@ -84,6 +91,7 @@ export const preparePipeline = async (
     model,
     runDefId: selection.id,
     runDefDigest: computeRunDefDigest(selection.runDef),
+    runDef: selection.runDef,
   });
   const executor = deps.createExecutor({
     model: model.model,
@@ -91,6 +99,27 @@ export const preparePipeline = async (
     ...envPiBin(request.env),
   });
   return Object.freeze({ stages: selection.stages, model, state, executor });
+};
+
+const forwardedStageOptions = (
+  context: PipelineActionContext,
+): {
+  readonly maxRegressions?: number;
+  readonly runBudget?: RunBudget;
+  readonly terminalRecovery?: TerminalRecoveryRequest;
+  readonly readTerminalCorrectionHead: (projectRoot: string) => Promise<string>;
+  readonly signal?: AbortSignal;
+} => {
+  const { deps, request } = context;
+  return {
+    ...(request.maxRegressions === undefined ? {} : { maxRegressions: request.maxRegressions }),
+    ...(request.runBudget === undefined ? {} : { runBudget: request.runBudget }),
+    ...(request.terminalRecovery === undefined
+      ? {}
+      : { terminalRecovery: request.terminalRecovery }),
+    readTerminalCorrectionHead: deps.readGitHead,
+    ...(request.signal === undefined ? {} : { signal: request.signal }),
+  };
 };
 
 /**
@@ -125,9 +154,7 @@ export const executeStages = (
     saveState: async (state) => {
       await deps.saveState(request.projectRoot, state);
     },
-    ...(request.maxRegressions === undefined ? {} : { maxRegressions: request.maxRegressions }),
-    ...(request.runBudget === undefined ? {} : { runBudget: request.runBudget }),
-    ...(request.signal === undefined ? {} : { signal: request.signal }),
+    ...forwardedStageOptions(context),
     now: context.now,
     observer: createStageObserver(context.emitter),
   });
@@ -156,95 +183,69 @@ const envPiBin = (
   return value !== undefined && value.trim().length > 0 ? { piBin: value } : {};
 };
 
-interface StartingStateInput {
-  readonly loaded: PipelineState | undefined;
-  readonly stages: readonly CompiledStageDef[];
-  readonly model: ResolvedModelConfig;
-  readonly runDefId: string;
-  readonly runDefDigest: string;
-}
+const resolveRecoveryState = (
+  context: PipelineActionContext,
+  input: StartingStateInput,
+): PipelineState => {
+  if (input.loaded === undefined) {
+    throw Object.assign(
+      new Error(
+        "Terminal recovery requires an existing done state with an active final receipt; no state file was found.",
+      ),
+      { code: TERMINAL_RECOVERY_REJECTED_CODE },
+    );
+  }
+  assertResumeIdentity(input.loaded, context.request, input);
+  assertRecoveryStateNeedsNoReconciliation(context, input, input.loaded);
+  return withActiveRunDefIdentity(input.loaded, input);
+};
+
+const resolveInitialState = async (
+  context: PipelineActionContext,
+  input: StartingStateInput,
+): Promise<PipelineState> => {
+  const initial = createInitialPipelineState({
+    storyId: context.request.storyId,
+    runDefId: input.runDefId,
+    runDefDigest: input.runDefDigest,
+    specFile: context.request.specFile,
+    stages: input.stages,
+    model: input.model.model,
+    thinking: input.model.thinking,
+    startedAt: context.startedAtIso,
+  });
+  await context.deps.saveState(context.request.projectRoot, initial);
+  return initial;
+};
+
+const resolveReconciledResumeState = async (
+  context: PipelineActionContext,
+  input: StartingStateInput,
+  loaded: PipelineState,
+): Promise<PipelineState> => {
+  assertResumeIdentity(loaded, context.request, input);
+  const stateToReconcile =
+    loaded.runDefDigest !== input.runDefDigest ? withActiveRunDefIdentity(loaded, input) : loaded;
+  const reconciled = context.deps.reconcileState({
+    state: stateToReconcile,
+    stages: input.stages,
+    now: context.now,
+  });
+  if (reconciled.changed || stateToReconcile !== loaded) {
+    await context.deps.saveState(context.request.projectRoot, reconciled.state);
+  }
+  return reconciled.state;
+};
 
 const resolveStartingState = async (
   context: PipelineActionContext,
   input: StartingStateInput,
 ): Promise<PipelineState> => {
-  const { deps, request } = context;
+  if (context.request.terminalRecovery !== undefined) {
+    return resolveRecoveryState(context, input);
+  }
   if (input.loaded === undefined) {
-    const initial = createInitialPipelineState({
-      storyId: request.storyId,
-      runDefId: input.runDefId,
-      runDefDigest: input.runDefDigest,
-      specFile: request.specFile,
-      stages: input.stages,
-      model: input.model.model,
-      thinking: input.model.thinking,
-      startedAt: context.startedAtIso,
-    });
-    await deps.saveState(request.projectRoot, initial);
-    return initial;
+    return resolveInitialState(context, input);
   }
-  assertResumeIdentity(input.loaded, request, input);
-  const reconciled = deps.reconcileState({
-    state: input.loaded,
-    stages: input.stages,
-    now: context.now,
-  });
-  if (reconciled.changed) {
-    await deps.saveState(request.projectRoot, reconciled.state);
-  }
-  return reconciled.state;
-};
-
-const assertResumeIdentity = (
-  loaded: PipelineState,
-  request: RunPipelineActionRequest,
-  input: StartingStateInput,
-): void => {
-  const matches = [
-    loaded.storyId === request.storyId,
-    loaded.runDefId === input.runDefId,
-    loaded.runDefDigest === input.runDefDigest,
-    loaded.specFile === request.specFile,
-    loaded.model === input.model.model,
-    loaded.thinking === input.model.thinking,
-  ].every(Boolean);
-  if (!matches) {
-    throw Object.assign(
-      new Error("Loaded state RunDef identity or run configuration does not match the active run."),
-      {
-        code: "state-identity-mismatch",
-      },
-    );
-  }
-};
-
-const createStageObserver = (emitter: PipelineEventEmitter): PipelineStageObserver =>
-  Object.freeze({
-    onStageStarted: (info): void => {
-      emitter.emit("stage.started", { stageId: info.stage.id, attempt: info.attempt });
-    },
-    onStageFinished: (info): void => {
-      emitStageFinished(emitter, info);
-    },
-  } satisfies PipelineStageObserver);
-
-const emitStageFinished = (emitter: PipelineEventEmitter, info: PipelineStageFinishInfo): void => {
-  emitter.emit("stage.finished", {
-    stageId: info.stage.id,
-    attempt: info.attempt,
-    kind: info.decision.kind,
-    passed: info.decision.passed,
-    exitCode: info.execution.exitCode,
-    durationMs: info.execution.durationMs,
-    reason: info.decision.reason,
-  });
-  if (info.stage.kind === "agent" && info.stage.payloadGateName !== undefined) {
-    emitter.emit("gate.decision", {
-      stageId: info.stage.id,
-      gate: info.stage.payloadGateName,
-      passed: info.decision.passed,
-      reason: info.decision.reason,
-      findings: info.decision.findings ?? [],
-    });
-  }
+  return resolveReconciledResumeState(context, input, input.loaded);
 };

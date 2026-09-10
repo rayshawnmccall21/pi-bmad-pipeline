@@ -76,6 +76,17 @@ const createRunEventSink = (jsonl: boolean, stdout: PipelineEventSink): Pipeline
         },
       });
 
+const forwardedRunOptions = (command: CliRunCommand): object => ({
+  ...(command.model === undefined ? {} : { model: command.model }),
+  ...(command.thinking === undefined ? {} : { thinking: command.thinking }),
+  ...(command.maxRegressions === undefined ? {} : { maxRegressions: command.maxRegressions }),
+});
+
+const forwardedRecoveryOptions = (command: CliRunCommand, deps: RunCliDeps): object => ({
+  ...(command.terminalRecovery === undefined ? {} : { terminalRecovery: command.terminalRecovery }),
+  ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+});
+
 const executeRun = async (command: CliRunCommand, deps: RunCliDeps): Promise<number> => {
   const result = await deps.runPipeline({
     rundefId: command.rundefId,
@@ -84,10 +95,8 @@ const executeRun = async (command: CliRunCommand, deps: RunCliDeps): Promise<num
     projectRoot: command.projectRoot ?? deps.cwd(),
     env: deps.env,
     sink: createRunEventSink(command.jsonl, deps.stdout),
-    ...(command.model === undefined ? {} : { model: command.model }),
-    ...(command.thinking === undefined ? {} : { thinking: command.thinking }),
-    ...(command.maxRegressions === undefined ? {} : { maxRegressions: command.maxRegressions }),
-    ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+    ...forwardedRunOptions(command),
+    ...forwardedRecoveryOptions(command, deps),
   });
   return runStatusExitCode(result.status);
 };

@@ -36,7 +36,8 @@ export type PipelineRunFailureCode =
   | "executor-error"
   | "scope-attestation-failed"
   | "stage-budget-exceeded"
-  | "run-budget-exceeded";
+  | "run-budget-exceeded"
+  | "terminal-recovery-rejected";
 
 /** Typed terminal failure attached to a non-done FSM run result. */
 export interface PipelineRunFailure {

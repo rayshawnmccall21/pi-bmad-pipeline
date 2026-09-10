@@ -49,7 +49,9 @@ setInterval(() => {}, 1000);
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "ignore" });
-fs.writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify({ parentPid: process.pid, descendantPid: child.pid }));
+const marker = JSON.stringify({ parentPid: process.pid, descendantPid: child.pid });
+fs.writeFileSync(${JSON.stringify(markerPath)}, marker.slice(0, -1));
+setTimeout(() => fs.writeFileSync(${JSON.stringify(markerPath)}, marker), 100);
 process.on("SIGTERM", () => {});
 setInterval(() => {}, 1000);
 `;
@@ -68,7 +70,11 @@ const waitForProcessTree = async (markerPath: string): Promise<ProcessTreeMarker
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     if (existsSync(markerPath)) {
-      return JSON.parse(readFileSync(markerPath, "utf8")) as ProcessTreeMarker;
+      try {
+        return JSON.parse(readFileSync(markerPath, "utf8")) as ProcessTreeMarker;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
     }
     await delay(processPollMs);
   }

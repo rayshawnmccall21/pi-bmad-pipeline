@@ -1,7 +1,12 @@
 /** Public state subsystem exports. */
 
 export {
+  EXPECTED_RECEIPT_RUN_ID_MAX_CHARS,
+  RECEIPT_INTRODUCED_FEATURE_VERSION,
   RUNNER_FEATURE_VERSION,
+  TERMINAL_RECOVERY_KIND,
+  TERMINAL_RECOVERY_REASON_MAX_BYTES,
+  TERMINAL_RECOVERY_REJECTED_CODE,
   createEmptyRunEconomicsSummary,
   createInitialPipelineState,
   createInitialStageState,
@@ -26,6 +31,8 @@ export type {
   StageState,
   StageStatus,
   StageUsage,
+  SupersededFinalScopeReceipt,
+  TerminalRecoveryKind,
 } from "./pipeline-state.js";
 
 export {

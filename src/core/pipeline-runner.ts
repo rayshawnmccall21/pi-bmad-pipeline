@@ -13,6 +13,8 @@
  * @packageDocumentation
  */
 
+import { isDeepStrictEqual } from "node:util";
+
 import { findStageById, type StageRouteDecision } from "./routing.js";
 import {
   errorMessage,
@@ -27,28 +29,45 @@ import {
   accumulateEconomics,
   applyExecutorError,
   applyStageOutcome,
+  applyTerminalCorrection,
   cloneFrozenState,
   finalizeState,
   invalidateReviewApproval,
   markStageRunning,
   resetReviewAndDownstream,
   stageStateOf,
+  type TerminalCorrectionTransitionRequest,
 } from "./runner-transitions.js";
 import {
   finalScopeFailureStageId,
+  inferTerminalCorrectionResetTarget,
   isCodeReviewStage,
   persistFinalScopeAttestation,
   persistPassedReviewAttestation,
+  type ScopeAttestationResult,
   type ScopeAttestor,
 } from "./scope-attestation.js";
 import { getPipelineStateInvalidReason } from "../state/fs-state-validation.js";
 import {
-  RUNNER_FEATURE_VERSION,
+  EXPECTED_RECEIPT_RUN_ID_MAX_CHARS,
+  RECEIPT_INTRODUCED_FEATURE_VERSION,
+  TERMINAL_RECOVERY_KIND,
+  TERMINAL_RECOVERY_REASON_MAX_BYTES,
+  TERMINAL_RECOVERY_REJECTED_CODE,
   getFirstIncompleteStageId,
   isTerminalPipelineStatus,
+  reconcilePipelineState,
+  type FinalScopeReceipt,
   type PipelineState,
 } from "../state/index.js";
 import { createStageHandoff } from "../security/stage-handoff.js";
+import { redactText } from "../security/index.js";
+
+export {
+  TERMINAL_RECOVERY_KIND,
+  TERMINAL_RECOVERY_REASON_MAX_BYTES,
+  TERMINAL_RECOVERY_REJECTED_CODE,
+};
 
 import type { RunBudget } from "./budgets.js";
 import type { StageDecision } from "./stage-decision.js";
@@ -63,6 +82,50 @@ export type {
 
 /** Default number of gate-triggered regressions allowed before failing closed. */
 export const DEFAULT_MAX_REGRESSIONS = 3;
+
+/** Terminal semantic recovery request accepted by the locked FSM. */
+export interface TerminalRecoveryRequest {
+  /** Recovery kind literal. */
+  readonly kind: "supersede-contract-invalid-candidate";
+
+  /** Expected active final receipt run id (compare-and-swap identity). */
+  readonly expectedReceiptRunId: string;
+
+  /** Normalized, redacted, bounded recovery reason. */
+  readonly reason: string;
+}
+
+/**
+ * Normalizes a terminal recovery reason for durable persistence.
+ *
+ * Trims surrounding whitespace, redacts credential material, and enforces the
+ * shared UTF-8 byte cap. Normalization is deterministic so crash retries match
+ * the archived reason exactly.
+ *
+ * @param reason - Raw caller-supplied recovery reason.
+ *
+ * @returns Normalized, redacted, bounded reason.
+ *
+ * @throws RangeError When the reason is blank or exceeds the byte cap.
+ *
+ * @example
+ * ```ts
+ * normalizeTerminalRecoveryReason("  contract defect  ");
+ * ```
+ */
+export const normalizeTerminalRecoveryReason = (reason: string): string => {
+  const trimmed = reason.trim();
+  if (trimmed.length === 0) {
+    throw new RangeError("Terminal recovery reason must not be blank.");
+  }
+  const redacted = redactText(trimmed).value;
+  if (Buffer.byteLength(redacted, "utf8") > TERMINAL_RECOVERY_REASON_MAX_BYTES) {
+    throw new RangeError(
+      `Terminal recovery reason exceeds ${String(TERMINAL_RECOVERY_REASON_MAX_BYTES)} UTF-8 bytes.`,
+    );
+  }
+  return redacted;
+};
 
 /** Info passed to the observer when a stage attempt starts. */
 export interface PipelineStageStartInfo {
@@ -135,6 +198,12 @@ export interface RunPipelineStagesRequest {
   /** Optional aggregate run budget ceiling. */
   readonly runBudget?: RunBudget;
 
+  /** Optional terminal semantic recovery applied atomically before stage selection. */
+  readonly terminalRecovery?: TerminalRecoveryRequest;
+
+  /** Optional worktree HEAD reader used to verify terminal-recovery eligibility. */
+  readonly readTerminalCorrectionHead?: (projectRoot: string) => Promise<string>;
+
   /** Optional abort signal checked before each stage spawn. */
   readonly signal?: AbortSignal;
 
@@ -175,7 +244,11 @@ interface RunContext {
 interface RunOutcome {
   readonly status: PipelineRunStatus;
   readonly failure?: PipelineRunFailure;
+  /** Explicit terminal state reported without persisting a transition, if any. */
+  readonly terminalState?: PipelineState;
 }
+
+type CorrectionStep = Record<string, never> | { readonly outcome: RunOutcome };
 
 type StageStep =
   | { readonly kind: "advance"; readonly next: CompiledStageDef | null }
@@ -209,6 +282,40 @@ export async function runPipelineStages(
   return finalizeRun(context, outcome);
 }
 
+const validateTerminalRecoveryRequest = (
+  recovery: TerminalRecoveryRequest,
+  readHead: ((projectRoot: string) => Promise<string>) | undefined,
+): void => {
+  validateExpectedReceiptRunId(recovery.expectedReceiptRunId);
+  validateRecoveryKind(recovery.kind);
+  if (normalizeTerminalRecoveryReason(recovery.reason) !== recovery.reason) {
+    throw new RangeError("terminalRecovery.reason must already be normalized.");
+  }
+  if (readHead === undefined) {
+    throw new RangeError(
+      "readTerminalCorrectionHead is required when terminalRecovery is requested.",
+    );
+  }
+};
+
+const validateRecoveryKind = (kind: string): void => {
+  if (kind !== TERMINAL_RECOVERY_KIND) {
+    throw new RangeError(`terminalRecovery.kind must be "${TERMINAL_RECOVERY_KIND}".`);
+  }
+};
+
+const validateExpectedReceiptRunId = (expectedReceiptRunId: string): void => {
+  const trimmed = expectedReceiptRunId.trim();
+  if (trimmed.length === 0) {
+    throw new RangeError("terminalRecovery.expectedReceiptRunId must not be blank.");
+  }
+  if (Array.from(trimmed).length > EXPECTED_RECEIPT_RUN_ID_MAX_CHARS) {
+    throw new RangeError(
+      `terminalRecovery.expectedReceiptRunId must be at most ${String(EXPECTED_RECEIPT_RUN_ID_MAX_CHARS)} characters.`,
+    );
+  }
+};
+
 const validateRunRequest = (request: RunPipelineStagesRequest): void => {
   if (request.stages.length === 0) {
     throw new RangeError("stages must not be empty.");
@@ -216,6 +323,9 @@ const validateRunRequest = (request: RunPipelineStagesRequest): void => {
   const max = request.maxRegressions;
   if (max !== undefined && (!Number.isInteger(max) || max < 0)) {
     throw new RangeError("maxRegressions must be a non-negative integer.");
+  }
+  if (request.terminalRecovery !== undefined) {
+    validateTerminalRecoveryRequest(request.terminalRecovery, request.readTerminalCorrectionHead);
   }
 };
 
@@ -230,15 +340,213 @@ const createRunContext = (request: RunPipelineStagesRequest): RunContext => ({
 
 const runLoop = async (context: RunContext): Promise<RunOutcome> => {
   const stages = context.request.stages;
+  const correctionStep = await maybeApplyTerminalCorrection(context);
+  if ("outcome" in correctionStep) {
+    return correctionStep.outcome;
+  }
   await persistLegacyReviewRecovery(context);
   let stage = stageForId(stages, getFirstIncompleteStageId(context.state, stages));
   while (true) {
-    const step =
-      stage === null ? await runFinalScopeStep(context) : await runStageStep(context, stage);
+    const step = await runOneStep(context, stage);
     if (step.kind === "outcome") {
       return step.outcome;
     }
     stage = step.next;
+  }
+};
+
+const runOneStep = (context: RunContext, stage: CompiledStageDef | null): Promise<StageStep> =>
+  stage === null ? runFinalScopeStep(context) : runStageStep(context, stage);
+
+const maybeApplyTerminalCorrection = async (context: RunContext): Promise<CorrectionStep> => {
+  const recovery = context.request.terminalRecovery;
+  if (recovery === undefined) {
+    return {};
+  }
+  if (
+    [
+      matchesTailSupersededReceipt(context.state, recovery),
+      recoveryInProgressState(context.state),
+      !hasActiveScopeAuthority(context.state),
+    ].every(Boolean)
+  ) {
+    // Idempotent crash retry: the correction already applied; resume normally.
+    return {};
+  }
+  const eligibility = await terminalCorrectionEligibility(context, recovery);
+  if (eligibility.kind === "reject") {
+    return rejectCorrection(context, eligibility.reason);
+  }
+  const transitionRequest: TerminalCorrectionTransitionRequest = {
+    kind: recovery.kind,
+    expectedReceiptRunId: recovery.expectedReceiptRunId,
+    reason: recovery.reason,
+    resetTargetStageId: eligibility.resetTargetStageId,
+    supersededAt: isoTime(context),
+    supersededByRunId: context.request.runId,
+  };
+  await transition(
+    context,
+    applyTerminalCorrection(
+      context.state,
+      context.request.stages.map(({ id }) => id),
+      transitionRequest,
+    ),
+  );
+  return {};
+};
+
+type CorrectionEligibility =
+  | { readonly kind: "apply"; readonly resetTargetStageId: string }
+  | { readonly kind: "reject"; readonly reason: string };
+
+const activeDoneReceipt = (state: PipelineState): FinalScopeReceipt | undefined =>
+  state.status === "done" &&
+  state.reviewCheckpoint !== undefined &&
+  state.finalScopeReceipt !== undefined
+    ? state.finalScopeReceipt
+    : undefined;
+
+const terminalCorrectionEligibility = async (
+  context: RunContext,
+  recovery: TerminalRecoveryRequest,
+): Promise<CorrectionEligibility> => {
+  if (terminalStateReconciliationChanged(context)) {
+    return rejectEligibility(
+      "Terminal recovery requires a coherent done state that needs no reconciliation.",
+    );
+  }
+  const receipt = activeDoneReceipt(context.state);
+  if (receipt === undefined) {
+    return rejectEligibility(
+      "Terminal recovery requires a done state with an active review checkpoint and final receipt.",
+    );
+  }
+  if (receipt.runId !== recovery.expectedReceiptRunId) {
+    return rejectEligibility(
+      `Terminal recovery expected receipt run id "${recovery.expectedReceiptRunId}" but the active final receipt is "${receipt.runId}".`,
+    );
+  }
+  return correctionScopeEligibility(context, receipt);
+};
+
+const terminalStateReconciliationChanged = (context: RunContext): boolean =>
+  context.state.status === "done" &&
+  reconcilePipelineState({
+    state: context.state,
+    stages: context.request.stages,
+    now: context.now,
+  }).changed;
+
+const correctionScopeEligibility = async (
+  context: RunContext,
+  receipt: FinalScopeReceipt,
+): Promise<CorrectionEligibility> => {
+  const resetTargetStageId = inferTerminalCorrectionResetTarget(context.request.stages, receipt);
+  if (resetTargetStageId === undefined) {
+    return rejectEligibility(
+      "Terminal recovery requires the receipt quality stage to name exactly one earlier code-review onFail target.",
+    );
+  }
+  const driftReason = await verifyCorrectionScope(context, receipt);
+  return driftReason === undefined
+    ? { kind: "apply", resetTargetStageId }
+    : rejectEligibility(driftReason);
+};
+
+const rejectEligibility = (reason: string): CorrectionEligibility =>
+  Object.freeze({ kind: "reject", reason });
+
+const rejectCorrection = (context: RunContext, reason: string): CorrectionStep => ({
+  outcome: {
+    status: "needs-attention",
+    failure: failureOf(
+      TERMINAL_RECOVERY_REJECTED_CODE,
+      reason,
+      context.state.reviewCheckpoint?.qualityGate.stageId ??
+        context.request.stages.at(-1)?.id ??
+        "pipeline",
+    ),
+    terminalState: context.state,
+  },
+});
+
+/**
+ * True when the state can be a correction run awaiting or retrying stage work.
+ *
+ * @param state - Durable pipeline state.
+ *
+ * @returns Whether recovery may resume from this status.
+ */
+const recoveryInProgressState = (state: PipelineState): boolean =>
+  state.status === "pending" ||
+  state.status === "running" ||
+  state.status === "failed" ||
+  state.status === "needs-attention";
+
+/**
+ * True when the state still carries durable scope approval to supersede.
+ *
+ * @param state - Durable pipeline state.
+ *
+ * @returns True when a review checkpoint or final scope receipt is active.
+ */
+const hasActiveScopeAuthority = (state: PipelineState): boolean =>
+  state.reviewCheckpoint !== undefined || state.finalScopeReceipt !== undefined;
+
+const matchesTailSupersededReceipt = (
+  state: PipelineState,
+  recovery: TerminalRecoveryRequest,
+): boolean =>
+  state.supersededFinalScopeReceipts?.at(-1)?.expectedReceiptRunId ===
+    recovery.expectedReceiptRunId &&
+  state.supersededFinalScopeReceipts?.at(-1)?.reason === recovery.reason;
+
+const observeCorrectionReceipt = async (
+  context: RunContext,
+  receipt: FinalScopeReceipt,
+): Promise<ScopeAttestationResult> =>
+  context.request.attestScope({
+    phase: "final",
+    projectRoot: context.request.projectRoot,
+    storyId: context.request.storyId,
+    runId: receipt.runId,
+    runDefId: context.state.runDefId,
+    runDefDigest: context.state.runDefDigest,
+    reviewCheckpoint: receipt,
+    qualityGate: receipt.qualityGate,
+  });
+
+const correctionScopeMatched = (observed: FinalScopeReceipt, receipt: FinalScopeReceipt): boolean =>
+  isDeepStrictEqual(observed, receipt);
+
+const verifyCorrectionHead = async (
+  context: RunContext,
+  receipt: FinalScopeReceipt,
+): Promise<string | undefined> => {
+  const headOid = await context.request.readTerminalCorrectionHead?.(context.request.projectRoot);
+  return headOid === receipt.baseOid
+    ? undefined
+    : "Terminal recovery rejected: feature HEAD is not at the receipt base; committed candidates need a separate landing protocol.";
+};
+
+const verifyCorrectionScope = async (
+  context: RunContext,
+  receipt: FinalScopeReceipt,
+): Promise<string | undefined> => {
+  try {
+    const result = await observeCorrectionReceipt(context, receipt);
+    if (result.kind !== "final-receipt") {
+      return result.kind === "rejected"
+        ? `Terminal recovery rejected by scope attestation: ${result.reason}`
+        : "Terminal recovery rejected: the reviewed scope changed after the final receipt.";
+    }
+    if (!correctionScopeMatched(result.receipt, receipt)) {
+      return "Terminal recovery rejected: current branch, base, or scope differs from the active final receipt.";
+    }
+    return await verifyCorrectionHead(context, receipt);
+  } catch (error) {
+    return `Terminal recovery rejected: scope verification failed: ${errorMessage(error)}`;
   }
 };
 
@@ -266,7 +574,7 @@ const legacyPassedReviewStageId = (context: RunContext): string | undefined =>
 
 const isRecoverableLegacyState = (state: PipelineState): boolean =>
   getPipelineStateInvalidReason(state) === undefined &&
-  state.runnerFeatureVersion < RUNNER_FEATURE_VERSION &&
+  state.runnerFeatureVersion < RECEIPT_INTRODUCED_FEATURE_VERSION &&
   !isTerminalPipelineStatus(state.status) &&
   state.reviewCheckpoint === undefined &&
   state.finalScopeReceipt === undefined;
@@ -451,6 +759,15 @@ const finalizeRun = async (
   context: RunContext,
   outcome: RunOutcome,
 ): Promise<RunPipelineStagesResult> => {
+  if (outcome.terminalState !== undefined) {
+    return Object.freeze({
+      state: outcome.terminalState,
+      status: outcome.status,
+      stagesRun: Object.freeze([...context.stagesRun]),
+      regressions: outcome.terminalState.regressions,
+      ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
+    });
+  }
   const terminal = finalizeState(context.state, outcome.status, isoTime(context));
   await transition(context, terminal);
   return Object.freeze({

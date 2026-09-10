@@ -13,7 +13,12 @@ import {
 
 import type { PipelineActionContext } from "./run-pipeline-action.js";
 import type { PreparedPipeline } from "./run-pipeline-execution.js";
-import type { RunPipelineStagesResult } from "../core/index.js";
+import type {
+  PipelineStageFinishInfo,
+  PipelineStageObserver,
+  RunPipelineStagesResult,
+} from "../core/index.js";
+import type { PipelineEventEmitter } from "../events/index.js";
 
 /** Action name recorded on run results. */
 export const RUN_PIPELINE_ACTION_NAME = "run" as const;
@@ -121,6 +126,44 @@ const emitResult = (context: PipelineActionContext, result: RunResult): void => 
     durationMs: result.durationMs,
     ...(result.error === undefined ? {} : { error: result.error }),
   });
+};
+
+/**
+ * Creates the stage lifecycle observer translating stage execution into CLI events.
+ *
+ * @param emitter - Action event emitter.
+ *
+ * @returns Frozen stage observer.
+ */
+export const createStageObserver = (emitter: PipelineEventEmitter): PipelineStageObserver =>
+  Object.freeze({
+    onStageStarted: (info): void => {
+      emitter.emit("stage.started", { stageId: info.stage.id, attempt: info.attempt });
+    },
+    onStageFinished: (info): void => {
+      emitStageFinished(emitter, info);
+    },
+  } satisfies PipelineStageObserver);
+
+const emitStageFinished = (emitter: PipelineEventEmitter, info: PipelineStageFinishInfo): void => {
+  emitter.emit("stage.finished", {
+    stageId: info.stage.id,
+    attempt: info.attempt,
+    kind: info.decision.kind,
+    passed: info.decision.passed,
+    exitCode: info.execution.exitCode,
+    durationMs: info.execution.durationMs,
+    reason: info.decision.reason,
+  });
+  if (info.stage.kind === "agent" && info.stage.payloadGateName !== undefined) {
+    emitter.emit("gate.decision", {
+      stageId: info.stage.id,
+      gate: info.stage.payloadGateName,
+      passed: info.decision.passed,
+      reason: info.decision.reason,
+      findings: info.decision.findings ?? [],
+    });
+  }
 };
 
 const elapsedMs = (context: PipelineActionContext): number =>

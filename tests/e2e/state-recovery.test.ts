@@ -11,7 +11,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { computeRunDefDigest, loadRunDefFile } from "../../src/rundef/index.js";
-import { createCanonicalRepositoryScope } from "../../src/security/final-scope-receipt.js";
+import {
+  createCanonicalRepositoryScope,
+  createFinalScopeReceipt,
+  createReviewScopeCheckpoint,
+} from "../../src/security/final-scope-receipt.js";
 import { createStageHandoff } from "../../src/security/stage-handoff.js";
 import { getPipelineStateInvalidReason } from "../../src/state/fs-state-validation.js";
 import {
@@ -372,7 +376,7 @@ describe("durable state, recovery, and concurrency", () => {
     expect(reviewStart).not.toHaveProperty("reviewCheckpoint");
 
     const docsStart = traces[1]!.state;
-    expect(docsStart.runnerFeatureVersion).toBe(2);
+    expect(docsStart.runnerFeatureVersion).toBe(RUNNER_FEATURE_VERSION);
     expect(docsStart.regressions).toBe(2);
     expect(docsStart.economics).toEqual(economics);
     expect(docsStart.reviewCheckpoint).toMatchObject({
@@ -392,7 +396,7 @@ describe("durable state, recovery, and concurrency", () => {
     ) as PipelineState;
     expect(finalState).toMatchObject({
       status: "done",
-      runnerFeatureVersion: 2,
+      runnerFeatureVersion: RUNNER_FEATURE_VERSION,
       regressions: 2,
       economics,
       storyId: seedState.storyId,
@@ -620,3 +624,472 @@ stages:
     expect(existsSync(statePath(root, "C4-STALE"))).toBe(true);
   });
 });
+
+const RECOVERY_PIPELINE = `
+id: create-story-dev-story-code-review-docs
+stages:
+  - id: dev-story
+    kind: agent
+    workflow: dev-story
+    agent: dev
+    timeout: 2400
+  - id: code-review
+    kind: agent
+    workflow: code-review
+    agent: dev
+    gate: code-review
+    onFail: dev-story
+    timeout: 2400
+  - id: docs
+    kind: agent
+    workflow: docs
+    agent: architect
+    timeout: 2400
+`;
+const RECOVERY_STORY_ID = "C8-TERMINAL-RECOVERY";
+const RECOVERY_PIPELINE_ID = "create-story-dev-story-code-review-docs";
+const SEED_RECEIPT_RUN_ID = "seed-run-1";
+const RECOVERY_REASON =
+  "Known contract defect: delivered payload counters diverge from the reviewed scope.";
+const RECOVERY_FLAGS = [
+  "--terminal-recovery-kind",
+  "supersede-contract-invalid-candidate",
+  "--expected-receipt-run-id",
+  SEED_RECEIPT_RUN_ID,
+  "--recovery-reason",
+  RECOVERY_REASON,
+];
+
+const seedRecoveryProject = async (root: string): Promise<PipelineState> => {
+  const pipelinePath = ".pi/bmad/pipelines/create-story-dev-story-code-review-docs.yaml";
+  const sourcePath = "src/contract.ts";
+  const readmePath = "README.md";
+  mkdirSync(join(root, "src"), { recursive: true });
+  const specContent = `# ${RECOVERY_STORY_ID}\n\nContract-critical story seeded after a bad landing.\n`;
+  const contractContent = 'export const contract = "invalid-version";\n';
+  const readmeContent = "# Recovery E2E\n";
+  writeFileSync(join(root, "spec.md"), specContent, "utf8");
+  writeFileSync(join(root, sourcePath), contractContent, "utf8");
+  writeFileSync(join(root, readmePath), readmeContent, "utf8");
+  writePipeline(root, RECOVERY_PIPELINE_ID, RECOVERY_PIPELINE);
+
+  const discovered = await loadRunDefFile(join(root, pipelinePath));
+  const runDefDigest = computeRunDefDigest(discovered.runDef);
+  const branch = runGit(root, ["symbolic-ref", "--short", "HEAD"]);
+  const baseOid = runGit(root, ["rev-parse", "HEAD"]);
+  const reviewedFiles = [
+    { path: pipelinePath, bytes: Buffer.from(RECOVERY_PIPELINE) },
+    { path: "spec.md", bytes: Buffer.from(specContent) },
+    { path: sourcePath, bytes: Buffer.from(contractContent) },
+  ];
+  const docsFiles = [{ path: readmePath, bytes: Buffer.from(readmeContent) }];
+  const qualityGate = {
+    stageId: "code-review",
+    attempt: 1,
+    status: "passed" as const,
+    finishedAt: PRIOR_TIME,
+  };
+  const checkpoint = createReviewScopeCheckpoint({
+    storyId: RECOVERY_STORY_ID,
+    runId: SEED_RECEIPT_RUN_ID,
+    runDefId: RECOVERY_PIPELINE_ID,
+    runDefDigest,
+    branch,
+    baseOid,
+    reviewedFiles,
+    qualityGate,
+  });
+  const receipt = createFinalScopeReceipt({
+    checkpoint,
+    comparison: {
+      kind: "attested",
+      docs: createCanonicalRepositoryScope(docsFiles),
+      finalWorkingTreeDigest: createCanonicalRepositoryScope([...reviewedFiles, ...docsFiles])
+        .digest,
+    },
+  });
+  const seedState: PipelineState = {
+    runnerFeatureVersion: 2,
+    storyId: RECOVERY_STORY_ID,
+    runDefId: RECOVERY_PIPELINE_ID,
+    runDefDigest,
+    specFile: "spec.md",
+    status: "done",
+    currentStage: null,
+    stages: {
+      "dev-story": passedStage("dev-story", 20),
+      "code-review": passedStage("code-review", 50),
+      docs: passedStage("docs", 10),
+    },
+    regressions: 0,
+    model: "gpt-5",
+    thinking: "low",
+    startedAt: PRIOR_TIME,
+    finishedAt: PRIOR_TIME,
+    economics: { tokens: 80, dollars: 8 },
+    reviewCheckpoint: checkpoint,
+    finalScopeReceipt: receipt,
+  };
+  expect(getPipelineStateInvalidReason(seedState)).toBeUndefined();
+  mkdirSync(join(root, ".pi", "pipeline", "state"), { recursive: true });
+  writeFileSync(statePath(root, RECOVERY_STORY_ID), `${JSON.stringify(seedState, null, 2)}\n`);
+  return seedState;
+};
+
+describe("terminal semantic recovery", () => {
+  it("supersedes the contract-invalid receipt and reruns dev-story, code-review, docs", async () => {
+    const root = makeProject();
+    const seedState = await seedRecoveryProject(root);
+    const tracePath = join(root, ".pi", "pipeline", "recovery-trace.jsonl");
+
+    const outcome = runCli(
+      root,
+      RECOVERY_PIPELINE_ID,
+      RECOVERY_STORY_ID,
+      {
+        E2E_STAGE_TRACE: tracePath,
+      },
+      RECOVERY_FLAGS,
+    );
+
+    expect(outcome.status, `${outcome.stdout}\n${outcome.stderr}`).toBe(0);
+    expect(singleResult(outcome)).toMatchObject({
+      status: "passed",
+      stagesRun: ["dev-story", "code-review", "docs"],
+      regressions: 0,
+    });
+    const traces = readFileSync(tracePath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as StageSpawnTrace);
+    expect(traces.map(({ workflow, attempt }) => ({ workflow, attempt }))).toEqual([
+      { workflow: "dev-story", attempt: 2 },
+      { workflow: "code-review", attempt: 2 },
+      { workflow: "docs", attempt: 2 },
+    ]);
+
+    const finalState = readRawState(root, RECOVERY_STORY_ID);
+    expect(getPipelineStateInvalidReason(finalState)).toBeUndefined();
+    expect(finalState).toMatchObject({
+      status: "done",
+      runnerFeatureVersion: 3,
+      regressions: 0,
+    });
+    const archive = finalState.supersededFinalScopeReceipts;
+    expect(archive).toHaveLength(1);
+    expect(archive?.[0]).toMatchObject({
+      version: 1,
+      sequence: 1,
+      kind: "supersede-contract-invalid-candidate",
+      expectedReceiptRunId: SEED_RECEIPT_RUN_ID,
+      reason: RECOVERY_REASON,
+      resetTargetStageId: "dev-story",
+      supersededByRunId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+      supersededAt: expect.any(String),
+    });
+    expect(archive?.[0]?.finalScopeReceipt).toEqual(seedState.finalScopeReceipt);
+    const activeReceipt = finalState.finalScopeReceipt;
+    expect(activeReceipt).toBeDefined();
+    expect(activeReceipt?.runId).not.toBe(SEED_RECEIPT_RUN_ID);
+    expect(activeReceipt?.qualityGate.attempt).toBe(2);
+    expect(activeReceipt?.reviewed).toEqual(seedState.reviewCheckpoint?.reviewed);
+    expect(finalState.stages["code-review"]?.attempts).toBe(2);
+    expect(finalState.stages["code-review"]?.history).toHaveLength(2);
+    expect(finalState.stages["code-review"]?.history[0]).toEqual(
+      seedState.stages["code-review"]?.history[0],
+    );
+    expect(finalState.economics).toEqual({ tokens: 80, dollars: 8 });
+  });
+
+  it("resumes after a crash between the correction save and a child spawn without duplicating history", async () => {
+    const root = makeProject();
+    await seedRecoveryProject(root);
+    const child = spawn(
+      "node",
+      [
+        builtCliPath,
+        "run",
+        RECOVERY_PIPELINE_ID,
+        "--story-id",
+        RECOVERY_STORY_ID,
+        "--spec-file",
+        "spec.md",
+        "--project-root",
+        root,
+        "--jsonl",
+        ...RECOVERY_FLAGS,
+      ],
+      {
+        cwd: projectRoot,
+        env: { ...process.env, ...baseEnv },
+        stdio: "ignore",
+      },
+    );
+    const exited = new Promise<void>((resolveExit) => child.on("close", () => resolveExit()));
+    const stateFile = statePath(root, RECOVERY_STORY_ID);
+    let observedArchive = false;
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      if (existsSync(stateFile)) {
+        const snapshot = JSON.parse(readFileSync(stateFile, "utf8")) as {
+          status: string;
+          supersededFinalScopeReceipts?: unknown[];
+        };
+        if ((snapshot.supersededFinalScopeReceipts?.length ?? 0) === 1) {
+          observedArchive = true;
+          break;
+        }
+      }
+      await new Promise((resolveSleep) => setTimeout(resolveSleep, 50));
+    }
+    expect(
+      observedArchive,
+      "crash-window test must observe the archive before killing the child",
+    ).toBe(true);
+    child.kill("SIGKILL");
+    await exited;
+
+    const rerun = runCli(root, RECOVERY_PIPELINE_ID, RECOVERY_STORY_ID, {}, RECOVERY_FLAGS);
+
+    expect(rerun.status, `${rerun.stdout}\n${rerun.stderr}`).toBe(0);
+    expect(singleResult(rerun)).toMatchObject({ status: "passed" });
+    const finalState = readRawState(root, RECOVERY_STORY_ID);
+    expect(finalState.status).toBe("done");
+    expect(finalState.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(finalState.supersededFinalScopeReceipts?.[0]?.expectedReceiptRunId).toBe(
+      SEED_RECEIPT_RUN_ID,
+    );
+  });
+
+  it("resumes after a corrected stage failure to a fresh receipt on the same request", async () => {
+    const root = makeProject();
+    await seedRecoveryProject(root);
+
+    const failing = runCli(
+      root,
+      RECOVERY_PIPELINE_ID,
+      RECOVERY_STORY_ID,
+      { E2E_EXIT: "1" },
+      RECOVERY_FLAGS,
+    );
+
+    expect(failing.status, `${failing.stdout}\n${failing.stderr}`).toBe(2);
+    expect(singleResult(failing)).toMatchObject({ status: "failed" });
+    const failedState = readRawState(root, RECOVERY_STORY_ID);
+    expect(failedState.status).toBe("failed");
+    expect(failedState.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(failedState.finalScopeReceipt).toBeUndefined();
+    expect(failedState.reviewCheckpoint).toBeUndefined();
+    expect(failedState.stages["dev-story"]?.attempts).toBe(2);
+
+    const resume = runCli(root, RECOVERY_PIPELINE_ID, RECOVERY_STORY_ID, {}, RECOVERY_FLAGS);
+
+    expect(resume.status, `${resume.stdout}\n${resume.stderr}`).toBe(0);
+    expect(singleResult(resume)).toMatchObject({
+      status: "passed",
+      stagesRun: ["dev-story", "code-review", "docs"],
+    });
+    const finalState = readRawState(root, RECOVERY_STORY_ID);
+    expect(getPipelineStateInvalidReason(finalState)).toBeUndefined();
+    expect(finalState.status).toBe("done");
+    expect(finalState.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(finalState.supersededFinalScopeReceipts?.[0]?.expectedReceiptRunId).toBe(
+      SEED_RECEIPT_RUN_ID,
+    );
+    expect(finalState.finalScopeReceipt).toBeDefined();
+    expect(finalState.finalScopeReceipt?.runId).not.toBe(SEED_RECEIPT_RUN_ID);
+    expect(finalState.finalScopeReceipt?.qualityGate.attempt).toBe(2);
+    expect(finalState.stages["dev-story"]?.attempts).toBe(3);
+  });
+
+  it("resumes a failed correction after only stage timeouts increase", async () => {
+    const root = makeProject();
+    const seedState = await seedRecoveryProject(root);
+
+    const failing = runCli(
+      root,
+      RECOVERY_PIPELINE_ID,
+      RECOVERY_STORY_ID,
+      { E2E_EXIT: "1" },
+      RECOVERY_FLAGS,
+    );
+    expect(failing.status, `${failing.stdout}\n${failing.stderr}`).toBe(2);
+    const failedState = readRawState(root, RECOVERY_STORY_ID);
+    expect(failedState.runDefIdentity).toBeDefined();
+    const legacyState = structuredClone(failedState);
+    for (const record of legacyState.supersededFinalScopeReceipts ?? []) {
+      Reflect.deleteProperty(record, "runDefIdentity");
+    }
+    expect(legacyState.supersededFinalScopeReceipts?.[0]).not.toHaveProperty("runDefIdentity");
+    expect(getPipelineStateInvalidReason(legacyState)).toBeUndefined();
+    writeFileSync(
+      statePath(root, RECOVERY_STORY_ID),
+      `${JSON.stringify(legacyState, null, 2)}\n`,
+      "utf8",
+    );
+
+    const bumpedPipeline = RECOVERY_PIPELINE.replaceAll("timeout: 2400", "timeout: 7200");
+    writePipeline(root, RECOVERY_PIPELINE_ID, bumpedPipeline);
+    const bumped = await loadRunDefFile(
+      join(root, ".pi/bmad/pipelines/create-story-dev-story-code-review-docs.yaml"),
+    );
+    const bumpedDigest = computeRunDefDigest(bumped.runDef);
+
+    const resume = runCli(root, RECOVERY_PIPELINE_ID, RECOVERY_STORY_ID, {}, RECOVERY_FLAGS);
+
+    expect(resume.status, `${resume.stdout}\n${resume.stderr}`).toBe(0);
+    expect(singleResult(resume)).toMatchObject({
+      status: "passed",
+      stagesRun: ["dev-story", "code-review", "docs"],
+    });
+    const finalState = readRawState(root, RECOVERY_STORY_ID);
+    expect(getPipelineStateInvalidReason(finalState)).toBeUndefined();
+    expect(finalState.runDefDigest).toBe(bumpedDigest);
+    expect(finalState.runDefDigest).not.toBe(seedState.runDefDigest);
+    expect(finalState.runDefIdentity).toEqual(bumped.runDef);
+    expect(finalState.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(finalState.supersededFinalScopeReceipts?.[0]?.finalScopeReceipt).toEqual(
+      seedState.finalScopeReceipt,
+    );
+    const archivedIdentity = finalState.supersededFinalScopeReceipts?.[0]?.runDefIdentity;
+    expect(archivedIdentity).toBeDefined();
+    expect(computeRunDefDigest(archivedIdentity!)).toBe(seedState.runDefDigest);
+    expect(finalState.finalScopeReceipt).toMatchObject({
+      runDefDigest: bumpedDigest,
+      qualityGate: { attempt: 2 },
+    });
+    expect(finalState.economics).toEqual(seedState.economics);
+    expect(finalState.regressions).toBe(seedState.regressions);
+  });
+
+  it("rejects a stale retry after a fresh terminal receipt without mutating state", async () => {
+    const root = makeProject();
+    const seedState = await seedRecoveryProject(root);
+    expect(runCli(root, RECOVERY_PIPELINE_ID, RECOVERY_STORY_ID, {}, RECOVERY_FLAGS).status).toBe(
+      0,
+    );
+    const stateBefore = readFileSync(statePath(root, RECOVERY_STORY_ID), "utf8");
+
+    const stale = runCli(root, RECOVERY_PIPELINE_ID, RECOVERY_STORY_ID, {}, RECOVERY_FLAGS);
+
+    expect(stale.status).toBe(2);
+    expect(singleResult(stale)).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringContaining('expected receipt run id "seed-run-1"'),
+    });
+    const stateAfter = readFileSync(statePath(root, RECOVERY_STORY_ID), "utf8");
+    expect(stateAfter).toBe(stateBefore);
+    const finalState = readRawState(root, RECOVERY_STORY_ID);
+    expect(finalState.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(finalState.finalScopeReceipt?.runId).not.toBe(SEED_RECEIPT_RUN_ID);
+    void seedState;
+  });
+
+  const assertUnchangedTerminal = (root: string): void => {
+    const finalState = readRawState(root, RECOVERY_STORY_ID);
+    expect(finalState.status).toBe("done");
+    expect(finalState.runnerFeatureVersion).toBe(2);
+    expect(finalState.finalScopeReceipt?.runId).toBe(SEED_RECEIPT_RUN_ID);
+    expect(finalState.supersededFinalScopeReceipts ?? []).toHaveLength(0);
+    expect(finalState.reviewCheckpoint?.runId).toBe(SEED_RECEIPT_RUN_ID);
+  };
+
+  it("rejects recovery when the current scope drifts from the receipt without any change", async () => {
+    const root = makeProject();
+    await seedRecoveryProject(root);
+    writeFileSync(
+      join(root, "src", "contract.ts"),
+      'export const contract = "editable";\n',
+      "utf8",
+    );
+
+    const outcome = runCli(root, RECOVERY_PIPELINE_ID, RECOVERY_STORY_ID, {}, RECOVERY_FLAGS);
+
+    expect(outcome.status).toBe(2);
+    expect(singleResult(outcome)).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringMatching(/reviewed scope changed|scope attestation/u),
+    });
+    assertUnchangedTerminal(root);
+  });
+
+  it("rejects recovery against a committed feature HEAD that differs from the receipt base", async () => {
+    const root = makeProject();
+    await seedRecoveryProject(root);
+    runGit(root, ["add", "--", "src/contract.ts", "spec.md", "README.md"]);
+    runGit(root, ["commit", "-m", "commit after the receipt"]);
+
+    const outcome = runCli(root, RECOVERY_PIPELINE_ID, RECOVERY_STORY_ID, {}, RECOVERY_FLAGS);
+
+    expect(outcome.status).toBe(2);
+    expect(singleResult(outcome)).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringMatching(
+        /feature HEAD is not at the receipt base|default refs are not synchronized/u,
+      ),
+    });
+    assertUnchangedTerminal(root);
+  });
+
+  it("rejects partial recovery option groups before spawning", async () => {
+    const root = makeProject();
+    await seedRecoveryProject(root);
+    const marker = spawnMarkerPath(root, "partial-recovery");
+
+    const outcome = runCli(root, RECOVERY_PIPELINE_ID, RECOVERY_STORY_ID, { E2E_MARKER: marker }, [
+      "--terminal-recovery-kind",
+      "supersede-contract-invalid-candidate",
+    ]);
+
+    expect(outcome.status).toBe(1);
+    expect(outcome.stderr).toContain("missing-required-option");
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(statePath(root, RECOVERY_STORY_ID))).toBe(true);
+  });
+
+  it("rejects recovery with no state file without creating or mutating one", async () => {
+    const root = makeProject();
+    writePipeline(root, RECOVERY_PIPELINE_ID, RECOVERY_PIPELINE);
+    const marker = spawnMarkerPath(root, "missing-state");
+    expect(existsSync(statePath(root, RECOVERY_STORY_ID))).toBe(false);
+
+    const outcome = runCli(root, RECOVERY_PIPELINE_ID, RECOVERY_STORY_ID, { E2E_MARKER: marker }, [
+      ...RECOVERY_FLAGS,
+    ]);
+
+    expect(outcome.status).toBe(2);
+    expect(singleResult(outcome)).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringMatching(/no state file was found/u),
+    });
+    expect(existsSync(statePath(root, RECOVERY_STORY_ID))).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("rejects recovery with the active receipt against reconciliation-needed done state unchanged", async () => {
+    const root = makeProject();
+    await seedRecoveryProject(root);
+    const stateFile = statePath(root, RECOVERY_STORY_ID);
+    const seeded = JSON.parse(readFileSync(stateFile, "utf8")) as PipelineState;
+    const needsReconcile = { ...seeded, currentStage: "code-review", finishedAt: null };
+    writeFileSync(stateFile, `${JSON.stringify(needsReconcile, null, 2)}\n`, "utf8");
+    const stateBefore = readFileSync(stateFile, "utf8");
+    const marker = spawnMarkerPath(root, "reconciliation-needed-recovery");
+
+    const outcome = runCli(
+      root,
+      RECOVERY_PIPELINE_ID,
+      RECOVERY_STORY_ID,
+      { E2E_MARKER: marker },
+      RECOVERY_FLAGS,
+    );
+
+    expect(outcome.status).toBe(2);
+    expect(singleResult(outcome)).toMatchObject({ status: "needs-attention" });
+    expect(readFileSync(stateFile, "utf8")).toBe(stateBefore);
+    expect(existsSync(marker)).toBe(false);
+  });
+});
+
+const readRawState = (root: string, storyId: string): PipelineState =>
+  JSON.parse(readFileSync(statePath(root, storyId), "utf8")) as PipelineState;

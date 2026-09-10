@@ -17,7 +17,11 @@ import {
   type RunPipelineStagesResult,
   type ScopeAttestor,
 } from "../core/index.js";
-import { StageExecutorDispatcher, type WorkflowExecutor } from "../executors/index.js";
+import {
+  StageExecutorDispatcher,
+  type StageExecutionRequest,
+  type WorkflowExecutor,
+} from "../executors/index.js";
 import { registerBmadPayloadGates } from "../gates/index.js";
 import { resolveModelConfig } from "../model/index.js";
 import {
@@ -25,7 +29,14 @@ import {
   payloadGateRegistry,
   selectAndCompileRunDef,
   type CompiledStageDef,
+  type RunDef,
 } from "../rundef/index.js";
+import {
+  createCanonicalRepositoryScope,
+  createFinalScopeReceipt,
+  createReviewScopeCheckpoint,
+} from "../security/final-scope-receipt.js";
+import { getPipelineStateInvalidReason } from "../state/fs-state-validation.js";
 import {
   acquireDispatchLock,
   createInitialPipelineState,
@@ -33,7 +44,10 @@ import {
   reconcilePipelineState,
   savePipelineState,
   type DispatchLock,
+  type FinalScopeReceipt,
   type PipelineState,
+  type ReviewScopeCheckpoint,
+  type StageState,
 } from "../state/index.js";
 
 const timestamp = "2026-08-05T00:00:00.000Z";
@@ -502,8 +516,856 @@ describe("runPipelineAction", () => {
     expect(defaultRunPipelineActionDeps.selectAndCompile).toBe(selectAndCompileRunDef);
     expect(defaultRunPipelineActionDeps.runStages).toBe(runPipelineStages);
     expect(defaultRunPipelineActionDeps.attestScope).toBeTypeOf("function");
+    expect(defaultRunPipelineActionDeps.readGitHead).toBeTypeOf("function");
     expect(
       defaultRunPipelineActionDeps.createExecutor({ model: "m", thinking: "medium" }),
     ).toBeInstanceOf(StageExecutorDispatcher);
+  });
+
+  it("forwards a normalized terminalRecovery into the locked FSM", async () => {
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({
+      loaded: recoveryDoneState(),
+      request: {
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: "ebeb8c17-0cb7-44dc-ae83-eabc4ac060eb",
+          reason: "  Contract defect: delivered payload counters diverge.  ",
+        },
+      },
+      deps: {
+        runStages,
+        selectAndCompile: async () => ({
+          id: RECOVERY_RUNDEF_ID,
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: RECOVERY_RUNDEF,
+          stages: recoveryStages(),
+        }),
+      },
+    });
+
+    await runPipelineAction(harness.request);
+
+    expect(runStages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: "ebeb8c17-0cb7-44dc-ae83-eabc4ac060eb",
+          reason: "Contract defect: delivered payload counters diverge.",
+        },
+        readTerminalCorrectionHead: expect.any(Function),
+      }),
+    );
+  });
+
+  it("redacts credential material from the normalized recovery reason", async () => {
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({
+      loaded: recoveryDoneState(),
+      request: {
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: "run-1",
+          reason: "Bearer sk-secret-token-1234567890 leaks into landing payloads",
+        },
+      },
+      deps: {
+        runStages,
+        selectAndCompile: async () => ({
+          id: RECOVERY_RUNDEF_ID,
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: RECOVERY_RUNDEF,
+          stages: recoveryStages(),
+        }),
+      },
+    });
+
+    await runPipelineAction(harness.request);
+
+    expect(runStages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminalRecovery: expect.objectContaining({
+          reason: expect.not.stringContaining("sk-secret-token-1234567890"),
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "blank reason",
+      {
+        kind: "supersede-contract-invalid-candidate",
+        expectedReceiptRunId: "run-1",
+        reason: "   ",
+      },
+    ],
+    [
+      "oversized reason",
+      {
+        kind: "supersede-contract-invalid-candidate",
+        expectedReceiptRunId: "run-1",
+        reason: "x".repeat(4096),
+      },
+    ],
+    [
+      "blank expected run id",
+      {
+        kind: "supersede-contract-invalid-candidate",
+        expectedReceiptRunId: "  ",
+        reason: "defect",
+      },
+    ],
+  ] as const)(
+    "rejects a terminalRecovery with %s before locking",
+    async (_name, terminalRecovery) => {
+      const harness = createHarness({ request: { terminalRecovery } });
+
+      await expect(runPipelineAction(harness.request)).rejects.toBeInstanceOf(RangeError);
+      expect(harness.calls).toEqual([]);
+    },
+  );
+
+  it("rejects an untyped unsupported recovery kind before locking or effects", async () => {
+    const harness = createHarness({
+      request: {
+        terminalRecovery: {
+          kind: "some-other-kind",
+          expectedReceiptRunId: "run-1",
+          reason: "defect",
+        } as never,
+      },
+    });
+
+    await expect(runPipelineAction(harness.request)).rejects.toBeInstanceOf(RangeError);
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("rejects an oversized untyped expected receipt run id before locking or effects", async () => {
+    const harness = createHarness({
+      request: {
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: "x".repeat(101),
+          reason: "defect",
+        } as never,
+      },
+    });
+
+    await expect(runPipelineAction(harness.request)).rejects.toBeInstanceOf(RangeError);
+    expect(harness.calls).toEqual([]);
+  });
+});
+
+const RECOVERY_RUNDEF_ID = "sdlc";
+const RECOVERY_RUNDEF: RunDef = {
+  id: RECOVERY_RUNDEF_ID,
+  stages: [
+    { id: "dev-story", kind: "agent", workflow: "dev-story", agent: "dev", timeout: 2400 },
+    {
+      id: "code-review",
+      kind: "agent",
+      workflow: "code-review",
+      agent: "dev",
+      gate: "code-review",
+      onFail: "dev-story",
+      timeout: 2400,
+    },
+    { id: "docs", kind: "agent", workflow: "docs", agent: "architect", timeout: 2400 },
+  ],
+};
+const RECOVERY_RUNDEF_DIGEST = computeRunDefDigest(RECOVERY_RUNDEF);
+const RECOVERY_BASE_OID = "a".repeat(40);
+const SEED_RECEIPT_RUN_ID = "seed-run-1";
+
+const recoveryStages = (): readonly CompiledStageDef[] => [
+  {
+    id: "dev-story",
+    kind: "agent",
+    workflow: "dev-story",
+    agent: "dev",
+    index: 0,
+    timeoutSeconds: 60,
+  },
+  {
+    id: "code-review",
+    kind: "agent",
+    workflow: "code-review",
+    agent: "dev",
+    index: 1,
+    timeoutSeconds: 60,
+    payloadGate: okGate,
+    payloadGateName: "code-review",
+    onFail: "dev-story",
+  },
+  { id: "docs", kind: "agent", workflow: "docs", agent: "architect", index: 2, timeoutSeconds: 60 },
+];
+
+const okGate = (payload: Record<string, unknown>) =>
+  payload["ok"] === true ? { passed: true } : { passed: false, reason: "gate rejected payload" };
+
+const recoveryCheckpoint = (): ReviewScopeCheckpoint =>
+  createReviewScopeCheckpoint({
+    storyId: "SH-1",
+    runId: SEED_RECEIPT_RUN_ID,
+    runDefId: RECOVERY_RUNDEF_ID,
+    runDefDigest: RECOVERY_RUNDEF_DIGEST,
+    branch: "main",
+    baseOid: RECOVERY_BASE_OID,
+    reviewedFiles: [{ path: "src/app.ts", bytes: new Uint8Array() }],
+    qualityGate: {
+      stageId: "code-review",
+      attempt: 1,
+      status: "passed",
+      finishedAt: timestamp,
+    },
+  });
+
+const recoveryReceipt = (): FinalScopeReceipt =>
+  createFinalScopeReceipt({
+    checkpoint: recoveryCheckpoint(),
+    comparison: {
+      kind: "attested",
+      docs: createCanonicalRepositoryScope([{ path: "README.md", bytes: new Uint8Array() }]),
+      finalWorkingTreeDigest: createCanonicalRepositoryScope([
+        { path: "src/app.ts", bytes: new Uint8Array() },
+        { path: "README.md", bytes: new Uint8Array() },
+      ]).digest,
+    },
+  });
+
+const passedRecoveryStage = (id: string): StageState =>
+  Object.freeze({
+    id,
+    status: "passed",
+    attempts: 1,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    history: Object.freeze([
+      Object.freeze({
+        attempt: 1,
+        status: "passed",
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        durationMs: 1,
+        exitCode: 0,
+        reason: "prior pass",
+      }),
+    ]),
+  });
+
+const recoveryDoneState = (overrides: Partial<PipelineState> = {}): PipelineState =>
+  Object.freeze({
+    storyId: "SH-1",
+    runDefId: RECOVERY_RUNDEF_ID,
+    runDefDigest: RECOVERY_RUNDEF_DIGEST,
+    specFile: "spec.md",
+    runnerFeatureVersion: 2,
+    status: "done",
+    currentStage: null,
+    stages: Object.freeze({
+      "dev-story": passedRecoveryStage("dev-story"),
+      "code-review": passedRecoveryStage("code-review"),
+      docs: passedRecoveryStage("docs"),
+    }),
+    regressions: 0,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    model: "gpt-5.5-pro",
+    thinking: "medium",
+    economics: Object.freeze({ tokens: 0, dollars: 0 }),
+    reviewCheckpoint: recoveryCheckpoint(),
+    finalScopeReceipt: recoveryReceipt(),
+    ...overrides,
+  });
+
+interface RecoveryHarnessResult {
+  readonly harness: Harness;
+  readonly spawns: readonly StageExecutionRequest[];
+}
+
+const createRecoveryHarness = (
+  overrides: {
+    readonly missingState?: boolean;
+    readonly loaded?: PipelineState;
+    readonly expectedReceiptRunId?: string;
+    readonly attestScope?: ScopeAttestor;
+    readonly readGitHead?: () => Promise<string>;
+  } = {},
+): RecoveryHarnessResult => {
+  const spawns: StageExecutionRequest[] = [];
+  const executor: WorkflowExecutor = {
+    id: "recovery-fake",
+    execute: (request) => {
+      spawns.push(request);
+      return Promise.reject(new Error("recovery should not spawn"));
+    },
+  };
+  const attestScope =
+    overrides.attestScope ??
+    vi.fn<ScopeAttestor>().mockResolvedValue({
+      kind: "final-receipt",
+      receipt: recoveryReceipt(),
+    });
+  const readGitHead = overrides.readGitHead ?? (async () => RECOVERY_BASE_OID);
+  const loaded =
+    overrides.missingState === true ? undefined : (overrides.loaded ?? recoveryDoneState());
+  const harness = createHarness({
+    ...(loaded === undefined ? {} : { loaded }),
+    request: {
+      terminalRecovery: {
+        kind: "supersede-contract-invalid-candidate",
+        expectedReceiptRunId: overrides.expectedReceiptRunId ?? SEED_RECEIPT_RUN_ID,
+        reason: "Contract defect: delivered payload counters diverge.",
+      },
+    },
+    deps: {
+      runStages: runPipelineStages,
+      createExecutor: () => executor,
+      attestScope,
+      readGitHead,
+      selectAndCompile: async () => ({
+        id: RECOVERY_RUNDEF_ID,
+        source: "discovered",
+        path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+        runDef: RECOVERY_RUNDEF,
+        stages: recoveryStages(),
+      }),
+    },
+  });
+  return { harness, spawns };
+};
+
+const TIMEOUT_BUMPED_RUNDEF: RunDef = {
+  ...RECOVERY_RUNDEF,
+  stages: RECOVERY_RUNDEF.stages.map((stage) => ({ ...stage, timeout: 7200 })),
+};
+const TIMEOUT_BUMPED_DIGEST = computeRunDefDigest(TIMEOUT_BUMPED_RUNDEF);
+
+const failedRecoveryState = (): PipelineState => {
+  const base = structuredClone(recoveryDoneState());
+  Reflect.deleteProperty(base, "reviewCheckpoint");
+  Reflect.deleteProperty(base, "finalScopeReceipt");
+  const failedAttempt = Object.freeze({
+    attempt: 2,
+    status: "failed" as const,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    durationMs: 1,
+    exitCode: 1,
+    reason: "prior correction failed",
+  });
+  const pending = (id: string): StageState => {
+    const previous = passedRecoveryStage(id);
+    return Object.freeze({
+      id,
+      status: "pending",
+      attempts: previous.attempts,
+      startedAt: null,
+      finishedAt: null,
+      history: previous.history,
+    });
+  };
+  const previousDev = passedRecoveryStage("dev-story");
+  return Object.freeze({
+    ...base,
+    runnerFeatureVersion: 3,
+    status: "failed",
+    currentStage: null,
+    finishedAt: timestamp,
+    stages: Object.freeze({
+      "dev-story": Object.freeze({
+        id: "dev-story",
+        status: "failed",
+        attempts: 2,
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        history: Object.freeze([...previousDev.history, failedAttempt]),
+        reason: failedAttempt.reason,
+      }),
+      "code-review": pending("code-review"),
+      docs: pending("docs"),
+    }),
+    runDefIdentity: RECOVERY_RUNDEF,
+    supersededFinalScopeReceipts: Object.freeze([
+      Object.freeze({
+        version: 1,
+        sequence: 1,
+        kind: "supersede-contract-invalid-candidate",
+        supersededAt: timestamp,
+        supersededByRunId: "correction-run-1",
+        expectedReceiptRunId: SEED_RECEIPT_RUN_ID,
+        reason: "Contract defect: delivered payload counters diverge.",
+        resetTargetStageId: "dev-story",
+        finalScopeReceipt: recoveryReceipt(),
+        runDefIdentity: RECOVERY_RUNDEF,
+      }),
+    ]),
+  });
+};
+
+const legacyFailedRecoveryState = (receiptDigest = RECOVERY_RUNDEF_DIGEST): PipelineState => {
+  const state = failedRecoveryState();
+  const archived = state.supersededFinalScopeReceipts?.[0];
+  if (archived === undefined) throw new Error("missing fixture archive");
+  const legacy = {
+    ...archived,
+    finalScopeReceipt: { ...archived.finalScopeReceipt, runDefDigest: receiptDigest },
+  };
+  Reflect.deleteProperty(legacy, "runDefIdentity");
+  return Object.freeze({
+    ...state,
+    supersededFinalScopeReceipts: Object.freeze([Object.freeze(legacy)]),
+  });
+};
+
+const rejectingInvalidSave = vi.fn(async (_root: string, state: PipelineState) => {
+  const reason = getPipelineStateInvalidReason(state);
+  if (reason !== undefined) throw Object.assign(new Error(reason), { code: "invalid-state" });
+  return "/state.json";
+});
+
+const successfulRecoveryAttestor = (): ScopeAttestor => async (request) => {
+  if (request.phase === "review") {
+    return {
+      kind: "review-checkpoint",
+      checkpoint: createReviewScopeCheckpoint({
+        storyId: request.storyId,
+        runId: request.runId,
+        runDefId: request.runDefId,
+        runDefDigest: request.runDefDigest,
+        branch: "main",
+        baseOid: RECOVERY_BASE_OID,
+        reviewedFiles: [{ path: "src/app.ts", bytes: new Uint8Array() }],
+        qualityGate: request.qualityGate,
+      }),
+    };
+  }
+  if (request.reviewCheckpoint === undefined) {
+    return { kind: "rejected", reason: "missing checkpoint" };
+  }
+  return {
+    kind: "final-receipt",
+    receipt: createFinalScopeReceipt({
+      checkpoint: request.reviewCheckpoint,
+      comparison: {
+        kind: "attested",
+        docs: createCanonicalRepositoryScope([{ path: "README.md", bytes: new Uint8Array() }]),
+        finalWorkingTreeDigest: createCanonicalRepositoryScope([
+          { path: "src/app.ts", bytes: new Uint8Array() },
+          { path: "README.md", bytes: new Uint8Array() },
+        ]).digest,
+      },
+    }),
+  };
+};
+
+const passingExecutor = (): WorkflowExecutor => ({
+  id: "recovery-success",
+  execute: async () => ({
+    output: { payload: { ok: true } },
+    exitCode: 0,
+    durationMs: 1,
+  }),
+});
+
+describe("terminal recovery timeout-only RunDef tolerance", () => {
+  it("backfills a matching legacy archive before the timeout-adoption first save", async () => {
+    const loaded = legacyFailedRecoveryState();
+    const harness = createHarness({
+      loaded,
+      request: {
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: SEED_RECEIPT_RUN_ID,
+          reason: "Contract defect: delivered payload counters diverge.",
+        },
+      },
+      deps: {
+        runStages: runPipelineStages,
+        createExecutor: passingExecutor,
+        attestScope: successfulRecoveryAttestor(),
+        selectAndCompile: async () => ({
+          id: RECOVERY_RUNDEF_ID,
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: TIMEOUT_BUMPED_RUNDEF,
+          stages: recoveryStages().map((stage) => ({ ...stage, timeoutSeconds: 7200 })),
+        }),
+      },
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({
+      status: "passed",
+      stagesRun: ["dev-story", "code-review", "docs"],
+    });
+    expect(harness.saves[0]).toMatchObject({
+      runDefDigest: TIMEOUT_BUMPED_DIGEST,
+      runDefIdentity: TIMEOUT_BUMPED_RUNDEF,
+      supersededFinalScopeReceipts: [{ runDefIdentity: RECOVERY_RUNDEF }],
+    });
+    const backfilled = harness.saves[0]?.supersededFinalScopeReceipts?.[0]?.runDefIdentity;
+    expect(computeRunDefDigest(backfilled!)).toBe(RECOVERY_RUNDEF_DIGEST);
+    expect(backfilled).not.toBe(loaded.runDefIdentity);
+    expect(backfilled?.stages).not.toBe(loaded.runDefIdentity?.stages);
+    expect(Object.isFrozen(backfilled)).toBe(true);
+    expect(Object.isFrozen(backfilled?.stages)).toBe(true);
+    expect(getPipelineStateInvalidReason(harness.saves[0])).toBeUndefined();
+    expect(new Set(harness.saves.map(({ runDefDigest }) => runDefDigest))).toEqual(
+      new Set([TIMEOUT_BUMPED_DIGEST]),
+    );
+    const final = harness.saves.at(-1);
+    expect(final?.finalScopeReceipt).toMatchObject({
+      runId: "run-1",
+      runDefDigest: TIMEOUT_BUMPED_DIGEST,
+    });
+    expect(final?.supersededFinalScopeReceipts?.[0]?.finalScopeReceipt).toEqual(
+      loaded.supersededFinalScopeReceipts?.[0]?.finalScopeReceipt,
+    );
+    expect(getPipelineStateInvalidReason(final)).toBeUndefined();
+    expect(final?.economics).toEqual(loaded.economics);
+    expect(final?.regressions).toBe(loaded.regressions);
+    expect(final?.stages["dev-story"]?.history.slice(0, 2)).toEqual(
+      loaded.stages["dev-story"]?.history,
+    );
+  });
+
+  it("leaves mismatched legacy archives unbackfilled so the adoption save fails closed", async () => {
+    rejectingInvalidSave.mockClear();
+    const loaded = legacyFailedRecoveryState("f".repeat(64));
+    const harness = createHarness({
+      loaded,
+      request: {
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: SEED_RECEIPT_RUN_ID,
+          reason: "Contract defect: delivered payload counters diverge.",
+        },
+      },
+      deps: {
+        saveState: rejectingInvalidSave,
+        runStages: runPipelineStages,
+        createExecutor: passingExecutor,
+        attestScope: successfulRecoveryAttestor(),
+        selectAndCompile: async () => ({
+          id: RECOVERY_RUNDEF_ID,
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: TIMEOUT_BUMPED_RUNDEF,
+          stages: recoveryStages().map((stage) => ({ ...stage, timeoutSeconds: 7200 })),
+        }),
+      },
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({ status: "needs-attention" });
+    expect(rejectingInvalidSave).toHaveBeenCalledTimes(1);
+    const rejected = rejectingInvalidSave.mock.calls[0]?.[1];
+    expect(rejected?.supersededFinalScopeReceipts?.[0]).not.toHaveProperty("runDefIdentity");
+  });
+
+  it("never overwrites an archive identity already present during adoption", async () => {
+    const loaded = failedRecoveryState();
+    const existing = loaded.supersededFinalScopeReceipts?.[0]?.runDefIdentity;
+    const runStages = vi.fn(async (request: RunPipelineStagesRequest) => ({
+      state: request.state,
+      status: "done" as const,
+      stagesRun: [],
+      regressions: request.state.regressions,
+    }));
+    const harness = createHarness({
+      loaded,
+      request: {
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: SEED_RECEIPT_RUN_ID,
+          reason: "Contract defect: delivered payload counters diverge.",
+        },
+      },
+      deps: {
+        runStages,
+        selectAndCompile: async () => ({
+          id: RECOVERY_RUNDEF_ID,
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: TIMEOUT_BUMPED_RUNDEF,
+          stages: recoveryStages().map((stage) => ({ ...stage, timeoutSeconds: 7200 })),
+        }),
+      },
+    });
+
+    await runPipelineAction(harness.request);
+
+    expect(
+      runStages.mock.calls[0]?.[0].state.supersededFinalScopeReceipts?.[0]?.runDefIdentity,
+    ).toBe(existing);
+  });
+
+  it("keeps rejecting gate/onFail changes on a tail-matching correction", async () => {
+    const changed: RunDef = {
+      ...TIMEOUT_BUMPED_RUNDEF,
+      stages: TIMEOUT_BUMPED_RUNDEF.stages.map((stage) =>
+        stage.id === "code-review" && stage.kind === "agent"
+          ? { ...stage, gate: "e2e-verify", onFail: "dev-story" }
+          : stage,
+      ),
+    };
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({
+      loaded: failedRecoveryState(),
+      request: {
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: SEED_RECEIPT_RUN_ID,
+          reason: "Contract defect: delivered payload counters diverge.",
+        },
+      },
+      deps: {
+        runStages,
+        selectAndCompile: async () => ({
+          id: RECOVERY_RUNDEF_ID,
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: changed,
+          stages: recoveryStages(),
+        }),
+      },
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringContaining("RunDef identity"),
+    });
+    expect(runStages).not.toHaveBeenCalled();
+    expect(harness.saves).toHaveLength(0);
+  });
+
+  it("keeps requiring an exact digest on the initial done recovery path", async () => {
+    const runStages = vi.fn(doneFsm);
+    const harness = createHarness({
+      loaded: recoveryDoneState(),
+      request: {
+        terminalRecovery: {
+          kind: "supersede-contract-invalid-candidate",
+          expectedReceiptRunId: SEED_RECEIPT_RUN_ID,
+          reason: "Contract defect: delivered payload counters diverge.",
+        },
+      },
+      deps: {
+        runStages,
+        selectAndCompile: async () => ({
+          id: RECOVERY_RUNDEF_ID,
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: TIMEOUT_BUMPED_RUNDEF,
+          stages: recoveryStages(),
+        }),
+      },
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringContaining("RunDef identity"),
+    });
+    expect(runStages).not.toHaveBeenCalled();
+    expect(harness.saves).toHaveLength(0);
+  });
+
+  it("rejects timeout-only RunDef drift on an ordinary resume without recovery flags", async () => {
+    const runStages = vi.fn(runPipelineStages);
+    const harness = createHarness({
+      loaded: failedRecoveryState(),
+      deps: {
+        runStages,
+        createExecutor: passingExecutor,
+        attestScope: successfulRecoveryAttestor(),
+        selectAndCompile: async () => ({
+          id: RECOVERY_RUNDEF_ID,
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: TIMEOUT_BUMPED_RUNDEF,
+          stages: recoveryStages().map((stage) => ({ ...stage, timeoutSeconds: 7200 })),
+        }),
+      },
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({
+      status: "needs-attention",
+      error: expect.stringContaining("RunDef identity"),
+    });
+    expect(runStages).not.toHaveBeenCalled();
+    expect(harness.saves).toHaveLength(0);
+  });
+
+  it.each(["paused", "needs-approval"] as const)(
+    "rejects timeout-only recovery drift from an ineligible %s state",
+    async (status) => {
+      const runStages = vi.fn(doneFsm);
+      const harness = createHarness({
+        loaded: { ...failedRecoveryState(), status },
+        request: {
+          terminalRecovery: {
+            kind: "supersede-contract-invalid-candidate",
+            expectedReceiptRunId: SEED_RECEIPT_RUN_ID,
+            reason: "Contract defect: delivered payload counters diverge.",
+          },
+        },
+        deps: {
+          runStages,
+          selectAndCompile: async () => ({
+            id: RECOVERY_RUNDEF_ID,
+            source: "discovered",
+            path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+            runDef: TIMEOUT_BUMPED_RUNDEF,
+            stages: recoveryStages().map((stage) => ({ ...stage, timeoutSeconds: 7200 })),
+          }),
+        },
+      });
+
+      const result = await runPipelineAction(harness.request);
+
+      expect(result).toMatchObject({
+        status: "needs-attention",
+        error: expect.stringContaining("RunDef identity"),
+      });
+      expect(runStages).not.toHaveBeenCalled();
+      expect(harness.saves).toHaveLength(0);
+    },
+  );
+
+  it("resumes an authority-free post-correction state without flags on the exact digest", async () => {
+    const harness = createHarness({
+      loaded: failedRecoveryState(),
+      deps: {
+        runStages: runPipelineStages,
+        createExecutor: passingExecutor,
+        attestScope: successfulRecoveryAttestor(),
+        selectAndCompile: async () => ({
+          id: RECOVERY_RUNDEF_ID,
+          source: "discovered",
+          path: "/root/.pi/bmad/pipelines/sdlc.yaml",
+          runDef: RECOVERY_RUNDEF,
+          stages: recoveryStages(),
+        }),
+      },
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({
+      status: "passed",
+      stagesRun: ["dev-story", "code-review", "docs"],
+    });
+    const final = harness.saves.at(-1);
+    expect(final?.status).toBe("done");
+    expect(final?.supersededFinalScopeReceipts).toHaveLength(1);
+    expect(final?.supersededFinalScopeReceipts?.[0]?.expectedReceiptRunId).toBe(
+      SEED_RECEIPT_RUN_ID,
+    );
+    expect(final?.finalScopeReceipt).toMatchObject({ runId: "run-1" });
+    expect(getPipelineStateInvalidReason(final)).toBeUndefined();
+  });
+});
+
+describe("recovery eligibility precedes any state write", () => {
+  it("rejects a missing state without initializing or saving", async () => {
+    const { harness } = createRecoveryHarness({ missingState: true });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({ status: "needs-attention" });
+    expect(result.error).toContain("no state file was found");
+    expect(harness.calls).not.toContain("save");
+    expect(harness.calls).not.toContain("fsm");
+  });
+
+  it("rejects a stale expected receipt run id without saving or spawning", async () => {
+    const { harness, spawns } = createRecoveryHarness({
+      expectedReceiptRunId: "stale-run-9",
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({ status: "needs-attention" });
+    expect(result.error).toContain('expected receipt run id "stale-run-9"');
+    expect(harness.saves).toHaveLength(0);
+    expect(spawns).toHaveLength(0);
+  });
+
+  it("rejects drift without saving or spawning", async () => {
+    const attestScope = vi.fn<ScopeAttestor>().mockResolvedValue({
+      kind: "rejected",
+      reason: "Git scope changed after the final receipt.",
+    });
+    const { harness, spawns } = createRecoveryHarness({ attestScope });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({ status: "needs-attention" });
+    expect(result.error).toMatch(/scope attestation|scope changed/u);
+    expect(harness.saves).toHaveLength(0);
+    expect(spawns).toHaveLength(0);
+  });
+
+  it("rejects a committed feature HEAD without saving or spawning", async () => {
+    const { harness, spawns } = createRecoveryHarness({
+      readGitHead: async () => "b".repeat(40),
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({ status: "needs-attention" });
+    expect(result.error).toMatch(/HEAD is not at the receipt base/u);
+    expect(harness.saves).toHaveLength(0);
+    expect(spawns).toHaveLength(0);
+  });
+
+  it("rejects a non-done state without saving or spawning", async () => {
+    const { harness, spawns } = createRecoveryHarness({
+      loaded: { ...recoveryDoneState(), status: "running" },
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({ status: "needs-attention" });
+    expect(result.error).toMatch(/requires a done state/u);
+    expect(harness.saves).toHaveLength(0);
+    expect(spawns).toHaveLength(0);
+  });
+
+  it("rejects reconciliation-needed state with the active receipt before any recovery effect", async () => {
+    const needsReconcile: PipelineState = {
+      ...recoveryDoneState(),
+      status: "done",
+      currentStage: "code-review",
+      finishedAt: null,
+    };
+    const attestScope = vi.fn<ScopeAttestor>();
+    const readGitHead = vi.fn(async () => RECOVERY_BASE_OID);
+    const { harness, spawns } = createRecoveryHarness({
+      loaded: needsReconcile,
+      attestScope,
+      readGitHead,
+    });
+
+    const result = await runPipelineAction(harness.request);
+
+    expect(result).toMatchObject({ status: "needs-attention" });
+    expect(harness.saves).toHaveLength(0);
+    expect(attestScope).not.toHaveBeenCalled();
+    expect(readGitHead).not.toHaveBeenCalled();
+    expect(harness.calls).not.toContain("executor");
+    expect(spawns).toHaveLength(0);
   });
 });
