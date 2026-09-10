@@ -11,10 +11,9 @@ description: >
   declare (the supervisor otherwise runs --no-extensions). Observability pool
   is a constant project label; per-story
   pooling needs supervisor ${storyId} interpolation (not yet implemented).
-  Every agent stage also loads pi-pi so the query_experts research team
-  (including the project pi-bmad and pi-bmad-pipeline experts) is available
-  mid-stage; pi-pi appends its experts note to the stage persona instead of
-  replacing it in headless runs.
+  Every agent stage also loads the packaged BMAD experts extension so the
+  bmad_query_experts research team is available mid-stage; the extension
+  appends its bounded roster note without replacing the workflow persona.
 stages:
   - id: create-story
     kind: agent
@@ -29,7 +28,7 @@ stages:
       - ~/.pi/agent/extensions/pi-observability/index.ts
       - npm:pi-subagents
       - npm:pi-mcp-adapter
-      - ~/.pi/agent/extensions/pi-pi.ts
+      - .pi/extensions/experts.ts
 
   - id: dev-story
     kind: agent
@@ -44,7 +43,7 @@ stages:
       - ~/.pi/agent/extensions/pi-observability/index.ts
       - npm:pi-subagents
       - npm:pi-mcp-adapter
-      - ~/.pi/agent/extensions/pi-pi.ts
+      - .pi/extensions/experts.ts
 
   - id: code-review
     kind: agent
@@ -62,7 +61,7 @@ stages:
       - ~/.pi/agent/extensions/pi-observability/index.ts
       - npm:pi-subagents
       - npm:pi-mcp-adapter
-      - ~/.pi/agent/extensions/pi-pi.ts
+      - .pi/extensions/experts.ts
 
   - id: docs
     kind: agent
@@ -78,4 +77,4 @@ stages:
       - ~/.pi/agent/extensions/pi-observability/index.ts
       - npm:pi-subagents
       - npm:pi-mcp-adapter
-      - ~/.pi/agent/extensions/pi-pi.ts
+      - .pi/extensions/experts.ts

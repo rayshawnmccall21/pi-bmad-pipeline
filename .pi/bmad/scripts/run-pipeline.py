@@ -76,6 +76,11 @@ CANONICAL_LINEAR_METADATA_FIELDS = (
     ("issue_identifier", ISSUE_IDENTIFIER_PREFIX),
     ("issue_url", ISSUE_URL_PREFIX),
 )
+CANONICAL_FREEFORM_METADATA_FIELDS = (
+    ("story_id", STORY_ID_PREFIX),
+    ("source_kind", SOURCE_KIND_PREFIX),
+    ("title", STORY_TITLE_PREFIX),
+)
 KNOWN_METADATA_FIELDS = dict(LEGACY_LINEAR_METADATA_FIELDS + CANONICAL_LINEAR_METADATA_FIELDS)
 
 
@@ -262,6 +267,8 @@ MAX_SAFE_INTEGER = 2**53 - 1
 EVENT_MAX_STRING_LENGTH = 1000
 EVENT_MAX_LIST_COUNT = 1000
 EVENT_MAX_RAW_LINE_BYTES = 1_000_000
+EVENT_MAX_DEPTH = 64
+EVENT_MAX_NODE_COUNT = 100_000
 DIAGNOSTIC_PREFIX = "📝 "
 
 
@@ -270,20 +277,38 @@ def bounded_diagnostic(line: str) -> str:
     return f"{DIAGNOSTIC_PREFIX}{line[:500 - len(DIAGNOSTIC_PREFIX)]}"
 
 
-def _bounded_event_value(value: object) -> object:
-    """Recursively truncate event containers so side effects stay bounded."""
+def _bounded_event_value(
+    value: object,
+    depth: int,
+    remaining_nodes: list[int],
+) -> object:
+    """Truncate one event value under explicit depth and node budgets."""
+    if depth > EVENT_MAX_DEPTH or remaining_nodes[0] <= 0:
+        raise ValueError("decoded event exceeds aggregate limits")
+    remaining_nodes[0] -= 1
     if isinstance(value, str):
         return value[:EVENT_MAX_STRING_LENGTH]
     if isinstance(value, list):
-        return [_bounded_event_value(item) for item in value[:EVENT_MAX_LIST_COUNT]]
+        return [
+            _bounded_event_value(item, depth + 1, remaining_nodes)
+            for item in value[:EVENT_MAX_LIST_COUNT]
+        ]
     if isinstance(value, dict):
-        return {key: _bounded_event_value(item) for key, item in value.items()}
+        return {
+            key[:EVENT_MAX_STRING_LENGTH] if isinstance(key, str) else key: _bounded_event_value(
+                item, depth + 1, remaining_nodes
+            )
+            for key, item in value.items()
+        }
     return value
 
 
 def bound_event(event: dict) -> dict:
-    """Bound every value of a decoded event before validation and handling."""
-    return {key: _bounded_event_value(value) for key, value in event.items()}
+    """Bound every value before validation under aggregate resource budgets."""
+    bounded = _bounded_event_value(event, 0, [EVENT_MAX_NODE_COUNT])
+    if not isinstance(bounded, dict):
+        raise ValueError("decoded event must be an object")
+    return bounded
 
 
 def is_attempt(value: object) -> bool:
@@ -306,7 +331,7 @@ def is_regressions(value: object) -> bool:
     return type(value) is int and 0 <= value <= MAX_SAFE_INTEGER
 
 
-def valid_event(event: object) -> bool:
+def valid_event(event: object, dispatched_story_id: str | None = None) -> bool:
     if not isinstance(event, dict) or not isinstance(event.get("event"), str):
         return False
 
@@ -367,19 +392,50 @@ def valid_event(event: object) -> bool:
         },
         "error": {"event", "ts", "storyId", "code", "message"},
     }
-    if not event.keys() <= allowed_keys.get(event_type, set()):
+    required_keys = {
+        "run.started": {"event", "ts", "storyId", "rundefId", "specFile"},
+        "stage.started": {"event", "ts", "storyId", "stageId", "attempt"},
+        "stage.finished": {
+            "event", "ts", "storyId", "stageId", "attempt", "kind", "passed",
+            "exitCode", "durationMs", "reason",
+        },
+        "gate.decision": {
+            "event", "ts", "storyId", "stageId", "gate", "passed", "reason", "findings",
+        },
+        "budget.decision": {"event", "ts", "storyId", "scope", "withinBudget", "reason"},
+        "progress": {"event", "ts", "storyId", "message"},
+        "result": {
+            "event", "ts", "storyId", "status", "stagesRun", "regressions", "durationMs",
+        },
+        "error": {"event", "ts", "storyId", "code", "message"},
+    }
+    if (
+        not required_keys.get(event_type, set()) <= event.keys()
+        or not event.keys() <= allowed_keys.get(event_type, set())
+        or not is_string(event.get("ts"))
+        or not is_string(event.get("storyId"))
+        or (
+            dispatched_story_id is not None
+            and event.get("storyId") != dispatched_story_id
+        )
+    ):
         return False
 
+    exit_code = event.get("exitCode")
     validators = {
         "run.started": lambda: is_string(event.get("rundefId"))
         and is_string(event.get("specFile")),
         "stage.started": lambda: is_string(event.get("stageId"))
         and is_attempt(event.get("attempt")),
         "stage.finished": lambda: is_string(event.get("stageId"))
+        and is_attempt(event.get("attempt"))
+        and is_string(event.get("kind"))
         and is_boolean(event.get("passed"))
+        and (exit_code is None or type(exit_code) is int)
         and is_duration(event.get("durationMs"))
         and is_string(event.get("reason")),
-        "gate.decision": lambda: is_string(event.get("gate"))
+        "gate.decision": lambda: is_string(event.get("stageId"))
+        and is_string(event.get("gate"))
         and is_boolean(event.get("passed"))
         and is_string(event.get("reason"))
         and is_string_list(event.get("findings")),
@@ -515,15 +571,27 @@ def _is_linear_issue_url(value: str, story_id: str) -> bool:
     )
 
 
-def _validate_linear_metadata(story_id: str, entries: list[tuple[str, str]]) -> None:
-    """Accept the legacy pair or pi-bmad's canonical Linear source metadata."""
+def _validate_story_metadata(story_id: str, entries: list[tuple[str, str]]) -> None:
+    """Accept the legacy pair or pi-bmad's canonical Linear/free-form metadata."""
     values = _metadata_values(entries, LEGACY_LINEAR_METADATA_FIELDS)
     if values is None:
         values = _metadata_values(entries, CANONICAL_LINEAR_METADATA_FIELDS)
         if values is None:
-            raise ValueError(
-                f"{STORY_SOURCE_INTAKE_PATH} metadata does not match an accepted schema"
-            )
+            values = _metadata_values(entries, CANONICAL_FREEFORM_METADATA_FIELDS)
+            if values is None:
+                raise ValueError(
+                    f"{STORY_SOURCE_INTAKE_PATH} metadata does not match an accepted schema"
+                )
+            if values["source_kind"] != "freeform":
+                raise ValueError(
+                    f"{STORY_SOURCE_INTAKE_PATH} canonical source kind must be freeform"
+                )
+            if values["story_id"] != story_id:
+                raise ValueError(
+                    f"story identity mismatch: intake is '{values['story_id'][:100]}', "
+                    f"dispatch is '{story_id[:100]}'"
+                )
+            return
         if values["source_kind"] != "linear-issue":
             raise ValueError(
                 f"{STORY_SOURCE_INTAKE_PATH} canonical source kind must be linear-issue"
@@ -572,7 +640,7 @@ def validate_story_source_intake(story_id: str, rundef: str) -> None:
         raise ValueError(f"{STORY_SOURCE_INTAKE_PATH} has invalid section order")
 
     entries = _parse_story_source_metadata(intake_lines[section_start + 1 : section_end])
-    _validate_linear_metadata(story_id, entries)
+    _validate_story_metadata(story_id, entries)
 
 
 def validate_story_id(story_id: str) -> str:
@@ -755,34 +823,68 @@ def main() -> int:
     start = time.monotonic()
     try:
         proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, env=env, text=True, bufsize=1)
+                                stderr=subprocess.STDOUT, env=env, text=False, bufsize=0)
     except OSError as exc:
         log(f"❌ Failed to start supervisor: {str(exc)[:450]}")
         return 127
     log(f"🏃 Pipeline PID: {proc.pid}")
 
     terminal_result_status: str | None = None
+    terminal_result_count = 0
+    terminal_result_is_last = False
+    pending_passed_result: dict | None = None
+    stream_failure_reported = False
     try:
         assert proc.stdout is not None
-        for line in proc.stdout:
-            if len(line.encode("utf-8")) > EVENT_MAX_RAW_LINE_BYTES:
-                log(bounded_diagnostic(line))
-                continue
-            line = line.strip()
-            if not line:
+        while True:
+            line_bytes = proc.stdout.readline(EVENT_MAX_RAW_LINE_BYTES + 1)
+            if not line_bytes:
+                break
+            if len(line_bytes) > EVENT_MAX_RAW_LINE_BYTES:
+                if terminal_result_count > 0:
+                    terminal_result_is_last = False
+                log(bounded_diagnostic("supervisor event exceeds raw byte limit"))
+                stream_failure_reported = True
+                while not line_bytes.endswith(b"\n"):
+                    line_bytes = proc.stdout.readline(EVENT_MAX_RAW_LINE_BYTES + 1)
+                    if not line_bytes:
+                        break
                 continue
             try:
-                event = json.loads(line)
-            except ValueError:
-                log(bounded_diagnostic(line))
+                line = line_bytes.decode("utf-8", errors="strict").strip()
+            except (UnicodeError, RecursionError):
+                if terminal_result_count > 0:
+                    terminal_result_is_last = False
+                log(bounded_diagnostic("invalid supervisor event encoding"))
+                stream_failure_reported = True
                 continue
-            if isinstance(event, dict):
-                event = bound_event(event)
-            if valid_event(event):
-                handle_event(event, args.story_id, issue_id, team_id)
-                terminal_result_status = event["status"] if event["event"] == "result" else None
+            if not line:
+                continue
+            if terminal_result_count > 0:
+                terminal_result_is_last = False
+            try:
+                event = json.loads(line)
+                if isinstance(event, dict):
+                    event = bound_event(event)
+            except (ValueError, UnicodeError, RecursionError):
+                log(bounded_diagnostic("invalid supervisor event"))
+                stream_failure_reported = True
+                continue
+            if valid_event(event, args.story_id):
+                if event["event"] == "result":
+                    terminal_result_count += 1
+                    terminal_result_status = event["status"]
+                    terminal_result_is_last = True
+                    if event["status"] == "passed":
+                        pending_passed_result = event
+                    else:
+                        pending_passed_result = None
+                        handle_event(event, args.story_id, issue_id, team_id)
+                else:
+                    handle_event(event, args.story_id, issue_id, team_id)
             else:
-                log(bounded_diagnostic(line))
+                log(bounded_diagnostic("invalid supervisor event"))
+                stream_failure_reported = True
     except KeyboardInterrupt:
         log("⏹️  Interrupted — terminating pipeline")
         proc.terminate()
@@ -795,9 +897,21 @@ def main() -> int:
     proc.wait()
     log(f"🏁 Exited code {proc.returncode} in {format_duration((time.monotonic() - start) * 1000)}")
 
-    if proc.returncode == 0 and terminal_result_status == "passed" and team_id:
-        update_status(issue_id, team_id, "Done")
-    if proc.returncode == 0 and terminal_result_status not in (None, "passed"):
+    successful_terminal_agreement = (
+        not stream_failure_reported
+        and proc.returncode == 0
+        and terminal_result_count == 1
+        and terminal_result_status == "passed"
+        and terminal_result_is_last
+    )
+    if successful_terminal_agreement and pending_passed_result is not None:
+        handle_event(pending_passed_result, args.story_id, issue_id, team_id)
+        if team_id:
+            update_status(issue_id, team_id, "Done")
+        return 0
+    if not stream_failure_reported:
+        log(bounded_diagnostic("supervisor result and exit status did not agree"))
+    if proc.returncode == 0:
         return 1
     return proc.returncode
 
