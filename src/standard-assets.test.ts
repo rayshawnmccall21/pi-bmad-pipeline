@@ -8,11 +8,11 @@ const projectRoot = resolve(import.meta.dirname, "..");
 const standardAssets = [
   [
     ".pi/bmad/scripts/run-pipeline.py",
-    "d698541121d53027e6dbf9fab17cbefa8cb3d42695862990dd687e7579b26632",
+    "73fbd8c7b2cfee2b8048c2c6328581042979f47a61b75d5d8d6cc9c0dcc34c3d",
   ],
   [
     ".pi/bmad/pipelines/create-story_dev-story_code-review_docs.yaml",
-    "3f76e1f234619d0ee2071f7418ac1a3aec72167589e77ba5b5bb9f72f730c8a9",
+    "40e230b79eb161d49d7abb6c28a96261b111c9fe25199f455c8a42d417000a15",
   ],
 ] as const;
 

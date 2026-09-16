@@ -590,12 +590,25 @@ const runFinalScopeStep = async (context: RunContext): Promise<StageStep> => {
       failureOf("scope-attestation-failed", finalScope.reason, finalScopeFailureStageId(context)),
     );
   }
-  return reviewInvalidationStep(context, finalScope.changedPaths);
+  return reviewInvalidationStep(context, finalScope);
 };
+
+type ReviewInvalidation =
+  | { readonly kind: "review-invalidated"; readonly changedPaths: readonly string[] }
+  | {
+      readonly kind: "review-base-stale";
+      readonly previousBaseOid: string;
+      readonly currentBaseOid: string;
+    };
+
+const reviewInvalidationReason = (invalidation: ReviewInvalidation): string =>
+  invalidation.kind === "review-invalidated"
+    ? `Reviewed scope changed after approval: ${invalidation.changedPaths.join(", ")}.`
+    : `Review base advanced from ${invalidation.previousBaseOid} to ${invalidation.currentBaseOid}.`;
 
 const reviewInvalidationStep = async (
   context: RunContext,
-  changedPaths: readonly string[],
+  invalidation: ReviewInvalidation,
 ): Promise<StageStep> => {
   const reviewStageId = context.state.reviewCheckpoint?.qualityGate.stageId;
   if (reviewStageId === undefined || context.state.regressions >= context.maxRegressions) {
@@ -603,7 +616,7 @@ const reviewInvalidationStep = async (
       "needs-attention",
       failureOf(
         "scope-attestation-failed",
-        `Reviewed scope changed after approval: ${changedPaths.join(", ")}.`,
+        reviewInvalidationReason(invalidation),
         reviewStageId ?? finalScopeFailureStageId(context),
       ),
     );

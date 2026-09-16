@@ -375,6 +375,14 @@ describe("STY-144 code review regressions", () => {
       async () => ({ kind: "final-receipt", receipt: receipt(checkpoint("run-new")) }),
     ],
     [
+      "stale-base result",
+      async () => ({
+        kind: "review-base-stale",
+        previousBaseOid: "a".repeat(40),
+        currentBaseOid: "b".repeat(40),
+      }),
+    ],
+    [
       "mismatched run identity",
       async (qualityGate: QualityGateReceipt) => ({
         kind: "review-checkpoint",
