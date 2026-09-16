@@ -345,6 +345,192 @@ describe("runPipelineStages", () => {
     expect(result.state.finalScopeReceipt).toEqual(refreshedReceipt);
   });
 
+  it("reroutes a safely stale review base through one persisted bounded invalidation", async () => {
+    const fixture = harness(receiptStages(), [okResult(), okResult()]);
+    const passedStages = Object.fromEntries(
+      Object.entries(fixture.request.state.stages).map(([stageId, stageState]) => [
+        stageId,
+        durablyPassedStage(stageState, 1, T0),
+      ]),
+    );
+    const staleState: PipelineState = {
+      ...fixture.request.state,
+      status: "running",
+      currentStage: null,
+      regressions: 1,
+      stages: passedStages,
+      reviewCheckpoint,
+      finalScopeReceipt,
+      economics: { tokens: 321, dollars: 4.56 },
+    };
+    const currentBaseOid = "c".repeat(40);
+    const refreshedCheckpoint: ReviewScopeCheckpoint = {
+      ...reviewCheckpoint,
+      baseOid: currentBaseOid,
+      reviewed: { paths: ["src/app.ts"], digest: digest("e") },
+      qualityGate: { ...reviewCheckpoint.qualityGate, attempt: 2 },
+    };
+    const refreshedReceipt: FinalScopeReceipt = {
+      ...finalScopeReceipt,
+      ...refreshedCheckpoint,
+      finalWorkingTreeDigest: digest("f"),
+    };
+    fixture.attestScope
+      .mockResolvedValueOnce({
+        kind: "review-base-stale",
+        previousBaseOid: reviewCheckpoint.baseOid,
+        currentBaseOid,
+      })
+      .mockResolvedValueOnce({ kind: "review-checkpoint", checkpoint: refreshedCheckpoint })
+      .mockResolvedValueOnce({ kind: "final-receipt", receipt: refreshedReceipt });
+
+    const result = await runPipelineStages({
+      ...fixture.request,
+      state: staleState,
+      maxRegressions: 5,
+    });
+
+    expect(result.status).toBe("done");
+    expect(result.regressions).toBe(2);
+    expect(result.stagesRun).toEqual(["code-review", "docs"]);
+    expect(fixture.executor.requests.map(({ stage: executedStage }) => executedStage.id)).toEqual([
+      "code-review",
+      "docs",
+    ]);
+    const invalidationSaveIndex = fixture.saves.findIndex(
+      (saved) => saved.regressions === 2 && saved.stages["code-review"]?.status === "pending",
+    );
+    const reviewStartSaveIndex = fixture.saves.findIndex(
+      (saved) =>
+        saved.currentStage === "code-review" && saved.stages["code-review"]?.status === "running",
+    );
+    expect(invalidationSaveIndex).toBeGreaterThanOrEqual(0);
+    expect(reviewStartSaveIndex).toBeGreaterThan(invalidationSaveIndex);
+    const invalidated = fixture.saves[invalidationSaveIndex];
+    expect(invalidated).not.toHaveProperty("reviewCheckpoint");
+    expect(invalidated).not.toHaveProperty("finalScopeReceipt");
+    expect(invalidated?.economics).toEqual(staleState.economics);
+    expect(invalidated?.stages["dev-story"]).toEqual(staleState.stages["dev-story"]);
+    expect(result.state.reviewCheckpoint).toEqual(refreshedCheckpoint);
+    expect(result.state.finalScopeReceipt).toEqual(refreshedReceipt);
+  });
+
+  it("fails closed on malformed or inconsistent stale-base attestor identities", async () => {
+    const fixture = harness(receiptStages(), []);
+    const staleState: PipelineState = {
+      ...fixture.request.state,
+      status: "running",
+      currentStage: null,
+      regressions: 1,
+      stages: Object.fromEntries(
+        Object.entries(fixture.request.state.stages).map(([stageId, stageState]) => [
+          stageId,
+          durablyPassedStage(stageState, 1, T0),
+        ]),
+      ),
+      reviewCheckpoint,
+      finalScopeReceipt,
+    };
+    fixture.attestScope.mockResolvedValueOnce({
+      kind: "review-base-stale",
+      previousBaseOid: "f".repeat(40),
+      currentBaseOid: "not-an-oid",
+    });
+
+    const result = await runPipelineStages({
+      ...fixture.request,
+      state: staleState,
+      maxRegressions: 5,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.failure).toMatchObject({
+      code: "scope-attestation-failed",
+      reason: "Final Git scope attestation returned an invalid stale-base result.",
+    });
+    expect(result.regressions).toBe(1);
+    expect(result.stagesRun).toEqual([]);
+    expect(fixture.executor.requests).toEqual([]);
+  });
+
+  it("does not reroute stale-base recovery after the regression budget is exhausted", async () => {
+    const fixture = harness(receiptStages(), []);
+    const staleState: PipelineState = {
+      ...fixture.request.state,
+      status: "running",
+      currentStage: null,
+      regressions: 5,
+      stages: Object.fromEntries(
+        Object.entries(fixture.request.state.stages).map(([stageId, stageState]) => [
+          stageId,
+          durablyPassedStage(stageState, 1, T0),
+        ]),
+      ),
+      reviewCheckpoint,
+      finalScopeReceipt,
+    };
+    fixture.attestScope.mockResolvedValueOnce({
+      kind: "review-base-stale",
+      previousBaseOid: reviewCheckpoint.baseOid,
+      currentBaseOid: "c".repeat(40),
+    });
+
+    const result = await runPipelineStages({
+      ...fixture.request,
+      state: staleState,
+      maxRegressions: 5,
+    });
+
+    expect(result.status).toBe("needs-attention");
+    expect(result.stagesRun).toEqual([]);
+    expect(result.regressions).toBe(5);
+    expect(result.failure).toMatchObject({
+      code: "scope-attestation-failed",
+      reason: `Review base advanced from ${reviewCheckpoint.baseOid} to ${"c".repeat(40)}.`,
+    });
+    expect(fixture.executor.requests).toEqual([]);
+    expect(fixture.saves.some((saved) => saved.regressions > 5)).toBe(false);
+    expect(fixture.saves.some((saved) => saved.finalScopeReceipt?.baseOid === "c".repeat(40))).toBe(
+      false,
+    );
+  });
+
+  it("does not start review when stale-authority invalidation cannot be saved", async () => {
+    const fixture = harness(receiptStages(), []);
+    const staleState: PipelineState = {
+      ...fixture.request.state,
+      status: "running",
+      currentStage: null,
+      regressions: 1,
+      stages: Object.fromEntries(
+        Object.entries(fixture.request.state.stages).map(([stageId, stageState]) => [
+          stageId,
+          durablyPassedStage(stageState, 1, T0),
+        ]),
+      ),
+      reviewCheckpoint,
+      finalScopeReceipt,
+    };
+    fixture.attestScope.mockResolvedValueOnce({
+      kind: "review-base-stale",
+      previousBaseOid: reviewCheckpoint.baseOid,
+      currentBaseOid: "c".repeat(40),
+    });
+
+    await expect(
+      runPipelineStages({
+        ...fixture.request,
+        state: staleState,
+        maxRegressions: 5,
+        saveState: async (saved) => {
+          if (saved.regressions === 2) throw new Error("invalidation save failed");
+          fixture.saves.push(saved);
+        },
+      }),
+    ).rejects.toThrow("invalidation save failed");
+    expect(fixture.executor.requests).toEqual([]);
+  });
+
   it("clears prior review approval when final PR review regresses through development", async () => {
     const stages: readonly CompiledStageDef[] = [
       stage("dev-story", 0),

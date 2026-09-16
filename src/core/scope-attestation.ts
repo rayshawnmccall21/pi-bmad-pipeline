@@ -59,6 +59,11 @@ export type ScopeAttestationResult =
   | { readonly kind: "review-checkpoint"; readonly checkpoint: ReviewScopeCheckpoint }
   | { readonly kind: "final-receipt"; readonly receipt: FinalScopeReceipt }
   | { readonly kind: "review-invalidated"; readonly changedPaths: readonly string[] }
+  | {
+      readonly kind: "review-base-stale";
+      readonly previousBaseOid: string;
+      readonly currentBaseOid: string;
+    }
   | { readonly kind: "rejected"; readonly reason: string };
 
 /** Injected trusted repository-scope attestation effect. */
@@ -78,6 +83,11 @@ interface ScopeAttestationIdentity {
 type AppliedScopeAttestation =
   | { readonly kind: "attested"; readonly state: PipelineState; readonly changed: boolean }
   | { readonly kind: "review-invalidated"; readonly changedPaths: readonly string[] }
+  | {
+      readonly kind: "review-base-stale";
+      readonly previousBaseOid: string;
+      readonly currentBaseOid: string;
+    }
   | { readonly kind: "rejected"; readonly reason: string };
 
 /** Input for applying one passed review attestation. */
@@ -125,6 +135,34 @@ const attestReviewScope = async (
   };
 };
 
+const applyStaleBaseResult = (
+  result: Extract<ScopeAttestationResult, { readonly kind: "review-base-stale" }>,
+  state: PipelineState,
+): AppliedScopeAttestation =>
+  isValidStaleBaseResult(result, state)
+    ? Object.freeze({
+        kind: "review-base-stale",
+        previousBaseOid: result.previousBaseOid,
+        currentBaseOid: result.currentBaseOid,
+      })
+    : {
+        kind: "rejected",
+        reason: "Final Git scope attestation returned an invalid stale-base result.",
+      };
+
+const applyFinalReceiptResult = (
+  result: Extract<ScopeAttestationResult, { readonly kind: "final-receipt" }>,
+  identity: ScopeAttestationIdentity,
+  state: PipelineState,
+): AppliedScopeAttestation =>
+  matchesIdentity(result.receipt, identity, state)
+    ? {
+        kind: "attested",
+        state: attachFinalScopeReceipt(state, result.receipt),
+        changed: true,
+      }
+    : reject(result, "Final Git scope attestation returned an invalid run identity or result.");
+
 const applyFinalScopeResult = (
   result: ScopeAttestationResult,
   identity: ScopeAttestationIdentity,
@@ -136,17 +174,12 @@ const applyFinalScopeResult = (
       changedPaths: Object.freeze([...result.changedPaths]),
     };
   }
-  if (result.kind !== "final-receipt" || !matchesIdentity(result.receipt, identity, state)) {
-    return reject(
-      result,
-      "Final Git scope attestation returned an invalid run identity or result.",
-    );
+  if (result.kind === "review-base-stale") {
+    return applyStaleBaseResult(result, state);
   }
-  return {
-    kind: "attested",
-    state: attachFinalScopeReceipt(state, result.receipt),
-    changed: true,
-  };
+  return result.kind === "final-receipt"
+    ? applyFinalReceiptResult(result, identity, state)
+    : reject(result, "Final Git scope attestation returned an invalid run identity or result.");
 };
 
 /**
@@ -257,6 +290,11 @@ export const persistPassedReviewAttestation = async (
 type FinalScopePersistenceResult =
   | { readonly kind: "attested" }
   | { readonly kind: "review-invalidated"; readonly changedPaths: readonly string[] }
+  | {
+      readonly kind: "review-base-stale";
+      readonly previousBaseOid: string;
+      readonly currentBaseOid: string;
+    }
   | { readonly kind: "rejected"; readonly reason: string };
 
 export const persistFinalScopeAttestation = async (
@@ -459,6 +497,17 @@ const invoke = async (
     return { kind: "rejected", reason: errorMessage(error) };
   }
 };
+
+const isObjectId = (value: string): boolean => /^[0-9a-f]{40}$/u.test(value);
+
+const isValidStaleBaseResult = (
+  result: Extract<ScopeAttestationResult, { readonly kind: "review-base-stale" }>,
+  state: PipelineState,
+): boolean =>
+  state.reviewCheckpoint?.baseOid === result.previousBaseOid &&
+  isObjectId(result.previousBaseOid) &&
+  isObjectId(result.currentBaseOid) &&
+  result.currentBaseOid !== result.previousBaseOid;
 
 const matchesIdentity = (
   attestation: ReviewScopeCheckpoint | FinalScopeReceipt,

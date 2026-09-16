@@ -61,6 +61,9 @@ export const readGitHeadOid = (projectRoot: string): Promise<string> =>
 interface ObservedGitScope {
   readonly branch: string;
   readonly baseOid: string;
+  readonly headOid: string;
+  readonly mergeBaseOid: string;
+  readonly porcelain: string;
   readonly files: readonly RepositoryFileSnapshot[];
 }
 
@@ -73,6 +76,7 @@ interface GitPathObservation {
 
 interface CommittedScope {
   readonly headOid: string;
+  readonly mergeBaseOid: string;
   readonly paths: readonly GitPathObservation[];
 }
 
@@ -138,7 +142,14 @@ const observeGitScope = async (
     headOid: committed.headOid,
     porcelain,
   });
-  return { branch, baseOid, files };
+  return {
+    branch,
+    baseOid,
+    headOid: committed.headOid,
+    mergeBaseOid: committed.mergeBaseOid,
+    porcelain,
+    files,
+  };
 };
 
 const observeAbsentRepositoryFile = async (
@@ -184,14 +195,71 @@ const checkpointForObservedScope = (request: ScopeAttestationRequest, observed: 
     qualityGate: request.qualityGate,
   });
 
-const finalScopeResult = (
-  request: Extract<ScopeAttestationRequest, { phase: "final" }>,
+interface StaleBaseResultRequest {
+  readonly dependencies: GitScopeAttestorDependencies;
+  readonly projectRoot: string;
+  readonly previousBaseOid: string;
+  readonly observed: ObservedGitScope;
+}
+
+interface StaleBaseConfirmation {
+  readonly branch: string;
+  readonly baseOid: string;
+  readonly headOid: string;
+  readonly porcelain: string;
+}
+
+const staleBaseObservationMoved = (
+  observed: ObservedGitScope,
+  confirmation: StaleBaseConfirmation,
+): boolean =>
+  confirmation.branch !== observed.branch ||
+  confirmation.baseOid !== observed.baseOid ||
+  confirmation.headOid !== observed.headOid ||
+  confirmation.porcelain !== observed.porcelain;
+
+const staleBaseResult = async ({
+  dependencies,
+  projectRoot,
+  previousBaseOid,
+  observed,
+}: StaleBaseResultRequest): Promise<ScopeAttestationResult> => {
+  if (observed.mergeBaseOid !== observed.baseOid) {
+    return {
+      kind: "rejected",
+      reason: "Current default base is not an ancestor of feature HEAD.",
+    };
+  }
+  const [confirmedBranch, confirmedBaseOid, confirmedHeadOid, confirmedPorcelain] =
+    await Promise.all([
+      dependencies
+        .runGit(projectRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .then((branch) => branch.trim()),
+      observeSynchronizedDefaultBaseOid(dependencies.runGit, projectRoot),
+      readHeadOid(dependencies, projectRoot),
+      dependencies.runGit(projectRoot, STATUS_ARGS),
+    ]);
+  if (
+    staleBaseObservationMoved(observed, {
+      branch: confirmedBranch,
+      baseOid: confirmedBaseOid,
+      headOid: confirmedHeadOid,
+      porcelain: confirmedPorcelain,
+    })
+  ) {
+    return { kind: "rejected", reason: "Git scope changed while confirming stale review base." };
+  }
+  return {
+    kind: "review-base-stale",
+    previousBaseOid,
+    currentBaseOid: observed.baseOid,
+  };
+};
+
+const matchingBaseResult = (
+  checkpoint: ReturnType<typeof checkpointForObservedScope>,
   observed: ObservedGitScope,
 ): ScopeAttestationResult => {
-  const checkpoint = request.reviewCheckpoint ?? checkpointForObservedScope(request, observed);
-  if (checkpoint.branch !== observed.branch || checkpoint.baseOid !== observed.baseOid) {
-    return { kind: "rejected", reason: "Git branch or base OID changed after review." };
-  }
   const comparison = compareFinalScopeToReview({
     checkpoint,
     finalFiles: observed.files,
@@ -207,15 +275,38 @@ const finalScopeResult = (
       };
 };
 
+const finalScopeResult = async (
+  dependencies: GitScopeAttestorDependencies,
+  request: Extract<ScopeAttestationRequest, { phase: "final" }>,
+  observed: ObservedGitScope,
+): Promise<ScopeAttestationResult> => {
+  const checkpoint = request.reviewCheckpoint ?? checkpointForObservedScope(request, observed);
+  if (checkpoint.branch !== observed.branch) {
+    return { kind: "rejected", reason: "Git branch changed after review." };
+  }
+  return checkpoint.baseOid === observed.baseOid
+    ? matchingBaseResult(checkpoint, observed)
+    : staleBaseResult({
+        dependencies,
+        projectRoot: request.projectRoot,
+        previousBaseOid: checkpoint.baseOid,
+        observed,
+      });
+};
+
 const attestObservedScope = async (
   dependencies: GitScopeAttestorDependencies,
   request: ScopeAttestationRequest,
 ): Promise<ScopeAttestationResult> => {
   try {
     const observed = await observeGitScope(dependencies, request);
-    return request.phase === "review"
-      ? { kind: "review-checkpoint", checkpoint: checkpointForObservedScope(request, observed) }
-      : finalScopeResult(request, observed);
+    if (request.phase === "review") {
+      return {
+        kind: "review-checkpoint",
+        checkpoint: checkpointForObservedScope(request, observed),
+      };
+    }
+    return await finalScopeResult(dependencies, request, observed);
   } catch (error) {
     return {
       kind: "rejected",
@@ -236,13 +327,14 @@ const observeCommittedScope = async (
 ): Promise<CommittedScope> => {
   const headOid = await readHeadOid(dependencies, projectRoot);
   if (headOid === baseOid) {
-    return { headOid, paths: [] };
+    return { headOid, mergeBaseOid: baseOid, paths: [] };
   }
   const mergeBase = parseMergeBase(
     await dependencies.runGit(projectRoot, ["merge-base", "--all", baseOid, headOid]),
   );
   return {
     headOid,
+    mergeBaseOid: mergeBase,
     paths: parseCommittedPaths(
       await dependencies.runGit(projectRoot, [...COMMITTED_DIFF_ARGS, mergeBase, headOid, "--"]),
     ),

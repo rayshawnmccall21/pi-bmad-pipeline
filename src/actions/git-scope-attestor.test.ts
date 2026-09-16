@@ -43,26 +43,45 @@ const actionAwareRunGit = ({
   mergeBaseResult = `${mergeBaseOid}\n`,
   statuses = [""],
   heads = [headOid],
+  branches = ["feature"],
+  localBaseOids = [baseOid],
+  remoteBaseOids = [baseOid],
 }: {
   readonly mergeBaseResult?: string;
   readonly statuses?: readonly string[];
   readonly heads?: readonly string[];
+  readonly branches?: readonly string[];
+  readonly localBaseOids?: readonly string[];
+  readonly remoteBaseOids?: readonly string[];
 } = {}) => {
+  let branchRead = 0;
   let headRead = 0;
   let statusRead = 0;
+  let localBaseRead = 0;
+  let remoteBaseRead = 0;
   const commands: string[] = [];
+  const sequenceValue = (values: readonly string[], read: number, fallback: string): string =>
+    values[Math.min(read, values.length - 1)] ?? fallback;
   const runGit = vi.fn(async (_root: string, args: readonly string[]): Promise<string> => {
     const command = args.join(" ");
     commands.push(command);
-    if (command === "symbolic-ref --quiet --short HEAD") return "feature\n";
+    if (command === "symbolic-ref --quiet --short HEAD") {
+      const branch = sequenceValue(branches, branchRead, "feature");
+      branchRead += 1;
+      return `${branch}\n`;
+    }
     if (command === "symbolic-ref --quiet refs/remotes/origin/HEAD") {
       return "refs/remotes/origin/main\n";
     }
-    if (
-      command === "rev-parse --verify refs/heads/main" ||
-      command === "rev-parse --verify refs/remotes/origin/main"
-    ) {
-      return `${baseOid}\n`;
+    if (command === "rev-parse --verify refs/heads/main") {
+      const oid = sequenceValue(localBaseOids, localBaseRead, baseOid);
+      localBaseRead += 1;
+      return `${oid}\n`;
+    }
+    if (command === "rev-parse --verify refs/remotes/origin/main") {
+      const oid = sequenceValue(remoteBaseOids, remoteBaseRead, baseOid);
+      remoteBaseRead += 1;
+      return `${oid}\n`;
     }
     if (command === "rev-parse HEAD") {
       const oid = heads[Math.min(headRead, heads.length - 1)] ?? headOid;
@@ -70,8 +89,9 @@ const actionAwareRunGit = ({
       return `${oid}\n`;
     }
     if (command.startsWith(`merge-base --all ${baseOid} `)) return mergeBaseResult;
+    const expectedDiffBase = mergeBaseResult.replace(/\n$/u, "");
     if (
-      command.startsWith(`diff --name-status -z --no-renames ${mergeBaseOid} `) &&
+      command.startsWith(`diff --name-status -z --no-renames ${expectedDiffBase} `) &&
       command.endsWith(" --")
     ) {
       return "";
@@ -232,6 +252,172 @@ describe("createGitScopeAttestor", () => {
     expect(readBytes).toHaveBeenCalledTimes(1);
     expect(readBytes).toHaveBeenCalledWith("/repo", branchOwnedPath);
   });
+
+  it("classifies a same-branch stale review base when the current base is ancestral to HEAD", async () => {
+    const previousBaseOid = "b".repeat(40);
+    const { runGit } = actionAwareRunGit({ mergeBaseResult: `${baseOid}\n` });
+    const attest = createGitScopeAttestor({
+      runGit,
+      readBytes: async () => encoded("unused"),
+    });
+    const review = await attest({ phase: "review", ...identity, qualityGate });
+    if (review.kind !== "review-checkpoint") expect.unreachable("review should attest");
+
+    const result = await attest({
+      phase: "final",
+      ...identity,
+      reviewCheckpoint: { ...review.checkpoint, baseOid: previousBaseOid },
+      qualityGate,
+    });
+
+    expect(result).toEqual({
+      kind: "review-base-stale",
+      previousBaseOid,
+      currentBaseOid: baseOid,
+    });
+  });
+
+  it("rejects stale-base recovery when the current base is not ancestral to HEAD", async () => {
+    const { runGit } = actionAwareRunGit();
+    const attest = createGitScopeAttestor({
+      runGit,
+      readBytes: async () => encoded("unused"),
+    });
+    const review = await attest({ phase: "review", ...identity, qualityGate });
+    if (review.kind !== "review-checkpoint") expect.unreachable("review should attest");
+
+    const result = await attest({
+      phase: "final",
+      ...identity,
+      reviewCheckpoint: { ...review.checkpoint, baseOid: "b".repeat(40) },
+      qualityGate,
+    });
+
+    expectRejectedWithoutAuthorization(result);
+    expect(result).toMatchObject({
+      reason: "Current default base is not an ancestor of feature HEAD.",
+    });
+  });
+
+  it("rejects a branch mismatch even when stale-base topology is safely ancestral", async () => {
+    const { runGit } = actionAwareRunGit({ mergeBaseResult: `${baseOid}\n` });
+    const attest = createGitScopeAttestor({
+      runGit,
+      readBytes: async () => encoded("unused"),
+    });
+    const review = await attest({ phase: "review", ...identity, qualityGate });
+    if (review.kind !== "review-checkpoint") expect.unreachable("review should attest");
+
+    const result = await attest({
+      phase: "final",
+      ...identity,
+      reviewCheckpoint: {
+        ...review.checkpoint,
+        branch: "substituted-feature",
+        baseOid: "b".repeat(40),
+      },
+      qualityGate,
+    });
+
+    expectRejectedWithoutAuthorization(result);
+    expect(result).toMatchObject({ reason: "Git branch changed after review." });
+  });
+
+  it("rejects a feature branch switch at the same HEAD while confirming a stale base", async () => {
+    const { runGit } = actionAwareRunGit({
+      mergeBaseResult: `${baseOid}\n`,
+      branches: ["feature", "feature", "substituted-feature"],
+    });
+    const attest = createGitScopeAttestor({
+      runGit,
+      readBytes: async () => encoded("unused"),
+    });
+    const review = await attest({ phase: "review", ...identity, qualityGate });
+    if (review.kind !== "review-checkpoint") expect.unreachable("review should attest");
+
+    const result = await attest({
+      phase: "final",
+      ...identity,
+      reviewCheckpoint: { ...review.checkpoint, baseOid: "b".repeat(40) },
+      qualityGate,
+    });
+
+    expectRejectedWithoutAuthorization(result);
+  });
+
+  it.each([
+    {
+      movedRef: "local",
+      localBaseOids: [baseOid, baseOid, baseOid, baseOid, baseOid, "e".repeat(40)],
+      remoteBaseOids: [baseOid],
+    },
+    {
+      movedRef: "remote",
+      localBaseOids: [baseOid],
+      remoteBaseOids: [baseOid, baseOid, baseOid, baseOid, baseOid, "e".repeat(40)],
+    },
+  ])(
+    "rejects a moving $movedRef default ref after initial stale-base authentication",
+    async ({ localBaseOids, remoteBaseOids }) => {
+      const { runGit } = actionAwareRunGit({
+        mergeBaseResult: `${baseOid}\n`,
+        localBaseOids,
+        remoteBaseOids,
+      });
+      const attest = createGitScopeAttestor({
+        runGit,
+        readBytes: async () => encoded("unused"),
+      });
+      const review = await attest({ phase: "review", ...identity, qualityGate });
+      if (review.kind !== "review-checkpoint") expect.unreachable("review should attest");
+
+      const result = await attest({
+        phase: "final",
+        ...identity,
+        reviewCheckpoint: { ...review.checkpoint, baseOid: "b".repeat(40) },
+        qualityGate,
+      });
+
+      expectRejectedWithoutAuthorization(result);
+    },
+  );
+
+  it.each([
+    {
+      caseName: "HEAD",
+      heads: [headOid, headOid, "e".repeat(40)],
+      statuses: ["", "", ""],
+    },
+    {
+      caseName: "status",
+      heads: [headOid, headOid, headOid],
+      statuses: ["", "", " M src/moved.ts\0"],
+    },
+  ])(
+    "rejects moving $caseName evidence while confirming a stale base",
+    async ({ heads, statuses }) => {
+      const { runGit } = actionAwareRunGit({
+        mergeBaseResult: `${baseOid}\n`,
+        heads,
+        statuses,
+      });
+      const attest = createGitScopeAttestor({
+        runGit,
+        readBytes: async () => encoded("unused"),
+      });
+      const review = await attest({ phase: "review", ...identity, qualityGate });
+      if (review.kind !== "review-checkpoint") expect.unreachable("review should attest");
+
+      const result = await attest({
+        phase: "final",
+        ...identity,
+        reviewCheckpoint: { ...review.checkpoint, baseOid: "b".repeat(40) },
+        qualityGate,
+      });
+
+      expectRejectedWithoutAuthorization(result);
+    },
+  );
 
   it("invalidates review when a reviewed byte changes after approval", async () => {
     const fileBytes = new Map([
