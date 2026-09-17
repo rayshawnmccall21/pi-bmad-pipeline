@@ -154,6 +154,9 @@ const emitStageFinished = (emitter: PipelineEventEmitter, info: PipelineStageFin
     exitCode: info.execution.exitCode,
     durationMs: info.execution.durationMs,
     reason: info.decision.reason,
+    ...(info.execution.stderrTail === undefined
+      ? {}
+      : { stderrTail: info.execution.stderrTail.slice(-1500) }),
   });
   if (info.stage.kind === "agent" && info.stage.payloadGateName !== undefined) {
     emitter.emit("gate.decision", {
