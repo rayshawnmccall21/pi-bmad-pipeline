@@ -324,10 +324,12 @@ const buildResult = (context: CloseContext, exitCode: number | null): StageExecu
     stderr: context.stderr.value(),
   });
   const usage = extractStageUsage(snapshot.records);
+  const stderrTail = context.stderr.value().slice(-2000);
   return {
     output: extraction.output,
     exitCode,
     durationMs: Math.max(0, context.now() - context.startMs),
+    stderrTail,
     ...(parseError === undefined ? {} : { parseError }),
     ...(usage === undefined ? {} : { usage }),
     ...(context.state.timedOut ? { timedOut: true } : {}),

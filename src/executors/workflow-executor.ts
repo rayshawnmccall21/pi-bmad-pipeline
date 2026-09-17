@@ -68,6 +68,9 @@ export interface StageExecutionResult {
 
   /** True when the stage was aborted by the supervisor. */
   readonly aborted?: boolean;
+
+  /** Bounded child stderr tail for stage-finished diagnostics. */
+  readonly stderrTail?: string;
 }
 
 /** Executor boundary used by the future pipeline FSM. */

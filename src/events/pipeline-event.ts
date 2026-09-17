@@ -74,6 +74,9 @@ export interface PipelineStageFinishedEvent extends PipelineCliEventBase {
 
   /** Human-readable decision reason. */
   readonly reason: string;
+
+  /** Captured child stderr tail (diagnostics; bounded). */
+  readonly stderrTail?: string;
 }
 
 /** Emitted after a payload gate evaluates a stage's output. */
@@ -361,6 +364,7 @@ const buildStageFinished: PipelineEventBuilder<"stage.finished"> = (base, fields
     exitCode: fields.exitCode,
     durationMs: fields.durationMs,
     reason: redactString(fields.reason),
+    ...(fields.stderrTail === undefined ? {} : { stderrTail: redactString(fields.stderrTail) }),
   });
 
 const buildGateDecision: PipelineEventBuilder<"gate.decision"> = (base, fields) =>

@@ -50,14 +50,13 @@ describe("Pi stage argv builder", () => {
     expect(buildStageArgs(request()).bin).toBe(DEFAULT_PI_BIN);
   });
 
-  it("emits the real headless prefix: JSON mode, print, isolation", () => {
-    expect(buildStageArgs(request()).args.slice(0, 5)).toEqual([
-      "--mode",
-      "json",
-      "-p",
-      "--no-session",
-      "--no-extensions",
-    ]);
+  it("emits the real headless prefix: JSON mode, print, session, isolation", () => {
+    const args = buildStageArgs(request()).args;
+    expect(args.slice(0, 3)).toEqual(["--mode", "json", "-p"]);
+    expect(args[3]).toBe("--session");
+    expect(args[4]).toMatch(/^\/tmp\/pi-stage-.+\.jsonl$/);
+    expect(args.slice(5)).toContain("--no-extensions");
+    expect(args).not.toContain("--no-session");
   });
 
   it("loads the pi-bmad extension explicitly", () => {

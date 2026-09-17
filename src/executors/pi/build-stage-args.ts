@@ -140,7 +140,7 @@ export function buildStageArgs(request: BuildStageArgsRequest): BuiltStageArgs {
   const thinking = request.stage.thinking ?? request.thinking;
   const model = request.stage.model ?? request.model;
   const args = [
-    ...headlessPrefixArgs(),
+    ...headlessPrefixArgs(request),
     ...extensionArgs(request),
     ...bmadArgs(request, thinking, model),
     buildStagePrompt(request),
@@ -157,13 +157,18 @@ export function buildStageArgs(request: BuildStageArgsRequest): BuiltStageArgs {
   });
 }
 
-const headlessPrefixArgs = (): readonly string[] => [
-  "--mode",
-  "json",
-  "-p",
-  "--no-session",
-  "--no-extensions",
-];
+const headlessPrefixArgs = (request: BuildStageArgsRequest): readonly string[] => {
+  const runId = request.runId ?? defaultRunId(request);
+  return [
+    "--mode",
+    "json",
+    "-p",
+    // Persist stage-agent turns for post-hoc forensics (bmad debugging).
+    "--session",
+    `/tmp/pi-stage-${runId}.jsonl`,
+    "--no-extensions",
+  ];
+};
 
 const extensionArgs = (request: BuildStageArgsRequest): readonly string[] => {
   const extra = request.stage.extensions ?? [];
